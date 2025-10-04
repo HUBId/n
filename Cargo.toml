@@ -1,0 +1,14 @@
+[package]
+name = "rpp-stark"
+version = "0.1.0"
+edition = "2021"
+authors = ["RPP Core Team"]
+description = "Deterministic STARK proof engine for the RPP blockchain."
+license = "MIT"
+
+[lib]
+name = "rpp_stark"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
