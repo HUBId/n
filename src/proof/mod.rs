@@ -2,6 +2,7 @@
 //! Provides embedded prover and verifier implementations for the STARK engine.
 
 pub mod prover;
+pub mod transcript;
 pub mod verifier;
 
 pub use prover::Prover;

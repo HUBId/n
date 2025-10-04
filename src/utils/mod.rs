@@ -4,5 +4,5 @@
 pub mod randomness;
 pub mod serialization;
 
-pub use randomness::DeterministicRng;
+pub use randomness::{ChallengeStreamExt, TranscriptHook};
 pub use serialization::ProofBytes;
