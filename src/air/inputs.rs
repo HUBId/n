@@ -8,15 +8,17 @@
 /// Markertrait ohne Methoden zur Kennzeichnung von Public-Input-Containern.
 pub trait PublicInputs: Send + Sync {}
 
-/// Public Inputs fuer Identity-Beweise.
+/// Public Inputs fuer Identitaetsbeweise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IdentityPublicInputs {
-    /// Commitment auf die Identitaetsattribute (z. B. Merkle-Root).
-    pub identity_commitment: [u8; 32],
-    /// Seriennummer fuer Revocations (LE-serialisiert).
-    pub revocation_counter: [u8; 8],
-    /// Aktive Gültigkeitsperiode (Start-Ende im LE-Format).
-    pub validity_window: [u8; 16],
+    /// LE-kodierte Kennung des Ausstellers (`IssuerID`, 32 Byte).
+    pub issuer_id: [u8; 32],
+    /// LE-kodierte Kennung des Subjekts (`SubjectID`, 32 Byte).
+    pub subject_id: [u8; 32],
+    /// Ausstellungs-Slot (LE-u64), bindet die Attest-Guelitigkeit an Phase 6.
+    pub attest_slot: [u8; 8],
+    /// Policy-Digest (LE, 32 Byte) fuer die gebundene Attribut-Policy.
+    pub policy_hash: [u8; 32],
 }
 impl PublicInputs for IdentityPublicInputs {}
 
@@ -39,26 +41,28 @@ impl PublicInputs for TransactionPublicInputs {}
 /// Public Inputs fuer Uptime-Beweise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UptimePublicInputs {
-    /// Validatoren-ID im LE-Format.
-    pub validator_id: [u8; 16],
-    /// Epochennummer.
+    /// Knoteninfix (LE, 32 Byte) der gebundenen Uptime-Sequenz.
+    pub node_id: [u8; 32],
+    /// Epochennummer (LE-u64) laut Beacon-Chain.
     pub epoch: [u8; 8],
-    /// Bitmap fuer Online/Offline-Slots (LE-kodiert, feste Länge 32 Byte).
-    pub uptime_bitmap: [u8; 32],
+    /// Slotnummer (LE-u16) fuer das letzte Heartbeat-Event.
+    pub slot: [u8; 2],
+    /// Commitment auf den bisherigen Uptime-Zustand (32 Byte, LE).
+    pub prev_uptime_root: [u8; 32],
 }
 impl PublicInputs for UptimePublicInputs {}
 
 /// Public Inputs fuer Konsensbeweise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsensusPublicInputs {
-    /// Round-ID im LE-Format.
-    pub round_number: [u8; 8],
-    /// Digest des vorgeschlagenen Blocks.
-    pub proposal_digest: [u8; 32],
-    /// Aggregiertes Abstimmungsergebnis.
-    pub vote_aggregation: [u8; 32],
-    /// Commitment auf das Validatoren-Set.
-    pub validator_set_digest: [u8; 32],
+    /// Rundenzaehler (LE-u64), bindet die Phase 5-Metadaten.
+    pub round: [u8; 8],
+    /// Committee-Root (32 Byte, LE) fuer die validierten Stimmrechte.
+    pub committee_root: [u8; 32],
+    /// Quorum-Schwelle (LE-u16) laut Sicherheitsparametern.
+    pub quorum: [u8; 2],
+    /// Slotnummer (LE-u16) fuer den Konsensschritt.
+    pub slot: [u8; 2],
 }
 impl PublicInputs for ConsensusPublicInputs {}
 
@@ -89,11 +93,23 @@ impl PublicInputs for PruningPublicInputs {}
 /// Public Inputs fuer Aggregationsbeweise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AggregationPublicInputs {
-    /// Commitment auf den Batch der eingehenden Beweise.
-    pub batch_commitment: [u8; 32],
-    /// Anzahl der aggregierten Beweise (LE-kodiert).
-    pub proof_count: [u8; 8],
-    /// Kumulierte Gewichtung der Aggregation.
-    pub cumulative_weight: [u8; 16],
+    /// Aggregations-Versionsbyte (LE-u8) fuer Rueckwaertskompatibilitaet.
+    pub aggregate_version: u8,
+    /// Anzahl der enthaltenen Unterbeweise (LE-u32).
+    pub count: [u8; 4],
+    /// Geordnete Liste der Proof-Digests (LE-serialisierte 32-Byte-Werte).
+    pub proof_digests: Vec<[u8; 32]>,
 }
 impl PublicInputs for AggregationPublicInputs {}
+
+/// Public Inputs fuer VRF-Beweise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VrfPublicInputs {
+    /// Commitment-Bytes des oeffentlichen Schluessels (`pk`), LE-serialisiert.
+    pub pk_commitment: Vec<u8>,
+    /// Eingabe `x` des PRF (Feld- oder Byte-Repräsentation, LE-Layout).
+    pub input_x: Vec<u8>,
+    /// Digest der PRF-Parameter (32 Byte, LE), bindet Phase-6-Konfigurationen.
+    pub prf_param_digest: [u8; 32],
+}
+impl PublicInputs for VrfPublicInputs {}

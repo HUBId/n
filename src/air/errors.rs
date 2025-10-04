@@ -32,4 +32,24 @@ pub enum AirErrorKind {
     ParallelPlanMismatch,
     /// Commitments oder Openings wurden in einer falschen Reihenfolge angegeben.
     CommitmentOrderingMismatch,
+    /// Bilanz- oder Fee-Konsistenz der Transaktion verletzt (`sum_in - sum_out - fee != 0`).
+    ErrTxBalance,
+    /// Nonce-Fortschreibung inkonsistent mit Public Inputs oder Selektoren.
+    ErrTxNonce,
+    /// Poseidon-Accumulator stimmt nicht mit gebundenem Digest ueberein.
+    ErrTxAccumulator,
+    /// Zustandsdelta passt nicht zum Diff-Commitment.
+    ErrStateDeltaMismatch,
+    /// Permutationsargument fuer State-Scan nicht erfuellt.
+    ErrStatePermutation,
+    /// Recovery-Anker oder Keep/Drop-Konsistenz verletzt.
+    ErrPruneAnchor,
+    /// Slot- oder Epoch-Kohärenz im Uptime-Trace verletzt.
+    ErrUptimeSlot,
+    /// Quorum- oder Committee-Bindung fehlerhaft.
+    ErrConsensusQuorum,
+    /// Policy-Bindung oder Attest-Slot-Verknuepfung inkonsistent.
+    ErrIdentityPolicy,
+    /// Phasenreihenfolge des VRF-Profils gebrochen (NTT/Mul/Commit).
+    ErrVrfPhaseMismatch,
 }
