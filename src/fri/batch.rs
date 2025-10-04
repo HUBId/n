@@ -1,7 +1,14 @@
-//! Batch verification API description for FRI proofs.
-//! Exposes declarative structures for aggregating multiple proofs under a shared seed.
+//! Batched verification helpers for FRI proofs.
+//!
+//! The batching API is intentionally lightweight: it stores the proofs,
+//! deterministic seeds and aggregate digest exposed by the transcript.  Callers
+//! can feed the structure into [`FriBatch::verify`] to replay all FRI proofs
+//! using the deterministic [`FriVerifier`] logic.
 
-use super::proof::FriProof;
+use crate::field::FieldElement;
+
+use super::proof::{FriError, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
+use super::pseudo_blake3;
 
 /// Seed shared across the batch, typically derived from a transcript challenge.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +66,35 @@ impl Default for FriBatch {
             query_positions: Vec::new(),
             aggregate_digest: BatchDigest::default(),
         }
+    }
+}
+
+impl FriBatch {
+    /// Verifies all proofs in the batch by delegating to [`FriVerifier`].
+    ///
+    /// The closure `final_value_oracle` receives the proof index and the index of
+    /// the residual polynomial queried by the verifier.  Implementations can use
+    /// this hook to supply the expected final-layer value for the query.
+    pub fn verify<F>(
+        &self,
+        security_level: FriSecurityLevel,
+        transcript_seed: FriTranscriptSeed,
+        mut final_value_oracle: F,
+    ) -> Result<(), FriError>
+    where
+        F: FnMut(usize, usize) -> FieldElement,
+    {
+        for (proof_index, proof) in self.proofs.iter().enumerate() {
+            let mut seed_input = Vec::with_capacity(72);
+            seed_input.extend_from_slice(&self.joint_seed.bytes);
+            seed_input.extend_from_slice(&(proof_index as u64).to_le_bytes());
+            seed_input.extend_from_slice(&transcript_seed);
+            let seed = pseudo_blake3(&seed_input);
+            FriVerifier::verify(proof, security_level, seed, |final_index| {
+                final_value_oracle(proof_index, final_index)
+            })?;
+        }
+        Ok(())
     }
 }
 
