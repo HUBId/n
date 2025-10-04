@@ -4,7 +4,9 @@
 //! is preceded by a 32-bit little-endian length. All fixed width integers and
 //! field elements are serialized in little-endian order.
 
+use crate::config::TranscriptVersionId;
 use crate::utils::serialization::{DigestBytes, FieldElementBytes};
+use crate::vrf::{FieldId, RlweParamId, VrfParamId};
 
 /// Enumerates all supported proof kinds using canonical RPP coding.
 #[repr(u8)]
@@ -16,6 +18,8 @@ pub enum ProofKind {
     Aggregation = 0x01,
     /// Wraps recursion layers for rollup scenarios.
     Recursion = 0x02,
+    /// Post-quantum VRF proof binding an RLWE PRF evaluation to a STARK witness.
+    VrfPostQuantum = 0x10,
 }
 
 impl ProofKind {
@@ -25,10 +29,11 @@ impl ProofKind {
     }
 
     /// Canonical ordering used for deterministic sorting.
-    pub const ORDER: &'static [ProofKind; 3] = &[
+    pub const ORDER: &'static [ProofKind; 4] = &[
         ProofKind::Execution,
         ProofKind::Aggregation,
         ProofKind::Recursion,
+        ProofKind::VrfPostQuantum,
     ];
 }
 
@@ -78,6 +83,27 @@ pub struct RecursionHeaderV1 {
     pub recursion_seed: FieldElementBytes,
 }
 
+/// Public input header for post-quantum VRF proofs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VrfHeaderV1 {
+    /// Version of the header format.
+    pub version: PublicInputVersion,
+    /// Commitment to the secret key parameters: `pk = H(encode(sk_params))`.
+    pub public_key_commit: DigestBytes,
+    /// Digest pinning the RLWE PRF parameters (A/q/n/σ/domain separation).
+    pub prf_param_digest: DigestBytes,
+    /// Identifier for the negotiated RLWE ring dimension and modulus profile.
+    pub rlwe_param_id: RlweParamId,
+    /// Identifier for the VRF parameter profile (thresholds, committees, etc.).
+    pub vrf_param_id: VrfParamId,
+    /// Transcript version that must agree with Phase 3 bindings.
+    pub transcript_version_id: TranscriptVersionId,
+    /// Field identifier determining serialization rules for polynomial elements.
+    pub field_id: FieldId,
+    /// Digest of the VRF evaluation context (round identifiers, domain tags).
+    pub context_digest: DigestBytes,
+}
+
 /// Unified container for public inputs across proof kinds.
 #[derive(Debug, Clone)]
 pub enum PublicInputs<'a> {
@@ -102,6 +128,13 @@ pub enum PublicInputs<'a> {
         /// Serialized recursion stack body.
         body: &'a [u8],
     },
+    /// Post-quantum VRF proof layout.
+    Vrf {
+        /// Header metadata.
+        header: VrfHeaderV1,
+        /// Serialized RLWE output polynomial coefficients (little-endian mod q).
+        body: &'a [u8],
+    },
 }
 
 impl<'a> PublicInputs<'a> {
@@ -111,6 +144,7 @@ impl<'a> PublicInputs<'a> {
             Self::Execution { .. } => ProofKind::Execution,
             Self::Aggregation { .. } => ProofKind::Aggregation,
             Self::Recursion { .. } => ProofKind::Recursion,
+            Self::Vrf { .. } => ProofKind::VrfPostQuantum,
         }
     }
 
@@ -120,6 +154,7 @@ impl<'a> PublicInputs<'a> {
             Self::Execution { header, .. } => header.version,
             Self::Aggregation { header, .. } => header.version,
             Self::Recursion { header, .. } => header.version,
+            Self::Vrf { header, .. } => header.version,
         }
     }
 
@@ -129,6 +164,7 @@ impl<'a> PublicInputs<'a> {
             Self::Execution { body, .. } => body,
             Self::Aggregation { body, .. } => body,
             Self::Recursion { body, .. } => body,
+            Self::Vrf { body, .. } => body,
         }
     }
 }
@@ -160,6 +196,18 @@ impl PublicInputSerializationSpec {
         "depth:u8",
         "boundary_digest:32B",
         "recursion_seed:32B",
+    ];
+
+    /// Field order for post-quantum VRF headers.
+    pub const VRF_FIELDS: &'static [&'static str] = &[
+        "version:u8",
+        "public_key_commit:32B",
+        "prf_param_digest:32B",
+        "rlwe_param_id:u16 (LE)",
+        "vrf_param_id:u16 (LE)",
+        "transcript_version_id:u8",
+        "field_id:u16 (LE)",
+        "context_digest:32B",
     ];
 
     /// Description of the length prefix rule.
