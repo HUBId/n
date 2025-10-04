@@ -29,6 +29,8 @@ pub enum VerificationFailure {
     ErrDegreeBoundExceeded,
     /// Proof exceeded the configured maximum proof size.
     ErrProofTooLarge,
+    /// Integrity digest covering header and body did not match.
+    ErrIntegrityDigestMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.
     ErrAggregationDigestMismatch,
 }

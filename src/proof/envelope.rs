@@ -1,136 +1,688 @@
-//! Proof envelope describing versioned byte layout and integrity bindings.
+//! Proof envelope implementation and serialization helpers.
 //!
-//! The envelope is the canonical container that wraps every proof byte stream
-//! produced by the system. Only the structure is documented; no serialization
-//! helpers are provided so that implementers can integrate their own I/O layer.
+//! The module implements the canonical byte layout mandated by the
+//! specification.  Both prover and verifier share this code to ensure that the
+//! same length prefixes, digests and field orderings are used throughout the
+//! pipeline.
 
-use crate::config::ParamDigest;
-use crate::proof::public_inputs::ProofKind;
+use std::convert::TryInto;
+
+use blake3::Hasher;
+
+use crate::config::{AirSpecId, ParamDigest, ProofKind};
+use crate::field::FieldElement;
+use crate::fri::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
+use crate::hash::merkle::{MerkleIndex, MerklePathElement};
+use crate::proof::public_inputs::{
+    AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
+    VrfHeaderV1,
+};
 use crate::utils::serialization::DigestBytes;
 
-/// Specification object capturing the envelope layout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProofEnvelopeSpec;
+/// Canonical proof version implemented by this crate.
+pub const PROOF_VERSION: u8 = 1;
 
-impl ProofEnvelopeSpec {
-    /// Fixed order of the top-level fields (all little-endian).
-    pub const FIELD_ORDER: &'static [&'static str] = &[
-        "ProofVersion:u8",
-        "ProofKind:u8",
-        "HeaderLength:u32",
-        "HeaderBytes",
-        "BodyLength:u32",
-        "BodyBytes",
-        "IntegrityDigest:32B",
-    ];
-
-    /// Internal ordering of the header payload.
-    pub const HEADER_ORDER: &'static [&'static str] = &[
-        "PublicInputHeader (Phase-2 layout with length prefixes)",
-        "ParamDigest:32B",
-        "CommitmentDigest:32B",
-    ];
-
-    /// Internal ordering of the body payload.
-    pub const BODY_ORDER: &'static [&'static str] = &[
-        "Commitments: CoreRoot || AuxRoot || FRI-Layer-Roots",
-        "OOD-Openings: per OOD point (coordinates + Core/Aux/Composition values)",
-        "FRI-Proof: folding params, openings, queries, 4-ary Merkle paths",
-    ];
-
-    /// Initial proof version (must increment for backward incompatible changes).
-    pub const INITIAL_VERSION: u8 = 1;
-}
-
-/// Structured representation of the proof envelope header.
+/// Errors surfaced while decoding or encoding an envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofEnvelopeHeader {
-    /// Proof version as encoded in the envelope.
-    pub proof_version: u8,
-    /// Proof kind using canonical RPP coding.
-    pub proof_kind: ProofKind,
-    /// Length of the serialized header payload in bytes.
-    pub header_length: u32,
-    /// Phase-2 public input header bytes.
-    pub public_input_header: Vec<u8>,
-    /// Parameter digest binding configuration.
-    pub param_digest: ParamDigest,
-    /// Commitment digest binding Merkle and FRI roots.
-    pub commitment_digest: DigestBytes,
+pub enum EnvelopeError {
+    /// The proof version encoded in the header is not supported.
+    UnsupportedVersion(u8),
+    /// The proof kind byte does not match the canonical ordering.
+    UnknownProofKind(u8),
+    /// Declared header length does not match the observed byte count.
+    HeaderLengthMismatch { declared: u32, actual: u32 },
+    /// Declared body length does not match the observed byte count.
+    BodyLengthMismatch { declared: u32, actual: u32 },
+    /// The buffer ended prematurely while parsing a section.
+    UnexpectedEndOfBuffer(&'static str),
+    /// Integrity digest recomputed from the payload disagreed with the header.
+    IntegrityDigestMismatch,
+    /// The FRI section contained invalid structure.
+    InvalidFriSection(&'static str),
 }
 
-/// Structured representation of the proof envelope body.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofEnvelopeBody {
-    /// Raw commitment roots (Core, Aux, FRI layers) in canonical order.
-    pub commitments: Vec<DigestBytes>,
-    /// Out-of-domain opening records (coordinates and values).
-    pub ood_openings: Vec<OutOfDomainOpening>,
-    /// FRI proof payload including folding schedule and query paths.
-    pub fri_proof: FriProofPayload,
-}
-
-/// Full envelope container grouping header, body and integrity digest.
+/// Complete proof envelope grouping header and body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofEnvelope {
-    /// Structured header information.
+    /// Header component (version, kind, parameter digest and commitments).
     pub header: ProofEnvelopeHeader,
-    /// Body carrying commitments, openings and FRI data.
+    /// Body component (commitments, openings and FRI proof).
     pub body: ProofEnvelopeBody,
-    /// Integrity digest computed as BLAKE3 over all bytes from ProofVersion
-    /// through BodyBytes (inclusive).
+}
+
+impl ProofEnvelope {
+    /// Serialises the envelope into a byte vector using the canonical layout.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let header_bytes = self.header.serialize(&self.body);
+        let payload = self.body.serialize_payload();
+        let integrity = compute_integrity_digest(&header_bytes, &payload);
+
+        let mut bytes = Vec::with_capacity(
+            header_bytes.len() + payload.len() + DigestBytes::default().bytes.len(),
+        );
+        bytes.extend_from_slice(&header_bytes);
+        bytes.extend_from_slice(&payload);
+        bytes.extend_from_slice(&integrity);
+        bytes
+    }
+
+    /// Parses an envelope from a byte slice, validating all length prefixes and
+    /// integrity digests along the way.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EnvelopeError> {
+        let mut cursor = Cursor::new(bytes);
+
+        let proof_version = cursor.read_u8()?;
+        if proof_version != PROOF_VERSION {
+            return Err(EnvelopeError::UnsupportedVersion(proof_version));
+        }
+
+        let kind_byte = cursor.read_u8()?;
+        let proof_kind = decode_proof_kind(kind_byte)?;
+
+        let param_digest = ParamDigest(DigestBytes {
+            bytes: cursor.read_digest()?,
+        });
+        let air_spec_id = AirSpecId(DigestBytes {
+            bytes: cursor.read_digest()?,
+        });
+
+        let public_input_len = cursor.read_u32()? as usize;
+        let public_inputs = cursor.read_vec(public_input_len)?;
+        let commitment_digest = DigestBytes {
+            bytes: cursor.read_digest()?,
+        };
+
+        let header_length = cursor.read_u32()?;
+        let body_length = cursor.read_u32()?;
+
+        let header_bytes_consumed = cursor.offset();
+        let expected_header_length = (2 + 32 + 32 + 4 + public_input_len + 32 + 4 + 4) as u32;
+        if expected_header_length != header_length {
+            return Err(EnvelopeError::HeaderLengthMismatch {
+                declared: header_length,
+                actual: expected_header_length,
+            });
+        }
+
+        let body_bytes = cursor.read_vec(body_length as usize)?;
+        if cursor.remaining() != 0 {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer(
+                "trailing_header_bytes",
+            ));
+        }
+
+        if body_bytes.len() < 32 {
+            return Err(EnvelopeError::BodyLengthMismatch {
+                declared: body_length,
+                actual: body_bytes.len() as u32,
+            });
+        }
+
+        let (payload, integrity_bytes) = body_bytes.split_at(body_bytes.len() - 32);
+        let integrity_digest: [u8; 32] = integrity_bytes.try_into().unwrap();
+        let header_prefix = &bytes[..header_bytes_consumed];
+        let expected_integrity = compute_integrity_digest(header_prefix, payload);
+        if expected_integrity != integrity_digest {
+            return Err(EnvelopeError::IntegrityDigestMismatch);
+        }
+
+        let mut payload_cursor = Cursor::new(payload);
+        let core_root = payload_cursor.read_digest()?;
+        let aux_root = payload_cursor.read_digest()?;
+        let fri_layer_count = payload_cursor.read_u32()? as usize;
+        let mut fri_layer_roots = Vec::with_capacity(fri_layer_count);
+        for _ in 0..fri_layer_count {
+            fri_layer_roots.push(payload_cursor.read_digest()?);
+        }
+
+        let ood_count = payload_cursor.read_u32()? as usize;
+        let mut ood_openings = Vec::with_capacity(ood_count);
+        for _ in 0..ood_count {
+            let block_len = payload_cursor.read_u32()? as usize;
+            let block_bytes = payload_cursor.read_vec(block_len)?;
+            let opening = OutOfDomainOpening::deserialize(&block_bytes)?;
+            ood_openings.push(opening);
+        }
+
+        let fri_section_len = payload_cursor.read_u32()? as usize;
+        let fri_section = payload_cursor.read_vec(fri_section_len)?;
+        let fri_proof = deserialize_fri_proof(&fri_section)?;
+
+        let fri_parameters = FriParametersMirror {
+            fold: payload_cursor.read_u8()?,
+            cap_degree: payload_cursor.read_u16()?,
+            cap_size: payload_cursor.read_u32()?,
+            query_budget: payload_cursor.read_u16()?,
+        };
+
+        if payload_cursor.remaining() != 0 {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer("body_padding"));
+        }
+
+        Ok(Self {
+            header: ProofEnvelopeHeader {
+                proof_version,
+                proof_kind,
+                param_digest,
+                air_spec_id,
+                public_inputs,
+                commitment_digest,
+                header_length,
+                body_length,
+            },
+            body: ProofEnvelopeBody {
+                core_root,
+                aux_root,
+                fri_layer_roots,
+                ood_openings,
+                fri_proof,
+                fri_parameters,
+                integrity_digest: DigestBytes {
+                    bytes: integrity_digest,
+                },
+            },
+        })
+    }
+}
+
+/// Envelope header storing metadata and public inputs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofEnvelopeHeader {
+    /// Proof version encoded in the header (currently `1`).
+    pub proof_version: u8,
+    /// Canonical proof kind.
+    pub proof_kind: ProofKind,
+    /// Parameter digest binding configuration knobs.
+    pub param_digest: ParamDigest,
+    /// AIR specification identifier for the proof kind.
+    pub air_spec_id: AirSpecId,
+    /// Canonical public input encoding.
+    pub public_inputs: Vec<u8>,
+    /// Digest binding commitments prior to parsing the body.
+    pub commitment_digest: DigestBytes,
+    /// Declared header length (mainly for sanity checks).
+    pub header_length: u32,
+    /// Declared body length (includes integrity digest).
+    pub body_length: u32,
+}
+
+impl ProofEnvelopeHeader {
+    pub(crate) fn serialize(&self, body: &ProofEnvelopeBody) -> Vec<u8> {
+        let payload = body.serialize_payload();
+        let body_length = (payload.len() + 32) as u32;
+
+        let header_length = (2 + 32 + 32 + 4 + self.public_inputs.len() + 32 + 4 + 4) as u32;
+
+        let mut buffer = Vec::with_capacity(header_length as usize);
+        buffer.push(self.proof_version);
+        buffer.push(encode_proof_kind(self.proof_kind));
+        buffer.extend_from_slice(&self.param_digest.0.bytes);
+        let air_spec = self.air_spec_id.clone().bytes();
+        buffer.extend_from_slice(&air_spec.bytes);
+        buffer.extend_from_slice(&(self.public_inputs.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&self.public_inputs);
+        buffer.extend_from_slice(&self.commitment_digest.bytes);
+        buffer.extend_from_slice(&header_length.to_le_bytes());
+        buffer.extend_from_slice(&body_length.to_le_bytes());
+        buffer
+    }
+}
+
+/// Envelope body storing commitments, openings and the FRI proof.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofEnvelopeBody {
+    /// Core commitment root.
+    pub core_root: [u8; 32],
+    /// Auxiliary commitment root (zero if absent).
+    pub aux_root: [u8; 32],
+    /// FRI layer roots.
+    pub fri_layer_roots: Vec<[u8; 32]>,
+    /// Out-of-domain openings.
+    pub ood_openings: Vec<OutOfDomainOpening>,
+    /// FRI proof payload.
+    pub fri_proof: FriProof,
+    /// Optional mirror of the FRI parameters.
+    pub fri_parameters: FriParametersMirror,
+    /// Integrity digest stored at the end of the body.
     pub integrity_digest: DigestBytes,
 }
 
-/// Out-of-domain opening record.
+impl ProofEnvelopeBody {
+    pub(crate) fn serialize_payload(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&self.core_root);
+        buffer.extend_from_slice(&self.aux_root);
+        buffer.extend_from_slice(&(self.fri_layer_roots.len() as u32).to_le_bytes());
+        for root in &self.fri_layer_roots {
+            buffer.extend_from_slice(root);
+        }
+
+        buffer.extend_from_slice(&(self.ood_openings.len() as u32).to_le_bytes());
+        for opening in &self.ood_openings {
+            let encoded = opening.serialize();
+            buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(&encoded);
+        }
+
+        let fri_bytes = serialize_fri_proof(&self.fri_proof);
+        buffer.extend_from_slice(&(fri_bytes.len() as u32).to_le_bytes());
+        buffer.extend_from_slice(&fri_bytes);
+
+        buffer.push(self.fri_parameters.fold);
+        buffer.extend_from_slice(&self.fri_parameters.cap_degree.to_le_bytes());
+        buffer.extend_from_slice(&self.fri_parameters.cap_size.to_le_bytes());
+        buffer.extend_from_slice(&self.fri_parameters.query_budget.to_le_bytes());
+        buffer
+    }
+}
+
+/// Mirror of the FRI parameters stored inside the envelope body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriParametersMirror {
+    /// Folding factor (fixed to four in the current implementation).
+    pub fold: u8,
+    /// Degree of the cap polynomial.
+    pub cap_degree: u16,
+    /// Size of the cap commitment.
+    pub cap_size: u32,
+    /// Query budget.
+    pub query_budget: u16,
+}
+
+impl Default for FriParametersMirror {
+    fn default() -> Self {
+        Self {
+            fold: 4,
+            cap_degree: 0,
+            cap_size: 0,
+            query_budget: 0,
+        }
+    }
+}
+
+/// Out-of-domain opening description.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutOfDomainOpening {
-    /// Evaluation point encoded in little-endian field representation.
+    /// OOD evaluation point.
     pub point: [u8; 32],
-    /// Core trace values at the point (little-endian field encoding).
+    /// Core trace evaluations at that point.
     pub core_values: Vec<[u8; 32]>,
-    /// Auxiliary trace values at the point.
+    /// Auxiliary evaluations.
     pub aux_values: Vec<[u8; 32]>,
-    /// Composition polynomial value at the point.
+    /// Composition polynomial evaluation.
     pub composition_value: [u8; 32],
 }
 
-/// FRI proof payload in canonical order.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriProofPayload {
-    /// Folding parameter description (factor = 4, depth etc.).
-    pub folding_parameters: FriFoldingParameters,
-    /// Openings collected per query and layer.
-    pub layer_openings: Vec<FriLayerOpening>,
-    /// Query positions derived from transcript seeds.
-    pub query_positions: Vec<u32>,
-    /// Merkle paths using 4-ary encoding with explicit index bytes.
-    pub merkle_paths: Vec<FriMerklePath>,
+impl OutOfDomainOpening {
+    pub(crate) fn serialize(&self) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&self.point);
+        buffer.extend_from_slice(&(self.core_values.len() as u32).to_le_bytes());
+        for value in &self.core_values {
+            buffer.extend_from_slice(value);
+        }
+        buffer.extend_from_slice(&(self.aux_values.len() as u32).to_le_bytes());
+        for value in &self.aux_values {
+            buffer.extend_from_slice(value);
+        }
+        buffer.extend_from_slice(&self.composition_value);
+        buffer
+    }
+
+    fn deserialize(bytes: &[u8]) -> Result<Self, EnvelopeError> {
+        let mut cursor = Cursor::new(bytes);
+        let point = cursor.read_digest()?;
+        let core_len = cursor.read_u32()? as usize;
+        let mut core_values = Vec::with_capacity(core_len);
+        for _ in 0..core_len {
+            core_values.push(cursor.read_digest()?);
+        }
+        let aux_len = cursor.read_u32()? as usize;
+        let mut aux_values = Vec::with_capacity(aux_len);
+        for _ in 0..aux_len {
+            aux_values.push(cursor.read_digest()?);
+        }
+        let composition_value = cursor.read_digest()?;
+        if cursor.remaining() != 0 {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer("ood_padding"));
+        }
+        Ok(Self {
+            point,
+            core_values,
+            aux_values,
+            composition_value,
+        })
+    }
 }
 
-/// Folding parameters for FRI recursion.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriFoldingParameters {
-    /// Fold factor (fixed to 4).
-    pub fold_factor: u8,
-    /// Number of recursive layers.
-    pub layer_count: u8,
+/// Computes the commitment digest over core, auxiliary and FRI layer roots.
+pub fn compute_commitment_digest(
+    core_root: &[u8; 32],
+    aux_root: &[u8; 32],
+    fri_layer_roots: &[[u8; 32]],
+) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(core_root);
+    hasher.update(aux_root);
+    for root in fri_layer_roots {
+        hasher.update(root);
+    }
+    *hasher.finalize().as_bytes()
 }
 
-/// Opening data for a specific FRI layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriLayerOpening {
-    /// Layer index (0-based, little-endian when serialized).
-    pub layer_index: u8,
-    /// Field values revealed at this layer.
-    pub values: Vec<[u8; 32]>,
+/// Computes the integrity digest over the header bytes and body payload.
+pub fn compute_integrity_digest(header_bytes: &[u8], body_payload: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(header_bytes);
+    hasher.update(body_payload);
+    *hasher.finalize().as_bytes()
 }
 
-/// Merkle authentication path for a single query.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriMerklePath {
-    /// Index bytes in range [0,3] describing sibling ordering per level.
-    pub index_bytes: Vec<u8>,
-    /// Sibling digests for each level (little-endian order of concatenation).
-    pub sibling_digests: Vec<DigestBytes>,
+/// Serialises the public inputs using the canonical layout.
+pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
+    fn version_byte(version: PublicInputVersion) -> u8 {
+        match version {
+            PublicInputVersion::V1 => 1,
+        }
+    }
+
+    match inputs {
+        PublicInputs::Execution { header, body } => {
+            let ExecutionHeaderV1 {
+                version,
+                program_digest,
+                trace_length,
+                trace_width,
+            } = header;
+            let mut buffer = Vec::new();
+            buffer.push(version_byte(*version));
+            buffer.extend_from_slice(&program_digest.bytes);
+            buffer.extend_from_slice(&trace_length.to_le_bytes());
+            buffer.extend_from_slice(&trace_width.to_le_bytes());
+            buffer.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(body);
+            buffer
+        }
+        PublicInputs::Aggregation { header, body } => {
+            let AggregationHeaderV1 {
+                version,
+                circuit_digest,
+                leaf_count,
+                root_digest,
+            } = header;
+            let mut buffer = Vec::new();
+            buffer.push(version_byte(*version));
+            buffer.extend_from_slice(&circuit_digest.bytes);
+            buffer.extend_from_slice(&leaf_count.to_le_bytes());
+            buffer.extend_from_slice(&root_digest.bytes);
+            buffer.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(body);
+            buffer
+        }
+        PublicInputs::Recursion { header, body } => {
+            let RecursionHeaderV1 {
+                version,
+                depth,
+                boundary_digest,
+                recursion_seed,
+            } = header;
+            let mut buffer = Vec::new();
+            buffer.push(version_byte(*version));
+            buffer.push(*depth);
+            buffer.extend_from_slice(&boundary_digest.bytes);
+            buffer.extend_from_slice(&recursion_seed.bytes);
+            buffer.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(body);
+            buffer
+        }
+        PublicInputs::Vrf { header, body } => {
+            let VrfHeaderV1 {
+                version,
+                public_key_commit,
+                prf_param_digest,
+                rlwe_param_id,
+                vrf_param_id,
+                transcript_version_id,
+                field_id,
+                context_digest,
+            } = header;
+            let mut buffer = Vec::new();
+            buffer.push(version_byte(*version));
+            buffer.extend_from_slice(&public_key_commit.bytes);
+            buffer.extend_from_slice(&prf_param_digest.bytes);
+            buffer.extend_from_slice(rlwe_param_id.as_bytes());
+            buffer.extend_from_slice(vrf_param_id.as_bytes());
+            let tv = transcript_version_id.clone().bytes();
+            buffer.extend_from_slice(&tv.bytes);
+            buffer.extend_from_slice(&field_id.to_le_bytes());
+            buffer.extend_from_slice(&context_digest.bytes);
+            buffer.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            buffer.extend_from_slice(body);
+            buffer
+        }
+    }
+}
+
+/// Maps a public-input proof kind to the global configuration ordering.
+pub fn map_public_to_config_kind(kind: crate::proof::public_inputs::ProofKind) -> ProofKind {
+    use crate::proof::public_inputs::ProofKind as PublicKind;
+    match kind {
+        PublicKind::Execution => ProofKind::Tx,
+        PublicKind::Aggregation => ProofKind::Aggregation,
+        PublicKind::Recursion => ProofKind::State,
+        PublicKind::VrfPostQuantum => ProofKind::VRF,
+    }
+}
+
+fn encode_proof_kind(kind: ProofKind) -> u8 {
+    match kind {
+        ProofKind::Tx => 0,
+        ProofKind::State => 1,
+        ProofKind::Pruning => 2,
+        ProofKind::Uptime => 3,
+        ProofKind::Consensus => 4,
+        ProofKind::Identity => 5,
+        ProofKind::Aggregation => 6,
+        ProofKind::VRF => 7,
+    }
+}
+
+fn decode_proof_kind(byte: u8) -> Result<ProofKind, EnvelopeError> {
+    Ok(match byte {
+        0 => ProofKind::Tx,
+        1 => ProofKind::State,
+        2 => ProofKind::Pruning,
+        3 => ProofKind::Uptime,
+        4 => ProofKind::Consensus,
+        5 => ProofKind::Identity,
+        6 => ProofKind::Aggregation,
+        7 => ProofKind::VRF,
+        other => return Err(EnvelopeError::UnknownProofKind(other)),
+    })
+}
+
+fn serialize_fri_proof(proof: &FriProof) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    buffer.push(match proof.security_level {
+        FriSecurityLevel::Standard => 0,
+        FriSecurityLevel::HiSec => 1,
+        FriSecurityLevel::Throughput => 2,
+    });
+    buffer.extend_from_slice(&(proof.initial_domain_size as u32).to_le_bytes());
+    buffer.extend_from_slice(&(proof.layer_roots.len() as u32).to_le_bytes());
+    for root in &proof.layer_roots {
+        buffer.extend_from_slice(root);
+    }
+    buffer.extend_from_slice(&(proof.final_polynomial.len() as u32).to_le_bytes());
+    for value in &proof.final_polynomial {
+        buffer.extend_from_slice(&field_to_bytes(*value));
+    }
+    buffer.extend_from_slice(&proof.final_polynomial_digest);
+    buffer.extend_from_slice(&(proof.queries.len() as u32).to_le_bytes());
+    for query in &proof.queries {
+        buffer.extend_from_slice(&(query.position as u64).to_le_bytes());
+        buffer.extend_from_slice(&(query.layers.len() as u32).to_le_bytes());
+        for layer in &query.layers {
+            buffer.extend_from_slice(&field_to_bytes(layer.value));
+            buffer.extend_from_slice(&(layer.path.len() as u32).to_le_bytes());
+            for element in &layer.path {
+                buffer.push(element.index.0);
+                for sibling in &element.siblings {
+                    buffer.extend_from_slice(sibling);
+                }
+            }
+        }
+        buffer.extend_from_slice(&field_to_bytes(query.final_value));
+    }
+    buffer
+}
+
+fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
+    let mut cursor = Cursor::new(bytes);
+    let security_level = match cursor.read_u8()? {
+        0 => FriSecurityLevel::Standard,
+        1 => FriSecurityLevel::HiSec,
+        2 => FriSecurityLevel::Throughput,
+        _ => return Err(EnvelopeError::InvalidFriSection("security_level")),
+    };
+    let initial_domain_size = cursor.read_u32()? as usize;
+    let layer_count = cursor.read_u32()? as usize;
+    let mut layer_roots = Vec::with_capacity(layer_count);
+    for _ in 0..layer_count {
+        layer_roots.push(cursor.read_digest()?);
+    }
+    let final_len = cursor.read_u32()? as usize;
+    let mut final_polynomial = Vec::with_capacity(final_len);
+    for _ in 0..final_len {
+        final_polynomial.push(field_from_bytes(cursor.read_digest()?));
+    }
+    let final_polynomial_digest = cursor.read_digest()?;
+    let query_len = cursor.read_u32()? as usize;
+    let mut queries = Vec::with_capacity(query_len);
+    for _ in 0..query_len {
+        let position = cursor.read_u64()? as usize;
+        let layer_len = cursor.read_u32()? as usize;
+        let mut layers = Vec::with_capacity(layer_len);
+        for _ in 0..layer_len {
+            let value = field_from_bytes(cursor.read_digest()?);
+            let path_len = cursor.read_u32()? as usize;
+            let mut path = Vec::with_capacity(path_len);
+            for _ in 0..path_len {
+                let index = cursor.read_u8()?;
+                let mut siblings = [[0u8; 32]; 3];
+                for sibling in siblings.iter_mut() {
+                    *sibling = cursor.read_digest()?;
+                }
+                path.push(MerklePathElement {
+                    index: MerkleIndex(index),
+                    siblings,
+                });
+            }
+            layers.push(FriQueryLayer { value, path });
+        }
+        let final_value = field_from_bytes(cursor.read_digest()?);
+        queries.push(FriQuery {
+            position,
+            layers,
+            final_value,
+        });
+    }
+
+    if cursor.remaining() != 0 {
+        return Err(EnvelopeError::InvalidFriSection("trailing_bytes"));
+    }
+
+    Ok(FriProof {
+        security_level,
+        initial_domain_size,
+        layer_roots,
+        final_polynomial,
+        final_polynomial_digest,
+        queries,
+    })
+}
+
+fn field_to_bytes(value: FieldElement) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    out[..8].copy_from_slice(&value.0.to_le_bytes());
+    out
+}
+
+fn field_from_bytes(bytes: [u8; 32]) -> FieldElement {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[..8]);
+    FieldElement(u64::from_le_bytes(buf))
+}
+
+/// Thin cursor helper used by the serializer/deserializer.
+struct Cursor<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn remaining(&self) -> usize {
+        self.bytes.len().saturating_sub(self.offset)
+    }
+
+    fn offset(&self) -> usize {
+        self.offset
+    }
+
+    fn read_u8(&mut self) -> Result<u8, EnvelopeError> {
+        if self.remaining() < 1 {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer("u8"));
+        }
+        let value = self.bytes[self.offset];
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn read_u16(&mut self) -> Result<u16, EnvelopeError> {
+        let bytes = self.read_fixed::<2>()?;
+        Ok(u16::from_le_bytes(bytes))
+    }
+
+    fn read_u32(&mut self) -> Result<u32, EnvelopeError> {
+        let bytes = self.read_fixed::<4>()?;
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn read_u64(&mut self) -> Result<u64, EnvelopeError> {
+        let bytes = self.read_fixed::<8>()?;
+        Ok(u64::from_le_bytes(bytes))
+    }
+
+    fn read_vec(&mut self, len: usize) -> Result<Vec<u8>, EnvelopeError> {
+        if self.remaining() < len {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer("vec"));
+        }
+        let slice = &self.bytes[self.offset..self.offset + len];
+        self.offset += len;
+        Ok(slice.to_vec())
+    }
+
+    fn read_digest(&mut self) -> Result<[u8; 32], EnvelopeError> {
+        self.read_fixed::<32>()
+    }
+
+    fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N], EnvelopeError> {
+        if self.remaining() < N {
+            return Err(EnvelopeError::UnexpectedEndOfBuffer("fixed"));
+        }
+        let mut out = [0u8; N];
+        out.copy_from_slice(&self.bytes[self.offset..self.offset + N]);
+        self.offset += N;
+        Ok(out)
+    }
+}
+
+impl Default for DigestBytes {
+    fn default() -> Self {
+        Self { bytes: [0u8; 32] }
+    }
 }

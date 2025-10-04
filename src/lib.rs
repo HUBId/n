@@ -102,6 +102,6 @@ pub fn batch_verify(
 }
 
 /// Convenience helper returning the canonical proof envelope layout.
-pub fn proof_envelope_spec() -> proof::envelope::ProofEnvelopeSpec {
-    proof::envelope::ProofEnvelopeSpec {}
+pub fn proof_envelope_spec() -> &'static str {
+    "See proof::envelope for the canonical layout implementation."
 }
