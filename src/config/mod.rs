@@ -2,7 +2,7 @@
 //! Provides strongly typed contexts used to parameterize proof generation and verification.
 
 use crate::field::prime_field::Modulus;
-use crate::{fri::config::FriParameters, hash::config::HashParameters};
+use crate::{fri::config::FriProfile, hash::config::HashParameters};
 
 /// Shared configuration between prover and verifier specifying the evaluation domain and FRI setup.
 #[derive(Debug, Clone)]
@@ -11,8 +11,8 @@ pub struct StarkConfig {
     pub trace_length: usize,
     /// Field modulus configuration.
     pub field_modulus: Modulus,
-    /// FRI parameters describing folding strategy.
-    pub fri: FriParameters,
+    /// FRI profile describing folding strategy and sampling queries.
+    pub fri: FriProfile,
     /// Hash configuration for commitments and transcripts.
     pub hash: HashParameters,
 }

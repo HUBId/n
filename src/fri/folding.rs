@@ -1,47 +1,47 @@
-//! FRI folding strategy definitions.
-//! Provides deterministic folding operations for polynomial commitments.
+//! FRI folding schedule descriptors.
+//! Encodes how quartic folding is applied across the layered commitment tree.
 
-use crate::field::FieldElement;
-use crate::{StarkError, StarkResult};
+use crate::fri::config::FriProfile;
 
-/// Represents a single layer in the FRI folding process.
-#[derive(Debug, Clone)]
-pub struct FriLayer {
-    /// Evaluation points at the current layer.
-    pub evaluations: Vec<FieldElement>,
+/// Constant folding factor used by the quartic FRI variant supported in this crate.
+pub const QUARTIC_FOLD: usize = 4;
+
+/// Canonical digest for commitments produced at a given layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LayerCommitment {
+    /// Optional transcript digest emitted after committing to the layer.
+    pub digest: Option<[u8; 32]>,
+    /// Optional textual label describing how the layer contributes to the transcript.
+    pub label: &'static str,
 }
 
-/// Deterministic folding operator.
-#[derive(Debug, Clone)]
-pub struct FriFolding {
-    /// Folding factor applied at each layer.
-    pub folding_factor: usize,
+/// Describes how a layer is produced while folding the evaluation domain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldingLayer {
+    /// Sequential index of the layer with respect to the original codeword.
+    pub layer_index: usize,
+    /// Logarithmic size of the evaluation domain at this layer.
+    pub log_size: usize,
+    /// Commitment emitted for the layer.
+    pub commitment: LayerCommitment,
 }
 
-impl FriFolding {
-    /// Creates a new folding descriptor.
-    pub fn new(folding_factor: usize) -> Self {
-        Self { folding_factor }
-    }
+/// Full schedule tying a FRI profile to an ordered sequence of layers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldingLayout {
+    /// Reference to the canonical profile driving the schedule.
+    pub profile: &'static FriProfile,
+    /// Layers enumerated from root (codeword) to the residual polynomial.
+    pub layers: Vec<FoldingLayer>,
+}
 
-    /// Performs a single folding step, reducing the number of evaluations.
-    pub fn fold(&self, layer: &FriLayer) -> StarkResult<FriLayer> {
-        if self.folding_factor == 0 {
-            return Err(StarkError::InvalidInput("folding factor must be non-zero"));
-        }
-        if layer.evaluations.len() % self.folding_factor != 0 {
-            return Err(StarkError::InvalidInput(
-                "evaluations length must be divisible by folding factor",
-            ));
-        }
-        let mut next = Vec::with_capacity(layer.evaluations.len() / self.folding_factor);
-        for chunk in layer.evaluations.chunks(self.folding_factor) {
-            let mut acc = FieldElement::zero();
-            for value in chunk {
-                acc = acc.add(*value);
-            }
-            next.push(acc);
-        }
-        Ok(FriLayer { evaluations: next })
+/// Trait describing access to quartic FRI folding metadata.
+pub trait QuarticFriFolding {
+    /// Returns the folding layout containing ordered layer commitments.
+    fn layout(&self) -> &FoldingLayout;
+
+    /// Returns the folding factor. Defaults to the quartic constant.
+    fn folding_factor(&self) -> usize {
+        QUARTIC_FOLD
     }
 }
