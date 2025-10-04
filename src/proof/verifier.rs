@@ -72,7 +72,7 @@ impl<'ctx> VerifierContextUsage<'ctx> {
     pub fn new(context: &'ctx VerifierContext) -> Self {
         Self {
             context,
-            limits: context.limits,
+            limits: context.limits.clone(),
         }
     }
 }

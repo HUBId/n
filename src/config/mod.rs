@@ -1,217 +1,594 @@
-//! Global configuration and context descriptors for the `rpp-stark` proof
-//! engine.
+//! Canonical configuration scaffolding shared by prover, verifier and AIR
+//! authors.
 //!
-//! The declarations in this module only expose contracts and identifiers.
-//! Implementations are intentionally omitted so that integrators can supply
-//! their own runtime while inheriting the canonical documentation for
-//! determinism, parameter pinning and resource limits.
+//! This module intentionally exposes **only** identifiers, constants and
+//! layout descriptors. No runtime logic is provided; implementors are expected
+//! to use these declarations when wiring their respective engines. The
+//! documentation embedded in this module forms part of the specification and
+//! records the change-control rules, test obligations and canonical ordering of
+//! all configuration artefacts.
 
 use crate::utils::serialization::DigestBytes;
 
-/// Canonical digest binding all protocol parameters for a given profile.
-///
-/// The digest MUST be computed over the following little-endian encoded
-/// sequence:
-/// 1. `field_id:u16`
-/// 2. [`PoseidonParamId::to_le_bytes`]
-/// 3. `lde_factor:u32`
-/// 4. [`FriPlanId::to_le_bytes`]
-/// 5. `query_budget:u32`
-/// 6. [`MerkleSchemeId::to_le_bytes`]
-/// 7. [`TranscriptVersionId::to_le_bytes`]
-/// 8. [`AirSpecId::to_le_bytes`]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParamDigest(pub DigestBytes);
+/// Fixed domain separator used when hashing the parameter layout into the
+/// [`ParamDigest`]. The tag is ASCII encoded and **must** be prepended to the
+/// little-endian fields listed in the canonical order below before running the
+/// BLAKE3 hash function.
+pub const PARAM_DIGEST_DOMAIN_TAG: &[u8; 13] = b"RPP-PARAMS-V1";
 
-/// Identifier for Poseidon parameter sets.
+/// Domain separator used when deriving per-proof public-input digests for
+/// sorting and batch aggregation. Proof builders and verifiers prepend this tag
+/// before hashing the canonical proof-kind byte and public-input encoding.
+pub const PI_DIGEST_DOMAIN_TAG: &[u8; 9] = b"RPP-PI-V1";
+
+/// Identifier describing a configuration profile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PoseidonParamId(pub u16);
+pub struct ProfileId(pub u8);
 
-impl PoseidonParamId {
-    /// Returns the canonical little-endian representation of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
-    }
-}
-
-/// Identifier for transcript versions (Phase 3 binding).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TranscriptVersionId(pub u8);
-
-impl TranscriptVersionId {
-    /// Returns the little-endian encoding of the identifier.
+impl ProfileId {
+    /// Returns the canonical single-byte little-endian representation.
     pub const fn to_le_bytes(self) -> [u8; 1] {
         [self.0]
     }
 }
 
-/// Identifier for Merkle scheme variants.
+/// Standard proving profile optimised for balanced rollup workloads.
+pub const PROFILE_STD: ProfileId = ProfileId(1);
+
+/// High-security proving profile favouring query redundancy and stronger FRI
+/// parameters.
+pub const PROFILE_HISEC: ProfileId = ProfileId(2);
+
+/// Optional high-throughput profile for latency-sensitive rollups. It shares
+/// the same Poseidon parameters as the standard profile while reducing FRI
+/// queries. Integrators **must** benchmark before enabling it.
+pub const PROFILE_THROUGHPUT: ProfileId = ProfileId(3);
+
+/// Identifier describing the base field of the AIR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MerkleSchemeId(pub u16);
+pub struct FieldId(pub u8);
+
+impl FieldId {
+    /// Returns the canonical representation used in the [`ParamDigest`].
+    pub const fn to_le_bytes(self) -> [u8; 1] {
+        [self.0]
+    }
+}
+
+/// Goldilocks 64-bit field used by the proof system.
+pub const FIELD_ID_GOLDILOCKS_64: FieldId = FieldId(1);
+
+/// Identifier describing a Poseidon parameter set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PoseidonParamId(pub DigestBytes);
+
+impl PoseidonParamId {
+    /// Returns the raw 32-byte identifier used across transcripts.
+    pub const fn bytes(self) -> DigestBytes {
+        self.0
+    }
+}
+
+/// Identifier describing the Merkle commitment scheme.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MerkleSchemeId(pub DigestBytes);
 
 impl MerkleSchemeId {
-    /// Returns the little-endian encoding of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
+    /// Returns the raw 32-byte identifier.
+    pub const fn bytes(self) -> DigestBytes {
+        self.0
     }
 }
 
-/// Identifier for FRI folding plans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct FriPlanId(pub u16);
+/// Identifier describing the Fiat-Shamir transcript version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptVersionId(pub DigestBytes);
+
+impl TranscriptVersionId {
+    /// Returns the raw 32-byte identifier.
+    pub const fn bytes(self) -> DigestBytes {
+        self.0
+    }
+}
+
+/// Identifier describing the canonical FRI folding plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriPlanId(pub DigestBytes);
 
 impl FriPlanId {
-    /// Returns the little-endian encoding of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
+    /// Returns the raw 32-byte identifier.
+    pub const fn bytes(self) -> DigestBytes {
+        self.0
     }
 }
 
-/// Identifier for AIR (algebraic intermediate representation) specifications.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AirSpecId(pub u16);
+/// Identifier describing the AIR specification bound to a proof kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AirSpecId(pub DigestBytes);
 
 impl AirSpecId {
-    /// Returns the little-endian encoding of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
+    /// Returns the raw 32-byte identifier.
+    pub const fn bytes(self) -> DigestBytes {
+        self.0
     }
 }
 
-/// Identifier describing the deterministic thread pool selection.
+/// Identifier describing the version of the proof envelope/layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofVersion(pub u8);
+
+impl ProofVersion {
+    /// Returns the canonical single-byte representation.
+    pub const fn to_le_bytes(self) -> [u8; 1] {
+        [self.0]
+    }
+}
+
+/// Canonical proof kinds. **The order of the variants is immutable** and must
+/// be used whenever serialising per-proof data (limits, AIR identifiers,
+/// public-input digests, …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(non_camel_case_types)]
+pub enum ProofKind {
+    /// Transaction execution proofs.
+    Tx,
+    /// Global state transition proofs.
+    State,
+    /// Historical pruning proofs.
+    Pruning,
+    /// Uptime / liveness proofs.
+    Uptime,
+    /// Consensus proofs.
+    Consensus,
+    /// Identity proofs.
+    Identity,
+    /// Aggregation proofs.
+    Aggregation,
+    /// Verifiable random function proofs.
+    VRF,
+}
+
+impl ProofKind {
+    /// Global immutable order used across layouts and hashes.
+    pub const ORDER: [ProofKind; 8] = [
+        ProofKind::Tx,
+        ProofKind::State,
+        ProofKind::Pruning,
+        ProofKind::Uptime,
+        ProofKind::Consensus,
+        ProofKind::Identity,
+        ProofKind::Aggregation,
+        ProofKind::VRF,
+    ];
+}
+
+/// Helper struct storing values per [`ProofKind`] in canonical order. When
+/// serialising, fields must be emitted in declaration order using
+/// little-endian encoding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofKindLayout<T> {
+    pub tx: T,
+    pub state: T,
+    pub pruning: T,
+    pub uptime: T,
+    pub consensus: T,
+    pub identity: T,
+    pub aggregation: T,
+    pub vrf: T,
+}
+
+/// Poseidon round configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoseidonRoundConfiguration {
+    pub full_rounds: u8,
+    pub partial_rounds: u8,
+}
+
+/// Allowed depth range for the FRI folding tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FriDepthRange {
+    pub min: u8,
+    pub max: u8,
+}
+
+/// Deterministic threading configuration. Work stealing runtimes are forbidden;
+/// only the policies listed here are allowed and **must** be executed with
+/// deterministic scheduling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadPoolProfile {
     /// Exactly one worker executes all tasks sequentially.
     SingleThread,
-    /// Fixed number of workers with static round-robin scheduling.
+    /// Fixed number of workers processed in a round-robin manner.
     FixedStatic { worker_count: u8 },
 }
 
-/// Chunking strategy used when splitting trace or query workloads.
+/// Chunking strategy used for distributing workloads across workers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChunkingPolicy {
-    /// Minimum number of field elements assigned to a worker.
+    /// Minimum number of field elements per worker chunk.
     pub min_chunk_items: u32,
-    /// Maximum number of field elements assigned to a worker.
+    /// Maximum number of field elements per worker chunk.
     pub max_chunk_items: u32,
-    /// Explicit stride (in elements) used when slicing evaluation domains.
+    /// Explicit stride applied when slicing evaluation domains.
     pub stride: u32,
 }
 
-/// Profile describing the overall security/performance target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Profile {
-    /// Balanced defaults designed for general rollup proving.
-    Standard,
-    /// High security profile increasing LDE and query budgets.
-    HighSecurity,
-}
-
-/// Hard resource limits shared between prover and verifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Hard resource limits shared between prover and verifier. Every field is
+/// serialised little-endian when deriving the [`ParamDigest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceLimits {
-    /// Maximum serialized proof size in bytes.
     pub max_proof_size_bytes: u32,
-    /// Maximum number of FRI layers allowed for any proof.
     pub max_layers: u8,
-    /// Maximum number of FRI queries per proof.
     pub max_queries: u16,
-    /// Maximum trace width (number of columns) per proof kind.
-    pub max_trace_width: u32,
-    /// Maximum number of trace steps per proof kind.
-    pub max_trace_steps: u32,
+    pub per_proof_max_trace_width: ProofKindLayout<u16>,
+    pub per_proof_max_trace_steps: ProofKindLayout<u32>,
 }
 
-/// Deterministic domains negotiated for the prover pipeline.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DomainParameters {
-    /// Multiplicative low-degree extension factor.
-    pub lde_factor: u32,
-    /// Vector of evaluation domain sizes per register group.
-    pub register_domain_sizes: Vec<u32>,
-}
+/// Collection of AIR identifiers bound to the canonical proof kinds.
+pub type AirSpecLayout = ProofKindLayout<AirSpecId>;
 
-/// Context required by the prover to execute the deterministic pipeline.
+/// Canonical configuration description shared by prover, verifier and AIR.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProverContext {
-    /// Digest pinning all parameters for the current profile.
-    pub param_digest: ParamDigest,
-    /// Poseidon parameter identifier (Phase 2 binding).
+pub struct ProfileConfig {
+    pub id: ProfileId,
+    pub name: &'static str,
+    pub security_goal: &'static str,
+    pub lde_factor: u8,
+    pub fri_queries: u16,
+    pub fri_depth_range: FriDepthRange,
+    pub poseidon_rounds: PoseidonRoundConfiguration,
     pub poseidon_param_id: PoseidonParamId,
-    /// Transcript version identifier (Phase 3 binding).
-    pub transcript_version_id: TranscriptVersionId,
-    /// Merkle commitment scheme identifier.
     pub merkle_scheme_id: MerkleSchemeId,
-    /// FRI plan identifier (Phase 4 binding).
+    pub transcript_version_id: TranscriptVersionId,
     pub fri_plan_id: FriPlanId,
-    /// AIR specification identifier (Phase 2 binding).
-    pub air_spec_id: AirSpecId,
-    /// Deterministic low-degree extension factor and domain sizes.
-    pub domains: DomainParameters,
-    /// Thread pool description (no work stealing).
-    pub thread_pool: ThreadPoolProfile,
-    /// Chunking policy used throughout the pipeline.
-    pub chunking: ChunkingPolicy,
-    /// Selected profile (standard or high security).
-    pub profile: Profile,
-    /// Resource limits enforced by the prover before entering heavy phases.
+    pub batch_verification_enabled: bool,
+    pub max_threads: u8,
     pub limits: ResourceLimits,
+    pub air_spec_ids: AirSpecLayout,
+}
+
+/// Canonical digest binding all protocol parameters for a given profile.
+///
+/// The digest MUST be computed as follows:
+///
+/// * Concatenate `PARAM_DIGEST_DOMAIN_TAG` with the little-endian encoding of
+///   the fields listed **in order**:
+///   1. `profile_id:u8`
+///   2. `field_id:u8`
+///   3. `poseidon_param_id: [u8; 32]`
+///   4. `merkle_scheme_id: [u8; 32]`
+///   5. `transcript_version_id: [u8; 32]`
+///   6. `fri_plan_id: [u8; 32]`
+///   7. `lde_factor:u8`
+///   8. `fri_queries:u16`
+///   9. `fri_depth_min:u8`
+///   10. `fri_depth_max:u8`
+///   11. `max_proof_size_bytes:u32`
+///   12. `max_layers:u8`
+///   13. `max_queries:u16`
+///   14. `per_proof_max_trace_width` for each [`ProofKind`] in canonical order
+///       (`u16` each)
+///   15. `per_proof_max_trace_steps` for each [`ProofKind`] in canonical order
+///       (`u32` each)
+///   16. `air_spec_id` for each [`ProofKind`] in canonical order (`[u8; 32]`
+///       each)
+///   17. `reserved:u16` (currently zero)
+/// * Hash the resulting byte string with BLAKE3.
+/// * The 32-byte output is stored in this wrapper.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParamDigest(pub DigestBytes);
+
+/// Digest binding a single proof's public inputs for deterministic batching.
+/// The hash is computed as `BLAKE3(PI_DIGEST_DOMAIN_TAG || proof_kind:u8 ||
+/// canonical_public_input_bytes)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PiDigest(pub DigestBytes);
+
+/// Common identifiers shared across all profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommonIdentifiers {
+    pub field_id: FieldId,
+    pub merkle_scheme_id: MerkleSchemeId,
+    pub transcript_version_id: TranscriptVersionId,
+    pub fri_plan_id: FriPlanId,
 }
 
 /// Deterministic counters optionally collected by the verifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeterministicMetrics {
-    /// Number of hashes performed while validating a proof.
     pub hash_invocations: u64,
-    /// Number of field operations performed.
     pub field_operations: u64,
 }
 
-/// Context used by the verifier when replaying proofs.
+/// Context required by the prover to execute the deterministic pipeline. It
+/// mirrors [`ProfileConfig`] and pins the negotiated identifiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProverContext {
+    pub profile: ProfileConfig,
+    pub param_digest: ParamDigest,
+    pub common_ids: CommonIdentifiers,
+    pub limits: ResourceLimits,
+    pub thread_pool: ThreadPoolProfile,
+    pub chunking: ChunkingPolicy,
+}
+
+/// Context required by the verifier when replaying proofs. Mirrors the prover
+/// context but may additionally expose deterministic counters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifierContext {
-    /// Digest pinning all parameters for the current profile.
+    pub profile: ProfileConfig,
     pub param_digest: ParamDigest,
-    /// Poseidon parameter identifier (for transcript reconstruction).
-    pub poseidon_param_id: PoseidonParamId,
-    /// Transcript version identifier (Phase 3 binding).
-    pub transcript_version_id: TranscriptVersionId,
-    /// Merkle commitment scheme identifier.
-    pub merkle_scheme_id: MerkleSchemeId,
-    /// FRI plan identifier (Phase 4 binding).
-    pub fri_plan_id: FriPlanId,
-    /// AIR specification identifier (Phase 2 binding).
-    pub air_spec_id: AirSpecId,
-    /// Hard resource limits validated before expensive checks.
+    pub common_ids: CommonIdentifiers,
     pub limits: ResourceLimits,
-    /// Selected verification profile.
-    pub profile: Profile,
-    /// Optional deterministic counters (no timestamps allowed).
     pub metrics: Option<DeterministicMetrics>,
 }
 
 /// Shared configuration struct referencing profiles and parameter IDs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofSystemConfig {
-    /// Parameter digest that must match prover/verifier contexts.
+    pub proof_version: ProofVersion,
+    pub profile: ProfileConfig,
     pub param_digest: ParamDigest,
-    /// Selected profile for both prover and verifier.
-    pub profile: Profile,
-    /// Resource limits that must be documented in user-facing manuals.
-    pub limits: ResourceLimits,
 }
 
 impl ProofSystemConfig {
-    /// Returns a short textual description of the configuration scope.
+    /// Change-control statement for this configuration.
     pub const DESCRIPTION: &'static str =
-        "Phase2-5 parameter pinning; any change requires new ParamDigest";
+        "ProofVersion bumps are reserved for envelope layout changes;\
+         ParamDigest changes capture all parameter, limit or AIR updates.";
 }
 
-/// Default maximum proof size applied across the system.
-pub const MAX_PROOF_SIZE_BYTES: u32 = 32 * 1024 * 1024;
+const fn digest(bytes: [u8; 32]) -> DigestBytes {
+    DigestBytes { bytes }
+}
 
-/// Default maximum number of FRI queries permitted per proof.
-pub const MAX_FRI_QUERIES: u16 = 128;
+/// Canonical Merkle scheme identifier (`BLAKE3_4ARY_V1`).
+pub const MERKLE_SCHEME_ID_BLAKE3_4ARY_V1: MerkleSchemeId = MerkleSchemeId(digest([
+    b'B', b'L', b'A', b'K', b'E', b'3', b'_', b'4', b'A', b'R', b'Y', b'_', b'V', b'1', 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+]));
 
-/// Default maximum number of FRI layers for the recursive folding.
-pub const MAX_FRI_LAYERS: u8 = 16;
+/// Canonical transcript identifier (`RPP_FS_V1`).
+pub const TRANSCRIPT_VERSION_ID_RPP_FS_V1: TranscriptVersionId = TranscriptVersionId(digest([
+    b'R', b'P', b'P', b'_', b'F', b'S', b'_', b'V', b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 1,
+]));
+
+/// Canonical FRI folding plan identifier (fold factor 4).
+pub const FRI_PLAN_ID_FOLD4_V1: FriPlanId = FriPlanId(digest([
+    b'F', b'R', b'I', b'_', b'P', b'L', b'A', b'N', b'_', b'F', b'4', b'_', b'V', b'1', 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4,
+]));
+
+/// Poseidon parameter identifier for `rf=8, rp=56`.
+pub const POSEIDON_PARAM_ID_STANDARD: PoseidonParamId = PoseidonParamId(digest([
+    b'P', b'O', b'S', b'E', b'I', b'D', b'O', b'N', b'_', b'R', b'F', b'8', b'_', b'R', b'P', b'5',
+    b'6', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+]));
+
+/// Poseidon parameter identifier for `rf=8, rp=60` (high-security profile).
+pub const POSEIDON_PARAM_ID_HISEC: PoseidonParamId = PoseidonParamId(digest([
+    b'P', b'O', b'S', b'E', b'I', b'D', b'O', b'N', b'_', b'R', b'F', b'8', b'_', b'R', b'P', b'6',
+    b'0', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+]));
+
+/// Placeholder AIR identifiers for all proof kinds (version 1 lineage).
+pub const AIR_SPEC_IDS_V1: AirSpecLayout = ProofKindLayout {
+    tx: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'T', b'X', b'-', b'A', b'I', b'R', b'-', b'V', b'1', 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    ])),
+    state: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'S', b'T', b'A', b'T', b'E', b'-', b'A', b'I', b'R', b'-', b'V',
+        b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+    ])),
+    pruning: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'P', b'R', b'U', b'N', b'E', b'-', b'A', b'I', b'R', b'-', b'V',
+        b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3,
+    ])),
+    uptime: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'U', b'P', b'T', b'I', b'M', b'E', b'-', b'A', b'I', b'R', b'-',
+        b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4,
+    ])),
+    consensus: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'C', b'O', b'N', b'S', b'E', b'N', b'S', b'U', b'S', b'-', b'V',
+        b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5,
+    ])),
+    identity: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'I', b'D', b'E', b'N', b'T', b'I', b'T', b'Y', b'-', b'V', b'1',
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6,
+    ])),
+    aggregation: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'A', b'G', b'G', b'R', b'E', b'G', b'-', b'V', b'1', 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7,
+    ])),
+    vrf: AirSpecId(digest([
+        b'R', b'P', b'P', b'-', b'V', b'R', b'F', b'-', b'V', b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8,
+    ])),
+};
+
+/// Common identifiers shared across profiles.
+pub const COMMON_IDENTIFIERS: CommonIdentifiers = CommonIdentifiers {
+    field_id: FIELD_ID_GOLDILOCKS_64,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+};
+
+/// Standard profile configuration (`PROFILE_STD`).
+pub const PROFILE_STANDARD_CONFIG: ProfileConfig = ProfileConfig {
+    id: PROFILE_STD,
+    name: "standard",
+    security_goal: "80-bit query soundness with balanced throughput",
+    lde_factor: 8,
+    fri_queries: 64,
+    fri_depth_range: FriDepthRange { min: 8, max: 12 },
+    poseidon_rounds: PoseidonRoundConfiguration {
+        full_rounds: 8,
+        partial_rounds: 56,
+    },
+    poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    batch_verification_enabled: true,
+    max_threads: 8,
+    limits: ResourceLimits {
+        max_proof_size_bytes: 1_500_000,
+        max_layers: 16,
+        max_queries: 96,
+        per_proof_max_trace_width: ProofKindLayout {
+            tx: 64,
+            state: 128,
+            pruning: 96,
+            uptime: 48,
+            consensus: 96,
+            identity: 64,
+            aggregation: 160,
+            vrf: 48,
+        },
+        per_proof_max_trace_steps: ProofKindLayout {
+            tx: 1_048_576,
+            state: 4_194_304,
+            pruning: 2_097_152,
+            uptime: 524_288,
+            consensus: 1_048_576,
+            identity: 262_144,
+            aggregation: 1_048_576,
+            vrf: 131_072,
+        },
+    },
+    air_spec_ids: AIR_SPEC_IDS_V1,
+};
+
+/// High-security profile configuration (`PROFILE_HISEC`).
+pub const PROFILE_HIGH_SECURITY_CONFIG: ProfileConfig = ProfileConfig {
+    id: PROFILE_HISEC,
+    name: "high-security",
+    security_goal: "128-bit query soundness with increased redundancy",
+    lde_factor: 16,
+    fri_queries: 96,
+    fri_depth_range: FriDepthRange { min: 10, max: 14 },
+    poseidon_rounds: PoseidonRoundConfiguration {
+        full_rounds: 8,
+        partial_rounds: 60,
+    },
+    poseidon_param_id: POSEIDON_PARAM_ID_HISEC,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    batch_verification_enabled: true,
+    max_threads: 12,
+    limits: ResourceLimits {
+        max_proof_size_bytes: 2_200_000,
+        max_layers: 20,
+        max_queries: 128,
+        per_proof_max_trace_width: ProofKindLayout {
+            tx: 80,
+            state: 160,
+            pruning: 120,
+            uptime: 60,
+            consensus: 120,
+            identity: 80,
+            aggregation: 200,
+            vrf: 60,
+        },
+        per_proof_max_trace_steps: ProofKindLayout {
+            tx: 1_310_720,
+            state: 5_242_880,
+            pruning: 2_621_440,
+            uptime: 655_360,
+            consensus: 1_310_720,
+            identity: 327_680,
+            aggregation: 1_310_720,
+            vrf: 163_840,
+        },
+    },
+    air_spec_ids: AIR_SPEC_IDS_V1,
+};
+
+/// High-throughput profile configuration (`PROFILE_THROUGHPUT`).
+pub const PROFILE_THROUGHPUT_CONFIG: ProfileConfig = ProfileConfig {
+    id: PROFILE_THROUGHPUT,
+    name: "high-throughput",
+    security_goal: "Reduced latency; retains standard soundness assumptions",
+    lde_factor: 8,
+    fri_queries: 48,
+    fri_depth_range: FriDepthRange { min: 8, max: 10 },
+    poseidon_rounds: PoseidonRoundConfiguration {
+        full_rounds: 8,
+        partial_rounds: 56,
+    },
+    poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    batch_verification_enabled: true,
+    max_threads: 8,
+    limits: ResourceLimits {
+        max_proof_size_bytes: 1_200_000,
+        max_layers: 14,
+        max_queries: 64,
+        per_proof_max_trace_width: ProofKindLayout {
+            tx: 64,
+            state: 128,
+            pruning: 96,
+            uptime: 48,
+            consensus: 96,
+            identity: 64,
+            aggregation: 160,
+            vrf: 48,
+        },
+        per_proof_max_trace_steps: ProofKindLayout {
+            tx: 1_048_576,
+            state: 4_194_304,
+            pruning: 2_097_152,
+            uptime: 524_288,
+            consensus: 1_048_576,
+            identity: 262_144,
+            aggregation: 1_048_576,
+            vrf: 131_072,
+        },
+    },
+    air_spec_ids: AIR_SPEC_IDS_V1,
+};
+
+/// Canonical proof version of the envelope layout.
+pub const PROOF_VERSION_V1: ProofVersion = ProofVersion(1);
+
+/// Change-control policy:
+///
+/// * **ProofVersion**: increment only when the proof envelope byte layout
+///   changes (new sections, reordered fields, endianness adjustments, …).
+/// * **ParamDigest**: recompute whenever any profile parameter, identifier,
+///   limit or AIR specification changes. Switching profiles, updating
+///   Poseidon/Merkle/transcript identifiers, tweaking FRI parameters, touching
+///   limits or bumping an AIR specification ID all trigger a new digest.
+/// * **PI digests**: recompute whenever public-input encoding per proof kind
+///   changes.
+///
+/// There is no fallback: prover and verifier must agree on all identifiers and
+/// digests before any proof exchange.
+pub const CHANGE_CONTROL_RULES: &str = "ProofVersion bumps reserved for envelope layout;\
+ParamDigest changes cover any parameter or AIR updates;\
+PI digests updated on public-input layout changes.";
+
+/// Test obligations expected from implementations:
+///
+/// 1. Recompute [`ParamDigest`] deterministically across repeated runs for the
+///    same profile.
+/// 2. Switching profiles (e.g. standard → high-security) must yield a new
+///    [`ParamDigest`] without altering the [`ProofVersion`].
+/// 3. Mutating any AIR specification identifier must change the
+///    [`ParamDigest`].
+/// 4. Adjusting limits such as `max_proof_size_bytes` must change the
+///    [`ParamDigest`].
+/// 5. Enforce the global [`ProofKind::ORDER`]; any deviation is a protocol
+///    error.
+/// 6. Cross-check prover and verifier contexts for digest equality and abort on
+///    mismatches.
+/// 7. Validate deterministic threading by running with fixed worker counts and
+///    verifying reproducible digests.
+pub const TEST_OBLIGATIONS: &str = "Determinism, profile switching, AIR updates, limit changes,\
+proof-kind order invariants and prover/verifier cross-checks must be covered.";
