@@ -1,68 +1,56 @@
-//! Prover implementation for the `rpp-stark` engine.
-//! Executes the polynomial commitment pipeline to produce deterministic proofs.
+//! Prover interface for the `rpp-stark` engine.
+//!
+//! This module captures the declarative interface exposed by the prover. The
+//! implementation is intentionally omitted; instead we document how the prover
+//! interacts with configuration objects, witnesses and VRF decoupling points.
 
-use core::marker::PhantomData;
-
-use crate::air::Air;
 use crate::config::ProverContext;
-use crate::fri::{FriBatch, FriBatchVerificationApi, FriProof};
-use crate::hash::{Blake3Hasher, Blake3QuaternaryMerkleTree, MerkleTreeBackend, MerkleTreeConfig};
+use crate::proof::api::{ProofRequest, ProofResponse};
+use crate::proof::envelope::ProofEnvelope;
 use crate::utils::serialization::ProofBytes;
-use crate::{StarkError, StarkResult};
+use crate::StarkResult;
 
 /// Prover struct encapsulating the deterministic pipeline.
 #[derive(Debug, Clone)]
-pub struct Prover {
-    /// Context containing configuration parameters.
-    pub context: ProverContext,
+pub struct Prover<'ctx> {
+    /// Context containing configuration parameters shared with the verifier.
+    pub context: &'ctx ProverContext,
 }
 
-impl Prover {
+impl<'ctx> Prover<'ctx> {
     /// Creates a new prover with the provided context.
-    pub fn new(context: ProverContext) -> Self {
+    pub fn new(context: &'ctx ProverContext) -> Self {
         Self { context }
     }
 
-    /// Executes proof generation over the supplied AIR instance.
-    pub fn prove(&self, _air: &dyn Air) -> StarkResult<ProofBytes> {
-        let trace_length = self.context.stark.trace_length;
-        if trace_length == 0 {
-            return Err(StarkError::InvalidInput("trace length must be non-zero"));
-        }
-        let fri_proof = FriProof::default();
-        let batch = FriBatch {
-            proofs: vec![fri_proof],
-            ..FriBatch::default()
-        };
-        // Touch the declarative API to ensure the batch description is well-formed.
-        let _ = (
-            batch.proofs().len(),
-            batch.joint_seed().bytes,
-            batch.aggregate_digest().bytes,
-        );
-        debug_assert!(MerkleTreeConfig::MIN_DEPTH <= MerkleTreeConfig::MAX_DEPTH);
-
-        let mut hasher = Blake3Hasher::new(self.context.stark.hash.blake3.clone());
-        hasher.absorb(trace_length.to_le_bytes().as_slice());
-        let leaf = hasher.finalize()?;
-        let commitment = Blake3QuaternaryMerkleTree::<Blake3Hasher> {
-            leaves: vec![leaf],
-            hasher: PhantomData,
-        };
-        let _domain_tag =
-            <Blake3QuaternaryMerkleTree<Blake3Hasher> as MerkleTreeBackend>::DOMAIN_TAG;
-        let _ = (_domain_tag, &commitment);
-
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&trace_length.to_le_bytes());
-        Ok(ProofBytes::new(bytes))
+    /// Executes proof generation over the supplied proof request.
+    ///
+    /// The request carries a [`ProofKind`](crate::proof::public_inputs::ProofKind),
+    /// the public inputs for the specific proof type and an opaque witness blob.
+    /// The prover is responsible for:
+    /// - Validating that the request kind matches the negotiated profile.
+    /// - Feeding the witness into the execution trace generator.
+    /// - Producing a deterministic transcript that yields [`ProofBytes`].
+    ///
+    /// VRF decoupling: the prover must not sample randomness from the verifier.
+    /// Instead, it publishes the commitments required for a verifiable random
+    /// function (VRF) handshake inside the returned [`ProofEnvelope`]. The
+    /// verifier will recompute the VRF challenge independently.
+    pub fn generate(&self, _request: ProofRequest<'_>) -> StarkResult<ProofResponse> {
+        unimplemented!("interface declaration only")
     }
 
-    /// High-level proof generation entry point used by the library API.
-    pub fn create_proof(&self) -> StarkResult<ProofBytes> {
-        // Placeholder invocation without a specific AIR instance.
-        Err(StarkError::NotImplemented(
-            "prover::create_proof requires AIR instance",
-        ))
+    /// Produces raw proof bytes without the surrounding envelope.
+    ///
+    /// This is useful for benchmarks or transports that require streaming the
+    /// proof body directly. The caller is responsible for adding envelope
+    /// metadata before passing the data to verifiers.
+    pub fn export_bytes(&self, _request: ProofRequest<'_>) -> StarkResult<ProofBytes> {
+        unimplemented!("interface declaration only")
+    }
+
+    /// Helper returning the VRF binding commitments contained in a response.
+    pub fn extract_vrf_commitments(_response: &ProofResponse) -> StarkResult<&ProofEnvelope> {
+        unimplemented!("interface declaration only")
     }
 }

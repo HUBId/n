@@ -1,69 +1,84 @@
 //! Configuration module for the `rpp-stark` engine.
-//! Provides strongly typed contexts used to parameterize proof generation and verification.
+//!
+//! The items in this module only document the configuration surface. They are
+//! intentionally void of executable logic but capture the design intent and
+//! naming conventions for downstream implementers.
 
-use crate::field::prime_field::Modulus;
-use crate::{fri::config::FriProfile, hash::config::HashParameters};
+use crate::utils::serialization::DigestBytes;
 
-/// Shared configuration between prover and verifier specifying the evaluation domain and FRI setup.
-#[derive(Debug, Clone)]
-pub struct StarkConfig {
-    /// The size of the trace domain.
-    pub trace_length: usize,
-    /// Field modulus configuration.
-    pub field_modulus: Modulus,
-    /// FRI profile describing folding strategy and sampling queries.
-    pub fri: FriProfile,
-    /// Hash configuration for commitments and transcripts.
-    pub hash: HashParameters,
+/// Profiles tuning the trade-off between throughput and security.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PerformanceProfile {
+    /// Balanced defaults optimised for low-latency proving on consumer
+    /// hardware.
+    Standard,
+    /// Emphasises security margins by increasing query budgets and digest
+    /// sizes.
+    HighSecurity,
+    /// Optional profile that prioritises batch throughput at the cost of
+    /// higher memory pressure.
+    HighThroughput,
 }
 
-impl StarkConfig {
-    /// Validates the configuration and produces a deterministic error on failure.
-    pub fn validate(&self) -> Result<(), &'static str> {
-        if self.trace_length == 0 {
-            return Err("trace length must be non-zero");
-        }
-        if !self.field_modulus.is_prime {
-            return Err("field modulus must be prime");
-        }
-        Ok(())
-    }
+/// Rules describing how the prover/verifier may parallelise work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParallelizationRules {
+    /// Maximum number of host threads made available to the runtime.
+    pub max_threads: usize,
+    /// Minimum chunk size (in field elements) that should be scheduled per
+    /// worker.
+    pub min_chunk_size: usize,
+    /// Maximum chunk size tolerated before splitting work units.
+    pub max_chunk_size: usize,
+}
+
+/// Security goals attached to a configuration profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecurityGoals {
+    /// Maximum number of queries the verifier may consume before exhausting
+    /// its deterministic budget.
+    pub query_budget: u32,
+    /// Bit-length of the transcript digest binding the protocol state.
+    pub digest_length_bits: u16,
+    /// Optional limit on witness disclosure events.
+    pub witness_extraction_budget: u16,
+}
+
+/// Describes how integrity digests are parameterised.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntegrityParameters {
+    /// Domain separation tag for the transcript hash.
+    pub domain_tag: &'static str,
+    /// Optional preimage bound used in higher level protocol composition.
+    pub upper_bound: Option<DigestBytes>,
+}
+
+/// Shared configuration between prover and verifier specifying the evaluation
+/// domain and profile choices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StarkConfig {
+    /// Selected performance profile.
+    pub profile: PerformanceProfile,
+    /// Negotiated security goals.
+    pub security: SecurityGoals,
+    /// Integrity parameters used by transcript hashing.
+    pub integrity: IntegrityParameters,
 }
 
 /// Context used by the prover to drive proof generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProverContext {
-    /// Global STARK configuration shared with the verifier.
+    /// Baseline configuration shared with the verifier.
     pub stark: StarkConfig,
-    /// Optional thread count for deterministic batching.
-    pub max_threads: usize,
-}
-
-impl ProverContext {
-    /// Constructs a new prover context with deterministic defaults.
-    pub fn new(stark: StarkConfig) -> Self {
-        Self {
-            stark,
-            max_threads: 1,
-        }
-    }
+    /// Runtime parallelisation rules derived from the host environment.
+    pub parallelization: ParallelizationRules,
 }
 
 /// Context used by the verifier to execute deterministic verification logic.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifierContext {
-    /// Global STARK configuration shared with the prover.
+    /// Baseline configuration shared with the prover.
     pub stark: StarkConfig,
-    /// Number of sampling queries performed during verification.
-    pub query_count: usize,
-}
-
-impl VerifierContext {
-    /// Constructs a new verifier context.
-    pub fn new(stark: StarkConfig) -> Self {
-        Self {
-            stark,
-            query_count: 0,
-        }
-    }
+    /// Security policy enforced during verification (e.g. VRF sampling).
+    pub security: SecurityGoals,
 }
