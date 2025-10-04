@@ -1,39 +1,34 @@
 //! Declarative description of public input layouts per proof kind.
 //!
-//! Public inputs are absorbed by the transcript using little-endian framing.
-//! Each header declared here participates in the `PUBLIC_INPUTS` transcript
-//! section described in [`crate::proof::transcript::PublicInputsSectionSpec`].
+//! Public inputs follow Phase-2 framing rules: each variable length component
+//! is preceded by a 32-bit little-endian length. All fixed width integers and
+//! field elements are serialized in little-endian order.
 
 use crate::utils::serialization::{DigestBytes, FieldElementBytes};
 
-/// Enumerates all supported proof kinds.
+/// Enumerates all supported proof kinds using canonical RPP coding.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProofKind {
     /// Proves a single execution trace.
-    Execution,
+    Execution = 0x00,
     /// Aggregates multiple execution proofs into a compressed certificate.
-    Aggregation,
+    Aggregation = 0x01,
     /// Wraps recursion layers for rollup scenarios.
-    Recursion,
+    Recursion = 0x02,
 }
 
-/// Canonical tag encoding for each [`ProofKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct ProofKindTag(pub u8);
+impl ProofKind {
+    /// Returns the canonical u8 code used in envelopes and seeds.
+    pub const fn code(self) -> u8 {
+        self as u8
+    }
 
-impl ProofKindTag {
-    /// Execution proof tag (used for deterministic aggregation order).
-    pub const EXECUTION: ProofKindTag = ProofKindTag(0x00);
-    /// Aggregation proof tag.
-    pub const AGGREGATION: ProofKindTag = ProofKindTag(0x01);
-    /// Recursion proof tag.
-    pub const RECURSION: ProofKindTag = ProofKindTag(0x02);
-
-    /// Canonical ordering of tags (ascending numerical order).
-    pub const ORDER: &'static [ProofKindTag; 3] = &[
-        ProofKindTag::EXECUTION,
-        ProofKindTag::AGGREGATION,
-        ProofKindTag::RECURSION,
+    /// Canonical ordering used for deterministic sorting.
+    pub const ORDER: &'static [ProofKind; 3] = &[
+        ProofKind::Execution,
+        ProofKind::Aggregation,
+        ProofKind::Recursion,
     ];
 }
 
@@ -53,8 +48,8 @@ pub struct ExecutionHeaderV1 {
     pub program_digest: DigestBytes,
     /// Length of the execution trace in field elements.
     pub trace_length: u32,
-    /// Selector indicating if the trace is padded.
-    pub padded: bool,
+    /// Number of columns in the execution trace.
+    pub trace_width: u32,
 }
 
 /// Public input header for aggregation proofs.
@@ -118,4 +113,55 @@ impl<'a> PublicInputs<'a> {
             Self::Recursion { .. } => ProofKind::Recursion,
         }
     }
+
+    /// Returns the header version used by the layout.
+    pub fn version(&self) -> PublicInputVersion {
+        match self {
+            Self::Execution { header, .. } => header.version,
+            Self::Aggregation { header, .. } => header.version,
+            Self::Recursion { header, .. } => header.version,
+        }
+    }
+
+    /// Returns the raw body bytes for the layout.
+    pub fn body(&self) -> &'a [u8] {
+        match self {
+            Self::Execution { body, .. } => body,
+            Self::Aggregation { body, .. } => body,
+            Self::Recursion { body, .. } => body,
+        }
+    }
+}
+
+/// Documentation structure describing serialization rules for public inputs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PublicInputSerializationSpec;
+
+impl PublicInputSerializationSpec {
+    /// Field order for execution headers.
+    pub const EXECUTION_FIELDS: &'static [&'static str] = &[
+        "version:u8",
+        "program_digest:32B",
+        "trace_length:u32 (LE)",
+        "trace_width:u32 (LE)",
+    ];
+
+    /// Field order for aggregation headers.
+    pub const AGGREGATION_FIELDS: &'static [&'static str] = &[
+        "version:u8",
+        "circuit_digest:32B",
+        "leaf_count:u32 (LE)",
+        "root_digest:32B",
+    ];
+
+    /// Field order for recursion headers.
+    pub const RECURSION_FIELDS: &'static [&'static str] = &[
+        "version:u8",
+        "depth:u8",
+        "boundary_digest:32B",
+        "recursion_seed:32B",
+    ];
+
+    /// Description of the length prefix rule.
+    pub const LENGTH_PREFIX_RULE: &'static str = "u32 little-endian before each variable section";
 }

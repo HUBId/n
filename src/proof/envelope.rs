@@ -1,57 +1,136 @@
-//! Proof envelope describing versioning and integrity layout.
+//! Proof envelope describing versioned byte layout and integrity bindings.
 //!
 //! The envelope is the canonical container that wraps every proof byte stream
-//! produced by the system. It ensures that verifiers can reason about the
-//! version, the declared proof kind, the length of both header and body, and
-//! the integrity digest without parsing custom metadata formats.
+//! produced by the system. Only the structure is documented; no serialization
+//! helpers are provided so that implementers can integrate their own I/O layer.
 
-use crate::config::MAX_PROOF_SIZE_BYTES;
+use crate::config::ParamDigest;
 use crate::proof::public_inputs::ProofKind;
 use crate::utils::serialization::DigestBytes;
 
-/// Enumerates the current envelope format versions.
+/// Specification object capturing the envelope layout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EnvelopeVersion {
-    /// Initial format using fixed width little endian counters.
-    V1,
+pub struct ProofEnvelopeSpec;
+
+impl ProofEnvelopeSpec {
+    /// Fixed order of the top-level fields (all little-endian).
+    pub const FIELD_ORDER: &'static [&'static str] = &[
+        "ProofVersion:u8",
+        "ProofKind:u8",
+        "HeaderLength:u32",
+        "HeaderBytes",
+        "BodyLength:u32",
+        "BodyBytes",
+        "IntegrityDigest:32B",
+    ];
+
+    /// Internal ordering of the header payload.
+    pub const HEADER_ORDER: &'static [&'static str] = &[
+        "PublicInputHeader (Phase-2 layout with length prefixes)",
+        "ParamDigest:32B",
+        "CommitmentDigest:32B",
+    ];
+
+    /// Internal ordering of the body payload.
+    pub const BODY_ORDER: &'static [&'static str] = &[
+        "Commitments: CoreRoot || AuxRoot || FRI-Layer-Roots",
+        "OOD-Openings: per OOD point (coordinates + Core/Aux/Composition values)",
+        "FRI-Proof: folding params, openings, queries, 4-ary Merkle paths",
+    ];
+
+    /// Initial proof version (must increment for backward incompatible changes).
+    pub const INITIAL_VERSION: u8 = 1;
 }
 
-/// Header written ahead of the proof body.
+/// Structured representation of the proof envelope header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofEnvelopeHeader {
-    /// Version of the envelope layout.
-    pub version: EnvelopeVersion,
-    /// Declared proof kind. Mirrors the header layout chosen for the
-    /// public inputs.
-    pub kind: ProofKind,
-    /// Length of the serialized header segment that follows this struct.
+    /// Proof version as encoded in the envelope.
+    pub proof_version: u8,
+    /// Proof kind using canonical RPP coding.
+    pub proof_kind: ProofKind,
+    /// Length of the serialized header payload in bytes.
     pub header_length: u32,
-    /// Length of the serialized body.
-    pub body_length: u32,
-    /// Digest binding the header and body for integrity checks.
+    /// Phase-2 public input header bytes.
+    pub public_input_header: Vec<u8>,
+    /// Parameter digest binding configuration.
+    pub param_digest: ParamDigest,
+    /// Commitment digest binding Merkle and FRI roots.
+    pub commitment_digest: DigestBytes,
+}
+
+/// Structured representation of the proof envelope body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofEnvelopeBody {
+    /// Raw commitment roots (Core, Aux, FRI layers) in canonical order.
+    pub commitments: Vec<DigestBytes>,
+    /// Out-of-domain opening records (coordinates and values).
+    pub ood_openings: Vec<OutOfDomainOpening>,
+    /// FRI proof payload including folding schedule and query paths.
+    pub fri_proof: FriProofPayload,
+}
+
+/// Full envelope container grouping header, body and integrity digest.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofEnvelope {
+    /// Structured header information.
+    pub header: ProofEnvelopeHeader,
+    /// Body carrying commitments, openings and FRI data.
+    pub body: ProofEnvelopeBody,
+    /// Integrity digest computed as BLAKE3 over all bytes from ProofVersion
+    /// through BodyBytes (inclusive).
     pub integrity_digest: DigestBytes,
 }
 
-impl ProofEnvelopeHeader {
-    /// Returns the total declared payload length (header + body).
-    pub fn total_payload_length(&self) -> u64 {
-        self.header_length as u64 + self.body_length as u64
-    }
-}
-
-/// Envelope containing header metadata and the proof body.
+/// Out-of-domain opening record.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProofEnvelope {
-    /// Structured metadata describing the proof stream.
-    pub header: ProofEnvelopeHeader,
-    /// Raw proof bytes following the header.
-    pub body: Vec<u8>,
+pub struct OutOfDomainOpening {
+    /// Evaluation point encoded in little-endian field representation.
+    pub point: [u8; 32],
+    /// Core trace values at the point (little-endian field encoding).
+    pub core_values: Vec<[u8; 32]>,
+    /// Auxiliary trace values at the point.
+    pub aux_values: Vec<[u8; 32]>,
+    /// Composition polynomial value at the point.
+    pub composition_value: [u8; 32],
 }
 
-impl ProofEnvelope {
-    /// Creates a new envelope and performs basic boundary documentation.
-    pub fn new(header: ProofEnvelopeHeader, body: Vec<u8>) -> Self {
-        debug_assert!(body.len() <= MAX_PROOF_SIZE_BYTES);
-        Self { header, body }
-    }
+/// FRI proof payload in canonical order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriProofPayload {
+    /// Folding parameter description (factor = 4, depth etc.).
+    pub folding_parameters: FriFoldingParameters,
+    /// Openings collected per query and layer.
+    pub layer_openings: Vec<FriLayerOpening>,
+    /// Query positions derived from transcript seeds.
+    pub query_positions: Vec<u32>,
+    /// Merkle paths using 4-ary encoding with explicit index bytes.
+    pub merkle_paths: Vec<FriMerklePath>,
+}
+
+/// Folding parameters for FRI recursion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriFoldingParameters {
+    /// Fold factor (fixed to 4).
+    pub fold_factor: u8,
+    /// Number of recursive layers.
+    pub layer_count: u8,
+}
+
+/// Opening data for a specific FRI layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriLayerOpening {
+    /// Layer index (0-based, little-endian when serialized).
+    pub layer_index: u8,
+    /// Field values revealed at this layer.
+    pub values: Vec<[u8; 32]>,
+}
+
+/// Merkle authentication path for a single query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FriMerklePath {
+    /// Index bytes in range [0,3] describing sibling ordering per level.
+    pub index_bytes: Vec<u8>,
+    /// Sibling digests for each level (little-endian order of concatenation).
+    pub sibling_digests: Vec<DigestBytes>,
 }

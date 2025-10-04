@@ -2,132 +2,103 @@
 //! parameter binding.
 //!
 //! The transcript is byte-oriented and must follow the framing described in
-//! [`crate::hash::blake3::Blake3TranscriptSpec`].  This module enumerates the
-//! section order, the field ordering inside each section and the block context
-//! that gets bound before Fiat–Shamir challenges are derived.
+//! the specification. This module enumerates the section order, phase tags and
+//! the deterministic derivations for challenges. Only contracts are provided;
+//! no hashing logic is implemented here.
 
+use crate::config::{AirSpecId, ParamDigest, PoseidonParamId, TranscriptVersionId};
 use crate::hash::blake3::{
     Blake3TranscriptSection, Blake3TranscriptSpec, Blake3TranscriptVersion,
     FiatShamirChallengeRules, TranscriptPhaseTag,
 };
-use crate::hash::merkle::MerkleSchemeDigest;
-use crate::hash::poseidon::PoseidonConstantsV1;
+use crate::proof::public_inputs::ProofKind;
 use crate::StarkResult;
 
-/// Canonical transcript version identifier.
+/// Canonical transcript version identifier used by Phase 3.
 pub const TRANSCRIPT_VERSION: Blake3TranscriptVersion = Blake3TranscriptVersion::V1;
 
-/// Ordering of sections within the transcript prior to hashing.
+/// Canonical transcript sections absorbed during proof generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TranscriptSectionLayout;
 
 impl TranscriptSectionLayout {
-    /// Canonical sequence of sections that must be absorbed before deriving `challenge_0`.
+    /// Ordered list of transcript sections.
     pub const ORDER: &'static [Blake3TranscriptSection; 5] = Blake3TranscriptSpec::SECTIONS;
-    /// Framing rule applied to each section (delegated to the BLAKE3 specification).
+    /// Description of the framing rule.
     pub const FRAMING: &'static str = Blake3TranscriptSpec::FRAMING_RULE;
 }
 
-/// Public input section describing the serialization of the witness header.
+/// Transcript phase tags inserted between major protocol stages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PublicInputsSectionSpec;
+pub struct TranscriptPhaseRules;
 
-impl PublicInputsSectionSpec {
-    /// Every field is preceded by a 32-bit little-endian length.
-    pub const LENGTH_PREFIX_RULE: &'static str =
-        "prefix each entry with u32 (LE) length before raw bytes";
-    /// Canonical ordering of public input groups.
-    pub const FIELD_GROUPS: &'static [&'static str] = &["proof_kind_header", "public_input_body"];
-    /// Endianness applied to integers inside the public input body.
-    pub const ENDIANNESS: &'static str = "little-endian for counters and field bytes";
+impl TranscriptPhaseRules {
+    /// Order of phase tags.
+    pub const ORDER: &'static [TranscriptPhaseTag; 2] =
+        &[TranscriptPhaseTag::Air, TranscriptPhaseTag::Fri];
+
+    /// Description of reseeding behaviour.
+    pub const RESEED_RULE: &'static str =
+        "Insert RPP-PHASE-AIR before AIR sections and RPP-PHASE-FRI before FRI sections";
 }
 
-/// Commitment root section ordering.
+/// Specification of the transcript seed derivation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CommitmentRootsSectionSpec;
+pub struct TranscriptSeedSpec;
 
-impl CommitmentRootsSectionSpec {
-    /// Canonical ordering for Merkle and FRI roots.
-    pub const ROOT_ORDER: &'static [&'static str] = &[
-        "main_trace_root",
-        "composition_root",
-        "fri_layer_0_root",
-        "fri_layer_1_root",
-        "fri_layer_last_root",
-    ];
-    /// Hashing rule for internal nodes as documented in [`crate::hash::merkle`].
-    pub const HASH_RULE: &'static str = "BLAKE3(child0 || child1 || child2 || child3)";
+impl TranscriptSeedSpec {
+    /// Formula for deriving the initial seed.
+    pub const INITIAL_SEED_RULE: &'static str =
+        "seed_0 = BLAKE3(domain_prefix || ParamDigest || block_context)";
+
+    /// Formula for deriving seeds per proof kind.
+    pub const KIND_SEED_RULE: &'static str = "seed_kind = BLAKE3(seed_0 || ProofKind.code())";
 }
 
-/// Parameter digest specification binding global configuration knobs.
+/// Challenge derivation specification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ParameterDigestSpec;
+pub struct ChallengeDerivationSpec;
 
-impl ParameterDigestSpec {
-    /// Canonical ordering of fields absorbed into the digest.
-    pub const FIELD_ORDER: &'static [&'static str] = &[
-        "field_id",
-        "poseidon_param_id",
-        "lde_factor",
-        "fri_plan",
-        "query_budget",
-        "merkle_scheme_id",
-        "transcript_version_id",
-    ];
-    /// Poseidon parameter digest folded into the parameter binding.
-    pub const POSEIDON_PARAM_DIGEST: &'static [u8; 32] = &PoseidonConstantsV1::PARAM_DIGEST;
-    /// Merkle scheme identifier consumed by the digest.
-    pub const MERKLE_SCHEME_ID: MerkleSchemeDigest = MerkleSchemeDigest::BLAKE3_QUATERNARY_V1;
-    /// FRI plan description (fold factor and depth).
-    pub const FRI_PLAN_DESCRIPTION: &'static str =
-        "fold=4, depth>=log2(lde_factor), aligns with >=64 queries";
-}
-
-/// Block context fields sealed inside the transcript.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BlockContextSectionSpec;
-
-impl BlockContextSectionSpec {
-    /// Ordering of the context fields.
-    pub const FIELD_ORDER: &'static [&'static str] = &[
-        "block_height:u64",
-        "previous_state_root:32bytes",
-        "network_id:u32",
-        "proof_version:u8",
-    ];
-}
-
-/// Transcript phase management mirroring [`TranscriptPhaseTag`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TranscriptPhaseSpec;
-
-impl TranscriptPhaseSpec {
-    /// AIR phase tag inserted before the first section batch.
-    pub const AIR_TAG: TranscriptPhaseTag = TranscriptPhaseTag::Air;
-    /// FRI phase tag inserted before restarting with section order.
-    pub const FRI_TAG: TranscriptPhaseTag = TranscriptPhaseTag::Fri;
-    /// Description of the restart behaviour.
-    pub const DESCRIPTION: &'static str =
-        "Insert phase tag bytes, reset section counter, reapply DOMAIN_TAG..BLOCK_CONTEXT";
-}
-
-/// Fiat–Shamir derivation helper exposing the chained challenge rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TranscriptChallengeSpec;
-
-impl TranscriptChallengeSpec {
-    /// Description of the recurrence used for challenge generation.
+impl ChallengeDerivationSpec {
+    /// Description of challenge extraction.
     pub const RULE: &'static str = FiatShamirChallengeRules::DESCRIPTION;
-    /// Salt prefix inserted after the first challenge draw.
-    pub const SALT_PREFIX: &'static str = FiatShamirChallengeRules::SALT_PREFIX;
+
+    /// Mapping between phases and challenge draws.
+    pub const PHASE_CHALLENGES: &'static [&'static str] = &[
+        "AIR: α-vector",
+        "FRI: query positions",
+        "FINAL: integrity salt",
+    ];
+
+    /// Poseidon parameter domain separation hint.
+    pub const DOMAIN_HINT: &'static str = FiatShamirChallengeRules::SALT_PREFIX;
 }
 
-/// Proof version counter starting at 1.
-pub const PROOF_VERSION_INITIAL: u8 = 1;
+/// Metadata bound into the transcript header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptHeader {
+    /// Transcript version identifier.
+    pub version: TranscriptVersionId,
+    /// Poseidon parameter identifier used for challenges.
+    pub poseidon_param_id: PoseidonParamId,
+    /// AIR specification identifier.
+    pub air_spec_id: AirSpecId,
+    /// Proof kind currently being processed.
+    pub proof_kind: ProofKind,
+    /// Parameter digest binding global configuration.
+    pub param_digest: ParamDigest,
+}
 
-/// Guidance on proof version vs. parameter digest evolution.
-pub const VERSIONING_RULES: &str =
-    "Increase ProofVersion for non-backwards compatible layout changes; update ParamDigest for parameter tweaks";
+/// Block context fields absorbed into the transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptBlockContext {
+    /// Block height (little-endian u64).
+    pub block_height: u64,
+    /// Previous state root (32 bytes).
+    pub previous_state_root: [u8; 32],
+    /// Network identifier (little-endian u32).
+    pub network_id: u32,
+}
 
 /// Label used to denote challenge draws.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -145,11 +116,11 @@ pub trait ChallengeDeriver {
 /// Streaming interface for deterministic challenge extraction.
 pub trait ChallengeStream {
     /// Fills `output` with challenge bytes associated with `label` using the
-    /// deterministic chaining rules captured in [`TranscriptChallengeSpec`].
+    /// deterministic chaining rules captured in [`ChallengeDerivationSpec`].
     fn draw_challenge(&mut self, label: ChallengeLabel, output: &mut [u8]) -> StarkResult<()>;
 }
 
-/// Error terms produced while validating transcript assembly.
+/// Documentation of transcript validation errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptValidationError {
     /// Sections were emitted in a non-canonical order.
@@ -158,7 +129,7 @@ pub enum TranscriptValidationError {
     LengthPrefixInvalid,
     /// Domain tag did not match the negotiated ASCII prefix.
     UnknownDomainTag,
-    /// Parameter digest disagreed with [`ParameterDigestSpec`].
+    /// Parameter digest disagreed with the negotiated digest.
     ParameterDigestMismatch,
     /// Encountered an unknown phase tag while restarting sections.
     UnknownPhaseTag,

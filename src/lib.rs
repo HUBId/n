@@ -1,8 +1,9 @@
 //! Core library entry point for the `rpp-stark` proof system.
-//! This module exposes the high-level and low-level APIs for proof generation
-//! and verification. All functions are intentionally left without
-//! implementation logic and instead serve as documentation of the intended
-//! interface surface.
+//!
+//! The crate exposes declarative contracts for proof generation, verification
+//! and aggregation. All functions are intentionally left without
+//! implementations; they simply document the required parameters and the
+//! deterministic sequencing dictated by the specification.
 
 pub mod air;
 pub mod config;
@@ -13,10 +14,10 @@ pub mod hash;
 pub mod proof;
 pub mod utils;
 
-use config::{ProverContext, StarkConfig, VerifierContext};
-use proof::envelope::ProofEnvelope;
+use config::{ProofSystemConfig, ProverContext, VerifierContext};
+use proof::aggregation::BatchVerificationOutcome;
 use proof::public_inputs::PublicInputs;
-use proof::{ProofKind, ProofRequest, ProofResponse};
+use proof::{BatchProofRecord, ProofKind};
 use utils::serialization::{ProofBytes, WitnessBlob};
 
 /// Result type used throughout the library to surface deterministic errors.
@@ -33,52 +34,73 @@ pub enum StarkError {
     SubsystemFailure(&'static str),
 }
 
-/// High-level interface for proof generation.
-///
-/// The function ties together the documented configuration pieces and passes
-/// them to [`proof::api::generate_proof`]. The return value mirrors the
-/// envelope structure described in the proof module.
-pub fn generate_proof(
-    kind: ProofKind,
-    public_inputs: PublicInputs<'_>,
-    witness: WitnessBlob<'_>,
-    config: &StarkConfig,
-    context: &ProverContext,
-) -> StarkResult<ProofResponse> {
-    let request = ProofRequest {
-        kind,
-        public_inputs,
-        witness,
-        parallelization: context.parallelization,
-        context,
-    };
-    let _ = config;
-    proof::api::generate_proof(request)
+/// Verdict returned by verification functions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationVerdict {
+    /// Proof accepted after all checks.
+    Accept,
+    /// Proof rejected with a documented failure class.
+    Reject(proof::VerificationFailure),
 }
 
-/// High-level interface for proof verification.
+/// Generates a proof for the specified [`ProofKind`].
 ///
-/// Verifiers pass the expected proof kind, public inputs and envelope plus the
-/// agreed upon context. This stub intentionally forwards into the proof API
-/// without performing any logic.
+/// The function follows the canonical lifecycle:
+/// 1. Bind the [`ProofSystemConfig`] and [`ProverContext`] against the declared
+///    `kind`.
+/// 2. Ingest the phase-2 public input layout using [`PublicInputs`].
+/// 3. Absorb the witness container and execute the pipeline described in
+///    [`proof::prover::PipelineSpec`].
+/// 4. Assemble the envelope defined in [`proof::envelope::ProofEnvelopeSpec`]
+///    and emit the serialized bytes.
+///
+/// No implementation logic is provided here; integrators must supply the
+/// execution engine while preserving the documented order of operations.
+pub fn generate_proof(
+    kind: ProofKind,
+    public_inputs: &PublicInputs<'_>,
+    witness: WitnessBlob<'_>,
+    config: &ProofSystemConfig,
+    prover_context: &ProverContext,
+) -> StarkResult<ProofBytes> {
+    let _ = (kind, public_inputs, witness, config, prover_context);
+    Err(StarkError::NotImplemented("generate_proof contract only"))
+}
+
+/// Verifies a single proof and returns a [`VerificationVerdict`].
+///
+/// The verification logic MUST execute the steps described in
+/// [`proof::verifier::SingleVerifySpec`]. The `config` and `verifier_context`
+/// parameters must match the ones used by the prover; otherwise
+/// [`proof::VerificationFailure::ErrParamDigestMismatch`] is expected.
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,
-    envelope: &ProofEnvelope,
-    config: &StarkConfig,
-    context: &VerifierContext,
-) -> StarkResult<()> {
-    let _ = (config, context);
-    proof::api::verify_proof(kind, public_inputs, envelope, context)
+    proof_bytes: &ProofBytes,
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
+) -> StarkResult<VerificationVerdict> {
+    let _ = (kind, public_inputs, proof_bytes, config, verifier_context);
+    Err(StarkError::NotImplemented("verify_proof contract only"))
 }
 
-/// Convenience helper for consumers that already assembled a full
-/// [`ProofRequest`].
-pub fn generate_proof_with_request(request: ProofRequest<'_>) -> StarkResult<ProofResponse> {
-    proof::api::generate_proof(request)
+/// Verifies a batch of proofs under a shared block context.
+///
+/// Implementations must follow the aggregation rules documented in
+/// [`proof::aggregation::BatchVerificationSpec`]. The returned outcome records
+/// whether all proofs were accepted and, in case of failures, which
+/// [`proof::VerificationFailure`] triggered the rejection.
+pub fn batch_verify(
+    block_context: &proof::aggregation::BlockContext,
+    proofs: &[BatchProofRecord<'_>],
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
+) -> StarkResult<BatchVerificationOutcome> {
+    let _ = (block_context, proofs, config, verifier_context);
+    Err(StarkError::NotImplemented("batch_verify contract only"))
 }
 
-/// Convenience helper returning the raw proof bytes from a [`ProofResponse`].
-pub fn extract_proof_bytes(response: &ProofResponse) -> &ProofBytes {
-    &response.bytes
+/// Convenience helper returning the canonical proof envelope layout.
+pub fn proof_envelope_spec() -> proof::envelope::ProofEnvelopeSpec {
+    proof::envelope::ProofEnvelopeSpec {}
 }
