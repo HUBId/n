@@ -60,12 +60,12 @@ pub use errors::AirErrorKind;
 pub use ids::{AirSpecId, ParameterDigest};
 pub use inputs::{
     AggregationPublicInputs, ConsensusPublicInputs, IdentityPublicInputs, PruningPublicInputs,
-    PublicInputs, StatePublicInputs, TransactionPublicInputs, UptimePublicInputs,
+    PublicInputs, StatePublicInputs, TransactionPublicInputs, UptimePublicInputs, VrfPublicInputs,
 };
 pub use parallel::{DeterministicParallelization, ParallelChunkingRule};
 pub use proofs::{
     AggregationAirProfile, ConsensusAirProfile, IdentityAirProfile, ProofAirKind,
-    PruningAirProfile, StateAirProfile, TransactionAirProfile, UptimeAirProfile,
+    PruningAirProfile, StateAirProfile, TransactionAirProfile, UptimeAirProfile, VrfAirProfile,
 };
 pub use selectors::{SelectorColumnDescriptor, SelectorForm, SelectorSet};
 pub use traits::{
