@@ -1,50 +1,38 @@
-//! Blake3 hashing for transcript derivation.
-//! The implementation is deterministic and self-contained for the STARK engine.
+//! Blake3 transcript hashing interface declarations.
+//!
+//! The actual hashing logic lives in host environments.  This module documents how the
+//! STARK stack expects the transcript hasher to behave, including domain separation,
+//! message framing and finalisation semantics.
 
 use super::config::Blake3Parameters;
-use crate::{StarkError, StarkResult};
 
-/// Blake3 hasher placeholder maintaining an internal state.
-#[derive(Debug, Clone)]
-pub struct Blake3Hasher {
-    /// Domain separation label applied to every hash invocation.
-    pub label: &'static [u8],
-    /// Internal state represented as bytes.
-    state: Vec<u8>,
-}
+/// Interface describing transcript hashing for the STARK protocol.
+///
+/// * Every message absorbed into the transcript must be length-prefixed with a
+///   32-bit little-endian unsigned integer describing the number of bytes being
+///   absorbed.
+/// * All transcripts are initialised with the domain tag defined by
+///   [`crate::hash::config::BLAKE3_COMMITMENT_DOMAIN_TAG`] to ensure separation from
+///   arithmetic hashes.
+/// * Implementations must expose the parameter descriptor so verifiers can confirm that
+///   both parties run the same versioned hash function ([`crate::hash::config::BLAKE3_PARAMETERS_V1_ID`]).
+///
+/// The trait intentionally does not prescribe an implementation; it simply formalises
+/// the contract that a BLAKE3-based transcript hasher must uphold when used as part of
+/// the STARK proving system.
+pub trait TranscriptHasher {
+    /// Digest type returned after finalisation (typically 32 bytes for BLAKE3).
+    type Digest;
 
-impl Blake3Hasher {
-    /// Creates a new hasher with the provided parameters.
-    pub fn new(params: Blake3Parameters) -> Self {
-        Self {
-            label: params.label,
-            state: params.label.to_vec(),
-        }
-    }
+    /// Returns the static parameter descriptor declaring version and domain tag.
+    fn parameters(&self) -> Blake3Parameters;
 
-    /// Absorbs bytes into the hash state.
-    pub fn absorb(&mut self, data: &[u8]) {
-        self.state.extend_from_slice(data);
-    }
+    /// Resets the hasher to its initial domain-separated state.
+    fn reset(&mut self);
 
-    /// Finalizes the hash computation and returns a deterministic digest.
-    pub fn finalize(&self) -> StarkResult<[u8; 32]> {
-        if self.state.is_empty() {
-            return Err(StarkError::InvalidInput("blake3 state empty"));
-        }
-        let mut output = [0u8; 32];
-        for (i, byte) in self.state.iter().enumerate() {
-            let index = i % output.len();
-            output[index] = output[index]
-                .wrapping_add(*byte)
-                .wrapping_add((i as u8) ^ 0x5a);
-        }
-        Ok(output)
-    }
+    /// Absorbs a length-prefixed message into the transcript.
+    fn absorb_length_prefixed(&mut self, message: &[u8]);
 
-    /// Convenience helper hashing arbitrary data in one call.
-    pub fn hash(&mut self, data: &[u8]) -> StarkResult<[u8; 32]> {
-        self.absorb(data);
-        self.finalize()
-    }
+    /// Finalises the transcript and returns the digest.
+    fn finalize(self) -> Self::Digest;
 }
