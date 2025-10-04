@@ -11,4 +11,9 @@ name = "rpp_stark"
 path = "src/lib.rs"
 crate-type = ["rlib"]
 
+[features]
+default = []
+audit-lde = []
+audit-lde-hisec = ["audit-lde"]
+
 [dependencies]
