@@ -8,9 +8,8 @@
 
 use crate::hash::blake3::Blake3TranscriptSection;
 use crate::proof::transcript::{
-    ChallengeDeriver, ChallengeLabel, ChallengeStream, TranscriptSectionLayout,
+    ChallengeDeriver, ChallengeLabel, ChallengeStream, TranscriptResult, TranscriptSectionLayout,
 };
-use crate::StarkResult;
 
 /// Hook trait for absorbing transcript sections and deriving deterministic salts.
 pub trait TranscriptHook {
@@ -38,16 +37,16 @@ pub trait TranscriptHook {
         &mut self,
         section: Blake3TranscriptSection,
         payload: &[u8],
-    ) -> StarkResult<[u8; 32]>;
+    ) -> TranscriptResult<[u8; 32]>;
 
     /// Finalizes the transcript and yields a challenge derivation builder.
-    fn finalize(self) -> StarkResult<Self::Builder>;
+    fn finalize(self) -> TranscriptResult<Self::Builder>;
 }
 
 /// Utility trait allowing implementers to expose a ready-to-use challenge stream.
 pub trait ChallengeStreamExt: ChallengeStream {
     /// Draws `output` bytes using the provided label, forwarding to the underlying stream.
-    fn draw_bytes(&mut self, label: &'static str, output: &mut [u8]) -> StarkResult<()> {
+    fn draw_bytes(&mut self, label: &'static str, output: &mut [u8]) -> TranscriptResult<()> {
         self.draw_challenge(ChallengeLabel(label), output)
     }
 }
