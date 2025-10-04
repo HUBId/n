@@ -11,7 +11,10 @@ pub use config::{
     Blake3Parameters, HashParameters, PoseidonParameters, BLAKE3_COMMITMENT_DOMAIN_TAG,
     BLAKE3_PARAMETERS_V1_ID, POSEIDON_ARITHMETIC_DOMAIN_TAG, POSEIDON_PARAMETERS_V1_ID,
 };
-pub use merkle::{MerklePath, MerkleTree};
+pub use merkle::{
+    Blake3QuaternaryMerkleTree, MerklePath, MerkleTreeBackend, MerkleTreeConfig, PoseidonLeaf,
+    PoseidonMerkleTree,
+};
 pub use poseidon::{
     PoseidonMdsMatrix, PoseidonMdsMatrixV1, PoseidonPermutationOrder, PoseidonPermutationOrderV1,
     PoseidonPermutationSpec, PoseidonRoundConstants, PoseidonRoundConstantsV1, PoseidonSpecV1,
