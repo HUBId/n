@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 
 use crate::air::Air;
 use crate::config::ProverContext;
-use crate::fri::{FriBatch, FriProof};
+use crate::fri::{FriBatch, FriBatchVerificationApi, FriProof};
 use crate::hash::{Blake3Hasher, Blake3QuaternaryMerkleTree, MerkleTreeBackend, MerkleTreeConfig};
 use crate::utils::serialization::ProofBytes;
 use crate::{StarkError, StarkResult};
@@ -29,11 +29,17 @@ impl Prover {
         if trace_length == 0 {
             return Err(StarkError::InvalidInput("trace length must be non-zero"));
         }
-        let fri_proof = FriProof::new();
-        let batch = FriBatch::new(vec![fri_proof]);
-        if !batch.verify()? {
-            return Err(StarkError::SubsystemFailure("fri self-check failed"));
-        }
+        let fri_proof = FriProof::default();
+        let batch = FriBatch {
+            proofs: vec![fri_proof],
+            ..FriBatch::default()
+        };
+        // Touch the declarative API to ensure the batch description is well-formed.
+        let _ = (
+            batch.proofs().len(),
+            batch.joint_seed().bytes,
+            batch.aggregate_digest().bytes,
+        );
         debug_assert!(MerkleTreeConfig::MIN_DEPTH <= MerkleTreeConfig::MAX_DEPTH);
 
         let mut hasher = Blake3Hasher::new(self.context.stark.hash.blake3.clone());

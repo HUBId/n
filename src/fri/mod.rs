@@ -1,11 +1,11 @@
-//! FRI commitment scheme primitives.
-//! Provides folding strategies, proof representation, and batch verification utilities.
+//! FRI commitment scheme descriptors.
+//! Provides configuration profiles, folding schedules, proof metadata, and batching APIs.
 
 pub mod batch;
 pub mod config;
 pub mod folding;
 pub mod proof;
 
-pub use batch::FriBatch;
-pub use folding::{FriFolding, FriLayer};
-pub use proof::{FriProof, FriQuery};
+pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
+pub use folding::{FoldingLayer, FoldingLayout, LayerCommitment, QuarticFriFolding, QUARTIC_FOLD};
+pub use proof::{FriProof, FriProofDescriptor, OpeningSequence, QueryMapping};
