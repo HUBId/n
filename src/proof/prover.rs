@@ -1,10 +1,12 @@
 //! Prover implementation for the `rpp-stark` engine.
 //! Executes the polynomial commitment pipeline to produce deterministic proofs.
 
+use core::marker::PhantomData;
+
 use crate::air::Air;
 use crate::config::ProverContext;
 use crate::fri::{FriBatch, FriProof};
-use crate::hash::{Blake3Hasher, MerkleTree};
+use crate::hash::{Blake3Hasher, Blake3QuaternaryMerkleTree, MerkleTreeBackend, MerkleTreeConfig};
 use crate::utils::serialization::ProofBytes;
 use crate::{StarkError, StarkResult};
 
@@ -32,9 +34,19 @@ impl Prover {
         if !batch.verify()? {
             return Err(StarkError::SubsystemFailure("fri self-check failed"));
         }
-        let hasher = Blake3Hasher::new(self.context.stark.hash.blake3.clone());
-        let merkle = MerkleTree::new(vec![hasher.finalize()?])?;
-        let _root = merkle.root(Blake3Hasher::new(self.context.stark.hash.blake3.clone()))?;
+        debug_assert!(MerkleTreeConfig::MIN_DEPTH <= MerkleTreeConfig::MAX_DEPTH);
+
+        let mut hasher = Blake3Hasher::new(self.context.stark.hash.blake3.clone());
+        hasher.absorb(trace_length.to_le_bytes().as_slice());
+        let leaf = hasher.finalize()?;
+        let commitment = Blake3QuaternaryMerkleTree::<Blake3Hasher> {
+            leaves: vec![leaf],
+            hasher: PhantomData,
+        };
+        let _domain_tag =
+            <Blake3QuaternaryMerkleTree<Blake3Hasher> as MerkleTreeBackend>::DOMAIN_TAG;
+        let _ = (_domain_tag, &commitment);
+
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&trace_length.to_le_bytes());
         Ok(ProofBytes::new(bytes))
