@@ -1,14 +1,13 @@
 //! Declarative description of public input layouts per proof kind.
 //!
-//! The goal of this module is to document, rather than implement, how public
-//! inputs are structured across the different proof categories supported by
-//! the STARK engine. Each structure captures the versioned header fields that
-//! must be present before any proof specific body is interpreted.
+//! Public inputs are absorbed by the transcript using little-endian framing.
+//! Each header declared here participates in the `PUBLIC_INPUTS` transcript
+//! section described in [`crate::proof::transcript::PublicInputsSectionSpec`].
 
 use crate::utils::serialization::{DigestBytes, FieldElementBytes};
 
 /// Enumerates all supported proof kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProofKind {
     /// Proves a single execution trace.
     Execution,
@@ -16,6 +15,26 @@ pub enum ProofKind {
     Aggregation,
     /// Wraps recursion layers for rollup scenarios.
     Recursion,
+}
+
+/// Canonical tag encoding for each [`ProofKind`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProofKindTag(pub u8);
+
+impl ProofKindTag {
+    /// Execution proof tag (used for deterministic aggregation order).
+    pub const EXECUTION: ProofKindTag = ProofKindTag(0x00);
+    /// Aggregation proof tag.
+    pub const AGGREGATION: ProofKindTag = ProofKindTag(0x01);
+    /// Recursion proof tag.
+    pub const RECURSION: ProofKindTag = ProofKindTag(0x02);
+
+    /// Canonical ordering of tags (ascending numerical order).
+    pub const ORDER: &'static [ProofKindTag; 3] = &[
+        ProofKindTag::EXECUTION,
+        ProofKindTag::AGGREGATION,
+        ProofKindTag::RECURSION,
+    ];
 }
 
 /// Version tag for public input headers.
