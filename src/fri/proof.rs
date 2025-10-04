@@ -14,7 +14,7 @@ use crate::fri::{
     field_from_hash, field_to_bytes, hash_internal, hash_leaf, pseudo_blake3, PseudoBlake3Xof,
 };
 use crate::hash::blake3::FiatShamirChallengeRules;
-use crate::hash::merkle::{Blake3FourAryMerkleSpec, MerkleIndex, MerklePathElement};
+use crate::hash::merkle::{MerkleIndex, MerklePathElement, EMPTY_DIGEST};
 
 /// Transcript seed used when instantiating the FRI prover and verifier.
 pub type FriTranscriptSeed = [u8; 32];
@@ -161,7 +161,7 @@ impl MerkleTree {
                     children[i] = if i < chunk.len() {
                         chunk[i]
                     } else {
-                        Blake3FourAryMerkleSpec::EMPTY_CHILD_DIGEST
+                        EMPTY_DIGEST
                     };
                 }
                 next.push(hash_internal(&children));
@@ -178,10 +178,10 @@ impl MerkleTree {
             .last()
             .and_then(|level| level.first())
             .copied()
-            .unwrap_or(Blake3FourAryMerkleSpec::EMPTY_CHILD_DIGEST)
+            .unwrap_or(EMPTY_DIGEST)
     }
 
-    fn prove(&self, mut index: usize) -> Vec<MerklePathElement<[u8; 32]>> {
+    fn prove(&self, mut index: usize) -> Vec<MerklePathElement> {
         let mut path = Vec::new();
         for level in 0..self.levels.len() - 1 {
             let nodes = &self.levels[level];
@@ -194,7 +194,7 @@ impl MerkleTree {
                 let digest = if base + offset < nodes.len() {
                     nodes[base + offset]
                 } else {
-                    Blake3FourAryMerkleSpec::EMPTY_CHILD_DIGEST
+                    EMPTY_DIGEST
                 };
                 if offset != position {
                     siblings[s_idx] = digest;
@@ -238,7 +238,7 @@ pub struct FriQueryLayer {
     /// Evaluation revealed at this layer.
     pub value: FieldElement,
     /// Merkle authentication path proving membership.
-    pub path: Vec<MerklePathElement<[u8; 32]>>,
+    pub path: Vec<MerklePathElement>,
 }
 
 /// Declarative representation of a FRI proof.
@@ -451,7 +451,7 @@ fn derive_query_positions(seed: [u8; 32], count: usize, domain_size: usize) -> V
 
 fn verify_path(
     value: FieldElement,
-    path: &[MerklePathElement<[u8; 32]>],
+    path: &[MerklePathElement],
     expected_root: &[u8; 32],
     mut index: usize,
     layer_index: usize,
@@ -471,10 +471,7 @@ fn verify_path(
             if offset == expected_child as usize {
                 children[offset] = hash;
             } else {
-                let sibling = sibling_iter
-                    .next()
-                    .copied()
-                    .unwrap_or(Blake3FourAryMerkleSpec::EMPTY_CHILD_DIGEST);
+                let sibling = sibling_iter.next().copied().unwrap_or(EMPTY_DIGEST);
                 children[offset] = sibling;
             }
         }
