@@ -13,6 +13,7 @@ pub mod fri;
 pub mod hash;
 pub mod proof;
 pub mod utils;
+pub mod vrf;
 
 use config::{ProofSystemConfig, ProverContext, VerifierContext};
 use proof::aggregation::BatchVerificationOutcome;

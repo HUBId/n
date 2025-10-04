@@ -25,3 +25,24 @@ expected to satisfy the following behavioural contracts once wired in:
 Test harnesses should capture these invariants through reproducible fixtures
 that assert byte-for-byte equality of proof outputs and verify the maximum
 size constraints.
+
+## Post-Quantum VRF Specification
+
+- `vrf_keygen`, `vrf_evaluate` and `vrf_verify` follow the contracts captured in
+  `src/vrf/mod.rs` (no ambient randomness; transcript driven only).
+- The transcript must begin with the domain tag `RPP-VRF-V1` and include the
+  ordered sections enumerated in `VrfTranscriptSpec::SECTION_ORDER`.
+- VRF outputs are normalized via BLAKE3-XOF with prefix `RPP-VRF-OUT` followed
+  by rejection sampling until a uniform 32-byte value is obtained.
+- Anti-grinding requires a commit-then-reveal protocol using
+  `commit = H(vrf_output || round_id || pk)`; mismatches yield
+  `ErrVrfCommitMismatch`.
+- Leader selection accepts when `H(vrf_output || round_ctx) < T` (little-endian)
+  and sorts multi-winner sets by `(vrf_output, pk)`.
+- Chain configuration must expose `VRF_SWITCH_HEIGHT` (and optionally
+  `VRF_SWITCH_EPOCH`) such that EC-VRF proofs after the switch emit
+  `ErrVrfLegacyRejected`.
+- VRF public inputs use the header layout in `PublicInputSerializationSpec::VRF_FIELDS`
+  binding `pk`, PRF parameter digests and context identifiers.
+- Test fixtures must cover determinism, bias detection, commit/reveal errors and
+  pre/post-cutover validation as summarised in `VrfTestPlan`.
