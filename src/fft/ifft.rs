@@ -1,29 +1,28 @@
 //! Inverse FFT routines for polynomial reconstruction.
-//! Provides deterministic algorithms for use in the FRI commitment scheme.
+//!
+//! The module documents the inverse transform side of the radix-2 pipeline.
+//! Implementations operate entirely in Montgomery space to keep consistency with
+//! forward transforms and polynomial storage.  Deterministic chunking mirrors the
+//! forward transform to preserve transcript stability in interactive protocols.
 
-use crate::field::{polynomial::Polynomial, FieldElement};
-use crate::StarkError;
-use crate::StarkResult;
+use super::{EvaluationDomain, Radix2Domain};
 
-/// Inverse FFT operator placeholder.
-#[derive(Debug, Clone)]
-pub struct InverseFft {
-    /// Domain size used for interpolation.
-    pub domain_size: usize,
+/// Trait documenting inverse FFT execution contracts.
+pub trait Ifft<F> {
+    /// Associated evaluation domain.
+    type Domain: EvaluationDomain<F>;
+
+    /// Returns the evaluation domain descriptor used during interpolation.
+    fn domain(&self) -> &Self::Domain;
+
+    /// Executes the inverse transform, mutating the provided evaluations in
+    /// place.
+    fn inverse(&self, values: &mut [F]);
 }
 
-impl InverseFft {
-    /// Creates a new inverse FFT operator with the provided domain size.
-    pub fn new(domain_size: usize) -> Self {
-        Self { domain_size }
-    }
-
-    /// Reconstructs a polynomial from evaluation points.
-    pub fn interpolate(&self, evaluations: &[FieldElement]) -> StarkResult<Polynomial> {
-        if evaluations.is_empty() || evaluations.len() != self.domain_size {
-            return Err(StarkError::InvalidInput("invalid evaluation length"));
-        }
-        // Placeholder deterministic interpolation using direct assignment.
-        Ok(Polynomial::new(evaluations.to_vec()))
-    }
+/// Descriptor for radix-2 inverse FFT plans.
+#[derive(Debug, Clone, Copy)]
+pub struct Radix2InverseFft<F> {
+    /// Domain carrying ordering and generator metadata.
+    pub domain: Radix2Domain<F>,
 }

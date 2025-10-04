@@ -1,35 +1,30 @@
 //! Low-degree extension routines for the evaluation domain.
-//! Performs deterministic polynomial extension over multiplicative cosets.
+//!
+//! This module exposes descriptive traits for low-degree extension (LDE)
+//! operators.  Concrete back-ends plug in FFT-based or naive algorithms that
+//! honour the documented Montgomery encoding and deterministic chunking rules.
 
-use crate::field::{polynomial::Polynomial, FieldElement};
-use crate::StarkError;
-use crate::StarkResult;
+use crate::field::polynomial::{Polynomial, PolynomialView};
 
-/// Deterministic descriptor for LDE operations.
-#[derive(Debug, Clone)]
-pub struct LowDegreeExtension {
-    /// Target domain size after extension.
-    pub blowup_factor: usize,
+/// Trait describing contracts for low-degree extensions over multiplicative
+/// cosets.
+pub trait LowDegreeExtension<F> {
+    /// Returns the blowup factor applied during the extension.
+    fn blowup_factor(&self) -> usize;
+
+    /// Extends an owned polynomial.
+    fn extend_owned(&self, polynomial: &Polynomial) -> Vec<F>;
+
+    /// Extends a borrowed polynomial view.
+    fn extend_view(&self, polynomial: PolynomialView<'_>) -> Vec<F>;
 }
 
-impl LowDegreeExtension {
-    /// Creates a new LDE descriptor.
-    pub fn new(blowup_factor: usize) -> Self {
-        Self { blowup_factor }
-    }
-
-    /// Executes the low-degree extension, returning the evaluations over the expanded domain.
-    pub fn extend(&self, polynomial: &Polynomial) -> StarkResult<Vec<FieldElement>> {
-        if self.blowup_factor == 0 {
-            return Err(StarkError::InvalidInput("blowup factor must be non-zero"));
-        }
-        // Placeholder deterministic implementation using naive evaluation.
-        let domain_size = polynomial.coefficients.len() * self.blowup_factor;
-        let mut result = Vec::with_capacity(domain_size);
-        for i in 0..domain_size {
-            let point = FieldElement::new(i as u64);
-            result.push(polynomial.evaluate(point));
-        }
-        Ok(result)
-    }
+/// Descriptor capturing configuration for deterministic LDE chunking.
+#[derive(Debug, Clone, Copy)]
+pub struct LowDegreeExtensionDescriptor {
+    /// Multiplicative blowup factor.
+    pub blowup_factor: usize,
+    /// Human-readable explanation of the deterministic chunking scheme used to
+    /// distribute evaluation points across worker threads.
+    pub chunking_description: &'static str,
 }
