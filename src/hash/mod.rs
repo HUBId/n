@@ -29,8 +29,8 @@ pub use blake3::{
     FiatShamirChallengeRules, TranscriptPhaseTag,
 };
 pub use merkle::{
-    Blake3FourAryMerkleSpec, MerkleIndex, MerklePathElement, MerkleSchemeDigest,
-    MerkleValidationError, PoseidonFourAryMerkleSpec,
+    compute_root_from_path, encode_leaf, verify_path, Blake3MerkleTree, MerkleError, MerkleIndex,
+    MerklePathElement, DIGEST_SIZE, EMPTY_DIGEST, MERKLE_SCHEME_ID,
 };
 pub use poseidon::{
     PoseidonArithmeticDomain, PoseidonConstantsV1, PoseidonDomainTag, PoseidonParametersV1,

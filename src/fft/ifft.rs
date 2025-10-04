@@ -22,7 +22,7 @@ pub trait Ifft<F> {
 
 /// Descriptor for radix-2 inverse FFT plans.
 #[derive(Debug, Clone, Copy)]
-pub struct Radix2InverseFft<F> {
+pub struct Radix2InverseFft<F: 'static> {
     /// Domain carrying ordering and generator metadata.
     pub domain: Radix2Domain<F>,
 }

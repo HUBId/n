@@ -32,7 +32,7 @@ pub enum Radix2Ordering {
 
 /// Placeholder table describing radix-2 generators in Montgomery form.
 #[derive(Debug, Clone, Copy)]
-pub struct Radix2GeneratorTable<F> {
+pub struct Radix2GeneratorTable<F: 'static> {
     /// Successive powers of the primitive root used for the forward FFT.
     pub forward: &'static [F],
     /// Successive powers of the inverse root used for the inverse FFT.
@@ -41,7 +41,7 @@ pub struct Radix2GeneratorTable<F> {
     pub _field: PhantomData<F>,
 }
 
-impl<F> Radix2GeneratorTable<F> {
+impl<F: 'static> Radix2GeneratorTable<F> {
     /// Returns an empty placeholder table.
     pub const fn empty() -> Self {
         Self {
@@ -54,7 +54,7 @@ impl<F> Radix2GeneratorTable<F> {
 
 /// Canonical radix-2 evaluation domain descriptor.
 #[derive(Debug, Clone, Copy)]
-pub struct Radix2Domain<F> {
+pub struct Radix2Domain<F: 'static> {
     /// Logarithm of the domain size.
     pub log2_size: usize,
     /// Element ordering used during iteration.
