@@ -1,21 +1,38 @@
-//! Hashing primitives for the `rpp-stark` engine.
-//! Contains Poseidon for field-friendly hashing, Blake3 for byte hashing, and Merkle commitments.
+//! Hashing and commitment specifications for the `rpp-stark` engine.
+//!
+//! This module does not provide executable hashing code.  Instead it freezes the
+//! contracts, constants and documentation that the proving and verification
+//! stacks must implement in host environments.  Every item is stable Rust and is
+//! designed to be auditable without hidden dependencies or implicit behaviour.
+//!
+//! The submodules cover three complementary domains:
+//!
+//! * [`poseidon`] – field-arithmetic hashing based on the Poseidon sponge
+//!   construction with fully enumerated constants and domain-separation tags.
+//! * [`blake3`] – byte-oriented transcripts relying on BLAKE3 with deterministic
+//!   framing rules and Fiat–Shamir challenge derivation.
+//! * [`merkle`] – external and optional arithmetic Merkle commitment layouts for
+//!   both BLAKE3 and Poseidon back-ends.
+//!
+//! Downstream implementations are expected to consume these declarations to
+//! ensure that prover and verifier agree on padding, endianness, parameter
+//! digests and aggregation rules.  The absence of implementation logic is
+//! intentional; all behaviour is expressed declaratively to keep the
+//! specification self-contained.
 
 pub mod blake3;
-pub mod config;
 pub mod merkle;
 pub mod poseidon;
 
-pub use blake3::TranscriptHasher;
-pub use config::{
-    Blake3Parameters, HashParameters, PoseidonParameters, BLAKE3_COMMITMENT_DOMAIN_TAG,
-    BLAKE3_PARAMETERS_V1_ID, POSEIDON_ARITHMETIC_DOMAIN_TAG, POSEIDON_PARAMETERS_V1_ID,
+pub use blake3::{
+    Blake3Domain, Blake3TranscriptSection, Blake3TranscriptSpec, Blake3TranscriptVersion,
+    FiatShamirChallengeRules, TranscriptPhaseTag,
 };
 pub use merkle::{
-    Blake3QuaternaryMerkleTree, MerklePath, MerkleTreeBackend, MerkleTreeConfig, PoseidonLeaf,
-    PoseidonMerkleTree,
+    Blake3FourAryMerkleSpec, MerkleIndex, MerklePathElement, MerkleSchemeDigest,
+    MerkleValidationError, PoseidonFourAryMerkleSpec,
 };
 pub use poseidon::{
-    PoseidonMdsMatrix, PoseidonMdsMatrixV1, PoseidonPermutationOrder, PoseidonPermutationOrderV1,
-    PoseidonPermutationSpec, PoseidonRoundConstants, PoseidonRoundConstantsV1, PoseidonSpecV1,
+    PoseidonArithmeticDomain, PoseidonConstantsV1, PoseidonDomainTag, PoseidonParametersV1,
+    PoseidonSpongeContract, PoseidonSpongePadding, PoseidonSpongeStateGeometry,
 };

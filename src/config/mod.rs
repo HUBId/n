@@ -6,6 +6,12 @@
 
 use crate::utils::serialization::DigestBytes;
 
+/// Maximum admissible size for any serialized proof (including envelope).
+///
+/// Verifiers MUST reject proofs exceeding this bound to preserve deterministic
+/// resource usage and to avoid unbounded allocations during streaming.
+pub const MAX_PROOF_SIZE_BYTES: usize = 32 * 1024 * 1024;
+
 /// Profiles tuning the trade-off between throughput and security.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PerformanceProfile {

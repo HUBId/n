@@ -6,8 +6,9 @@
 //! the traits using their preferred hash functions while adhering to the
 //! canonical serialization rules described in [`crate::proof::transcript`].
 
+use crate::hash::blake3::Blake3TranscriptSection;
 use crate::proof::transcript::{
-    ChallengeDeriver, ChallengeStream, SectionDescriptor, TranscriptLayout,
+    ChallengeDeriver, ChallengeLabel, ChallengeStream, TranscriptSectionLayout,
 };
 use crate::StarkResult;
 
@@ -17,7 +18,9 @@ pub trait TranscriptHook {
     type Builder: ChallengeDeriver;
 
     /// Returns the layout the hook is expecting.
-    fn layout(&self) -> &TranscriptLayout;
+    fn layout(&self) -> &'static [Blake3TranscriptSection; 5] {
+        TranscriptSectionLayout::ORDER
+    }
 
     /// Absorbs a transcript section and returns the derived `section_salt_i` value.
     ///
@@ -33,7 +36,7 @@ pub trait TranscriptHook {
     /// `len(payload)_LE` is a four-byte little-endian length prefix.
     fn absorb_section(
         &mut self,
-        descriptor: SectionDescriptor,
+        section: Blake3TranscriptSection,
         payload: &[u8],
     ) -> StarkResult<[u8; 32]>;
 
@@ -45,7 +48,7 @@ pub trait TranscriptHook {
 pub trait ChallengeStreamExt: ChallengeStream {
     /// Draws `output` bytes using the provided label, forwarding to the underlying stream.
     fn draw_bytes(&mut self, label: &'static str, output: &mut [u8]) -> StarkResult<()> {
-        self.draw_challenge(crate::proof::transcript::ChallengeLabel(label), output)
+        self.draw_challenge(ChallengeLabel(label), output)
     }
 }
 

@@ -5,11 +5,9 @@
 //! version, the declared proof kind, the length of both header and body, and
 //! the integrity digest without parsing custom metadata formats.
 
+use crate::config::MAX_PROOF_SIZE_BYTES;
 use crate::proof::public_inputs::ProofKind;
 use crate::utils::serialization::DigestBytes;
-
-/// Maximum allowed size for a proof including envelope metadata.
-pub const MAX_PROOF_SIZE_BYTES: usize = 32 * 1024 * 1024;
 
 /// Enumerates the current envelope format versions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
