@@ -2,13 +2,15 @@
 //!
 //! The declarations in this module document the canonical interface, context
 //! descriptors and deterministic rules required to integrate the lattice-based
-//! VRF with the existing `rpp-stark` proving pipeline. No executable
-//! implementation is provided; every struct or constant here simply records the
-//! ordering, identifiers and hashing rules mandated by the specification.
+//! VRF with the existing `rpp-stark` proving pipeline.  The actual execution
+//! logic (NTT kernel, parameter identifiers and PRF evaluation) lives in
+//! [`pq`].
+
+pub mod pq;
 
 use crate::config::TranscriptVersionId;
 use crate::proof::public_inputs::ProofKind;
-use crate::utils::serialization::DigestBytes;
+use blake3::Hash;
 
 /// Canonical domain separation tag absorbed into the transcript.
 pub const DOMAIN_TAG: &str = "RPP-VRF-V1";
@@ -32,23 +34,59 @@ impl FieldId {
 
 /// Identifier for RLWE parameter profiles (ring dimension, modulus, noise bounds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RlweParamId(pub u16);
+pub struct RlweParamId([u8; 32]);
 
 impl RlweParamId {
-    /// Returns the little-endian encoding of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
+    /// Creates a new identifier from a 32-byte digest.
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Builds an identifier from a [`blake3::Hash`].
+    pub fn from_hash(hash: Hash) -> Self {
+        Self(*hash.as_bytes())
+    }
+
+    /// Returns the canonical byte representation of the identifier.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl core::ops::Deref for RlweParamId {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
 /// Identifier for VRF parameter profiles (thresholds, committee sizing, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct VrfParamId(pub u16);
+pub struct VrfParamId([u8; 32]);
 
 impl VrfParamId {
-    /// Returns the little-endian encoding of the identifier.
-    pub const fn to_le_bytes(self) -> [u8; 2] {
-        self.0.to_le_bytes()
+    /// Creates a new identifier from a 32-byte digest.
+    pub const fn new(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
+    /// Builds an identifier from a [`blake3::Hash`].
+    pub fn from_hash(hash: Hash) -> Self {
+        Self(*hash.as_bytes())
+    }
+
+    /// Returns the canonical byte representation of the identifier.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl core::ops::Deref for VrfParamId {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -93,8 +131,8 @@ pub struct VrfContext {
 impl VrfContext {
     /// Canonical ordering for context serialization (all little-endian).
     pub const ORDER: &'static [&'static str] = &[
-        "rlwe_param_id:u16 (LE)",
-        "vrf_param_id:u16 (LE)",
+        "rlwe_param_id:[u8;32]",
+        "vrf_param_id:[u8;32]",
         "transcript_version_id:u8",
         "field_id:u16 (LE)",
         "mapping_rules: canonical string table index",
