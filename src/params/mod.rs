@@ -55,7 +55,7 @@ pub use hash::params_hash;
 pub use ser::{deserialize_params, serialize_params, SerKind};
 pub use stark_params::StarkParams;
 pub use types::{
-    ChallengeBounds, Endianness, FieldKind, FriFolding, FriParams, HashKind, LdeOrder, LdeParams,
-    MerkleArity, MerkleParams, ProofParams, SecurityBudget, TranscriptParams,
+    ChallengeBounds, Endianness, FieldKind, FriFolding, FriParams, HashFamily, HashKind, LdeOrder,
+    LdeParams, MerkleArity, MerkleParams, ProofParams, SecurityBudget, TranscriptParams,
 };
 pub use validate::{ParamsError, ValidationReport};
