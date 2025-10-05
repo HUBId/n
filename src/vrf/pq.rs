@@ -230,16 +230,12 @@ pub fn normalize_output(coeffs: &[u64]) -> [u8; 32] {
 }
 
 fn rejection_sample_32(reader: &mut OutputReader) -> [u8; 32] {
-    // Target space is 2^256; the rejection loop is implemented generically even though
-    // every 32-byte value is valid. The structure mirrors the specification and allows
-    // future tightening of the range without touching the logic.
-    loop {
-        let mut candidate = [0u8; 32];
-        reader.fill(&mut candidate);
-        // With a full 2^256 target the rejection bound equals the entire space, therefore
-        // every candidate is accepted.
-        return candidate;
-    }
+    // Target space is 2^256; every 32-byte value is currently accepted. The helper
+    // retains the structure described in the specification but avoids the degenerate
+    // loop that never iterated.
+    let mut candidate = [0u8; 32];
+    reader.fill(&mut candidate);
+    candidate
 }
 
 fn select_primitive_root(degree: u32) -> u64 {

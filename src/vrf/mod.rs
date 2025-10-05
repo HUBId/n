@@ -379,6 +379,9 @@ impl VrfTestPlan {
     ];
 }
 
+/// Alias for the normalized VRF output bytes.
+pub type VrfOutput = [u8; VrfOutputNormalizationSpec::OUTPUT_LENGTH];
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -405,6 +408,3 @@ pub mod tests {
         assert_eq!(err, VrfVerificationFailure::ErrVrfTranscriptOrder);
     }
 }
-
-/// Alias for the normalized VRF output bytes.
-pub type VrfOutput = [u8; VrfOutputNormalizationSpec::OUTPUT_LENGTH];

@@ -1,4 +1,4 @@
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 #![deny(rust_2018_idioms)]
 
 //! Core library entry point for the `rpp-stark` proof system.
@@ -26,6 +26,21 @@ use proof::aggregation::BatchVerificationOutcome;
 use proof::public_inputs::PublicInputs;
 use proof::{BatchProofRecord, ProofKind};
 use utils::serialization::{ProofBytes, WitnessBlob};
+
+pub use air::example::{
+    lfsr::PublicInputs as LfsrPublicInputs, LfsrAir as ExampleLfsrAir,
+    LfsrTraceBuilder as ExampleLfsrTraceBuilder,
+};
+pub use air::traits::{
+    Air as AirContract, BoundaryBuilder as AirBoundaryBuilder,
+    BoundaryConstraint as AirBoundaryConstraint, Constraint as AirConstraint,
+    Evaluator as AirEvaluator, PolyExpr as AirPolyExpr, PublicInputsCodec as AirPublicInputsCodec,
+    TraceBuilder as AirTraceBuilder,
+};
+pub use air::types::{
+    AirError, BoundaryAt, DegreeBounds, LdeOrder, PublicFieldMeta, PublicFieldType, PublicSpec,
+    SerKind, TraceColMeta, TraceData, TraceRole, TraceSchema,
+};
 
 /// Result type used throughout the library to surface deterministic errors.
 pub type StarkResult<T> = core::result::Result<T, StarkError>;

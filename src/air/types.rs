@@ -364,14 +364,11 @@ impl TraceData {
             BoundaryAt::Last => column.len().saturating_sub(1),
             BoundaryAt::Row(r) => r,
         };
-        column
-            .get(row)
-            .copied()
-            .ok_or_else(|| AirError::BoundaryViolation {
-                column: ix,
-                boundary,
-                detail: "boundary outside trace length",
-            })
+        column.get(row).copied().ok_or(AirError::BoundaryViolation {
+            column: ix,
+            boundary,
+            detail: "boundary outside trace length",
+        })
     }
 
     /// Serialises a column into canonical little-endian field element bytes.

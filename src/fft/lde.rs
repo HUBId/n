@@ -273,7 +273,7 @@ impl LowDegreeExtender {
         let chunk_size = self.params.chunking.chunk_size;
         assert!(chunk_size > 0, "chunk size must be non-zero");
         let total_rows = self.extended_rows();
-        let total_chunks = (total_rows + chunk_size - 1) / chunk_size;
+        let total_chunks = total_rows.div_ceil(chunk_size);
 
         let mut assignments = Vec::new();
 
@@ -289,7 +289,7 @@ impl LowDegreeExtender {
                 }
             }
             ChunkingDeterminism::WorkerMajor => {
-                let chunks_per_worker = (total_chunks + worker_count - 1) / worker_count;
+                let chunks_per_worker = total_chunks.div_ceil(worker_count);
                 let start_chunk = worker_id * chunks_per_worker;
                 let end_chunk = ((worker_id + 1) * chunks_per_worker).min(total_chunks);
                 for chunk_idx in start_chunk..end_chunk {
