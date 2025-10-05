@@ -276,9 +276,9 @@ mod tests {
             param_digest,
             common_ids: CommonIdentifiers {
                 field_id: crate::config::FIELD_ID_GOLDILOCKS_64,
-                merkle_scheme_id: crate::config::MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+                merkle_scheme_id: crate::config::MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
                 transcript_version_id: crate::config::TRANSCRIPT_VERSION_ID_RPP_FS_V1,
-                fri_plan_id: crate::config::FRI_PLAN_ID_FOLD4_V1,
+                fri_plan_id: crate::config::FRI_PLAN_ID_FOLD2_V1,
             },
             limits: PROFILE_STANDARD_CONFIG.limits.clone(),
             metrics: None,

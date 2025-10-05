@@ -4,7 +4,8 @@
 /// Canonical digest representation for a FRI parameter set.
 ///
 /// The digest is computed over the canonical serialization of the
-/// folding factor, query schedule, and target depth using BLAKE3.
+/// folding factor, folding mode, query schedule, and target depth
+/// using BLAKE3.
 /// The hexadecimal strings exposed below allow integrators to pin
 /// protocol parameters without embedding executable verification logic.
 pub type ParameterDigest = &'static str;
@@ -32,7 +33,7 @@ pub const STANDARD_FRI_PROFILE: FriProfile = FriProfile {
     folding_factor: 2,
     query_count: 64,
     target_depth: 6,
-    parameter_digest: "31d7f096bd7cf0ebc5d4d88dbcccf20ebb6a520fe52b39cac3d1a1a0f1d5e2aa",
+    parameter_digest: "5570706d57436b4fa198d0e8c8a6d3fa01d8c348c602248b066ee8f3fe0eb566",
 };
 
 /// High security profile with an increased query budget.
@@ -41,5 +42,5 @@ pub const HISEC_FRI_PROFILE: FriProfile = FriProfile {
     folding_factor: 2,
     query_count: 96,
     target_depth: 8,
-    parameter_digest: "8f44b61cfe2b67ab681a2a19d4e9febb0e5bc2b1de9a5596d1f52e8f8e0cd5a4",
+    parameter_digest: "40b923845a41a78da7bdef951f541ae1b6b30794b0244a54b19fc5801d686b06",
 };

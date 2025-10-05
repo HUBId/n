@@ -485,9 +485,9 @@ const fn digest(bytes: [u8; 32]) -> DigestBytes {
     DigestBytes { bytes }
 }
 
-/// Canonical Merkle scheme identifier (`BLAKE3_4ARY_V1`).
-pub const MERKLE_SCHEME_ID_BLAKE3_4ARY_V1: MerkleSchemeId = MerkleSchemeId(digest([
-    b'B', b'L', b'A', b'K', b'E', b'3', b'_', b'4', b'A', b'R', b'Y', b'_', b'V', b'1', 0, 0, 0, 0,
+/// Canonical Merkle scheme identifier (`BLAKE3_2ARY_V1`).
+pub const MERKLE_SCHEME_ID_BLAKE3_2ARY_V1: MerkleSchemeId = MerkleSchemeId(digest([
+    b'B', b'L', b'A', b'K', b'E', b'3', b'_', b'2', b'A', b'R', b'Y', b'_', b'V', b'1', 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 ]));
 
@@ -497,10 +497,10 @@ pub const TRANSCRIPT_VERSION_ID_RPP_FS_V1: TranscriptVersionId = TranscriptVersi
     0, 0, 0, 0, 0, 0, 0, 0, 1,
 ]));
 
-/// Canonical FRI folding plan identifier (fold factor 4).
-pub const FRI_PLAN_ID_FOLD4_V1: FriPlanId = FriPlanId(digest([
-    b'F', b'R', b'I', b'_', b'P', b'L', b'A', b'N', b'_', b'F', b'4', b'_', b'V', b'1', 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4,
+/// Canonical FRI folding plan identifier (fold factor 2).
+pub const FRI_PLAN_ID_FOLD2_V1: FriPlanId = FriPlanId(digest([
+    b'F', b'R', b'I', b'_', b'P', b'L', b'A', b'N', b'_', b'F', b'2', b'_', b'V', b'1', 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
 ]));
 
 /// Poseidon parameter identifier for `rf=8, rp=56`.
@@ -554,9 +554,9 @@ pub const AIR_SPEC_IDS_V1: AirSpecLayout = ProofKindLayout {
 /// Common identifiers shared across profiles.
 pub const COMMON_IDENTIFIERS: CommonIdentifiers = CommonIdentifiers {
     field_id: FIELD_ID_GOLDILOCKS_64,
-    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
     transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
-    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
 };
 
 /// Standard profile configuration (`PROFILE_STD`).
@@ -572,9 +572,9 @@ pub const PROFILE_STANDARD_CONFIG: ProfileConfig = ProfileConfig {
         partial_rounds: 56,
     },
     poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
-    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
     transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
-    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
     batch_verification_enabled: true,
     max_threads: 8,
     limits: ResourceLimits {
@@ -618,9 +618,9 @@ pub const PROFILE_HIGH_SECURITY_CONFIG: ProfileConfig = ProfileConfig {
         partial_rounds: 60,
     },
     poseidon_param_id: POSEIDON_PARAM_ID_HISEC,
-    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
     transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
-    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
     batch_verification_enabled: true,
     max_threads: 12,
     limits: ResourceLimits {
@@ -664,9 +664,9 @@ pub const PROFILE_THROUGHPUT_CONFIG: ProfileConfig = ProfileConfig {
         partial_rounds: 56,
     },
     poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
-    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
     transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
-    fri_plan_id: FRI_PLAN_ID_FOLD4_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
     batch_verification_enabled: true,
     max_threads: 8,
     limits: ResourceLimits {

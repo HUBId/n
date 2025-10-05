@@ -243,7 +243,7 @@ fn build_envelope(
         ood_openings,
         fri_proof,
         fri_parameters: FriParametersMirror {
-            fold: 4,
+            fold: 2,
             cap_degree: context.profile.fri_depth_range.max as u16,
             cap_size: final_poly_len as u32,
             query_budget: security_level.query_budget() as u16,
@@ -264,7 +264,7 @@ fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQuery> {
                     value: FieldElement::ZERO,
                     path: vec![MerklePathElement {
                         index: MerkleIndex(0),
-                        siblings: [[0u8; 32]; 3],
+                        siblings: [[0u8; 32]; 1],
                     }],
                 })
                 .collect(),

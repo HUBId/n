@@ -241,7 +241,7 @@ fn precheck_body(
     if body.fri_proof.security_level != security_level {
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
-    if body.fri_parameters.fold != 4
+    if body.fri_parameters.fold != 2
         || body.fri_parameters.query_budget as usize != security_level.query_budget()
     {
         return Err(VerificationFailure::ErrEnvelopeMalformed);

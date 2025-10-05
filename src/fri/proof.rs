@@ -6,10 +6,11 @@
 //! implementation self-contained and dependency free.
 
 use crate::field::FieldElement;
-use crate::fri::{binary_fold, next_domain_size, parent_index, BINARY_FOLD_ARITY};
+use crate::fri::folding::derive_coset_shift;
 use crate::fri::types::{
     FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel, FriTranscriptSeed,
 };
+use crate::fri::{binary_fold, next_domain_size, parent_index, phi, BINARY_FOLD_ARITY};
 use crate::fri::{
     field_from_hash, field_to_bytes, hash_internal, hash_leaf, pseudo_blake3, PseudoBlake3Xof,
 };
@@ -20,7 +21,7 @@ use crate::hash::merkle::{
 use crate::params::{BuiltinProfile, StarkParams, StarkParamsBuilder};
 use std::sync::OnceLock;
 
-const MERKLE_ARITY: usize = 4;
+const MERKLE_ARITY: usize = 2;
 
 /// Helper struct representing a prover transcript.
 #[derive(Debug, Clone)]
@@ -87,13 +88,9 @@ impl MerkleTree {
         while current.len() > 1 {
             let mut next = Vec::with_capacity((current.len() + MERKLE_ARITY - 1) / MERKLE_ARITY);
             for chunk in current.chunks(MERKLE_ARITY) {
-                let mut children = [[0u8; 32]; MERKLE_ARITY];
-                for i in 0..MERKLE_ARITY {
-                    children[i] = if i < chunk.len() {
-                        chunk[i]
-                    } else {
-                        EMPTY_DIGEST
-                    };
+                let mut children = [EMPTY_DIGEST; MERKLE_ARITY];
+                for (position, child) in chunk.iter().enumerate() {
+                    children[position] = *child;
                 }
                 next.push(hash_internal(&children));
             }
@@ -119,22 +116,20 @@ impl MerkleTree {
             let parent_index = index / MERKLE_ARITY;
             let position = index % MERKLE_ARITY;
             let base = parent_index * MERKLE_ARITY;
-            let mut siblings = [[0u8; 32]; MERKLE_ARITY - 1];
-            let mut s_idx = 0;
-            for offset in 0..MERKLE_ARITY {
-                let digest = if base + offset < nodes.len() {
-                    nodes[base + offset]
+            let sibling = if position == 0 {
+                if base + 1 < nodes.len() {
+                    nodes[base + 1]
                 } else {
                     EMPTY_DIGEST
-                };
-                if offset != position {
-                    siblings[s_idx] = digest;
-                    s_idx += 1;
                 }
-            }
+            } else if base < nodes.len() {
+                nodes[base]
+            } else {
+                EMPTY_DIGEST
+            };
             path.push(MerklePathElement {
                 index: MerkleIndex(position as u8),
-                siblings,
+                siblings: [sibling],
             });
             index /= MERKLE_ARITY;
         }
@@ -173,6 +168,17 @@ impl FriProof {
         seed: FriTranscriptSeed,
         evaluations: &[FieldElement],
     ) -> Result<Self, FriError> {
+        let params = default_fri_params();
+        Self::prove_with_params(security_level, seed, evaluations, params)
+    }
+
+    /// Generates a FRI proof using the provided [`StarkParams`].
+    pub fn prove_with_params(
+        security_level: FriSecurityLevel,
+        seed: FriTranscriptSeed,
+        evaluations: &[FieldElement],
+        params: &StarkParams,
+    ) -> Result<Self, FriError> {
         if evaluations.is_empty() {
             return Err(FriError::EmptyCodeword);
         }
@@ -187,6 +193,7 @@ impl FriProof {
         let mut current = evaluations.to_vec();
         let mut layer_roots = Vec::new();
         let mut layer_index = 0usize;
+        let mut coset_shift = derive_coset_shift(params);
 
         while current.len() > 1 && (current.len() > CAP_DEGREE || current.len() > CAP_SIZE) {
             let tree = MerkleTree::new(&current);
@@ -195,14 +202,14 @@ impl FriProof {
             let eta = transcript.draw_eta(layer_index);
             layer_roots.push(root);
 
-            let params = default_fri_params();
-            let next = binary_fold(&current, eta, params);
+            let next = binary_fold(&current, eta, coset_shift);
             witnesses.push(LayerWitness {
                 values: current,
                 tree,
             });
 
             current = next;
+            coset_shift = phi(coset_shift);
             layer_index += 1;
         }
 
@@ -252,13 +259,14 @@ impl FriProof {
 }
 
 /// Derives the canonical query plan identifier.
-pub fn derive_query_plan_id(level: FriSecurityLevel) -> [u8; 32] {
+pub fn derive_query_plan_id(level: FriSecurityLevel, params: &StarkParams) -> [u8; 32] {
     let mut payload = Vec::new();
     payload.extend_from_slice(b"FRI-PLAN/BINARY");
     payload.extend_from_slice(&(BINARY_FOLD_ARITY as u32).to_le_bytes());
     payload.extend_from_slice(&(CAP_DEGREE as u32).to_le_bytes());
     payload.extend_from_slice(&(CAP_SIZE as u32).to_le_bytes());
     payload.extend_from_slice(&(level.query_budget() as u32).to_le_bytes());
+    payload.push(params.fri().folding.code());
     payload.extend_from_slice(level.tag().as_bytes());
     payload.extend_from_slice(b"challenge-after-commit");
     payload.extend_from_slice(b"dedup-sort-stable");
@@ -274,6 +282,21 @@ impl FriVerifier {
         proof: &FriProof,
         security_level: FriSecurityLevel,
         seed: FriTranscriptSeed,
+        final_value_oracle: F,
+    ) -> Result<(), FriError>
+    where
+        F: FnMut(usize) -> FieldElement,
+    {
+        let params = default_fri_params();
+        Self::verify_with_params(proof, security_level, seed, params, final_value_oracle)
+    }
+
+    /// Verifies a FRI proof using the provided [`StarkParams`].
+    pub fn verify_with_params<F>(
+        proof: &FriProof,
+        security_level: FriSecurityLevel,
+        seed: FriTranscriptSeed,
+        _params: &StarkParams,
         mut final_value_oracle: F,
     ) -> Result<(), FriError>
     where
@@ -423,6 +446,29 @@ mod tests {
 
     fn final_value_oracle(values: Vec<FieldElement>) -> impl FnMut(usize) -> FieldElement {
         move |index| values[index]
+    }
+
+    #[test]
+    fn fri_prover_handles_coset_folding() {
+        let evaluations = sample_evaluations();
+        let seed = sample_seed();
+        let params = StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_HISEC_X16)
+            .build()
+            .expect("coset params");
+
+        let proof =
+            FriProof::prove_with_params(FriSecurityLevel::HiSec, seed, &evaluations, &params)
+                .expect("coset proof");
+
+        let finals = proof.final_polynomial.clone();
+        FriVerifier::verify_with_params(
+            &proof,
+            FriSecurityLevel::HiSec,
+            seed,
+            &params,
+            final_value_oracle(finals),
+        )
+        .expect("verification");
     }
 
     #[test]
