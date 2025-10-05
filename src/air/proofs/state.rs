@@ -1,8 +1,12 @@
 //! State-Transition-AIR-Profil.
 //!
-//! Bindet deterministische Zustandsaenderungen an Pre-/Post-Roots und ein
-//! Diff-Commitment. Externe BLAKE3-Pfade werden ausschliesslich ueber das
-//! Transcript verifiziert; die AIR arbeitet mit feldkodierten Aggregatoren.
+//! Bindet deterministische Zustandsaenderungen an Pre-/Post-Roots sowie an ein
+//! Diff-Commitment. Die Feinspezifikation unterscheidet zwei deterministische
+//! Phasen (Scan/Finalize) und modelliert pro Trace-Zeile genau eine Operation
+//! aus {INS, UPD, DEL}. Key- und Value-Werte werden feldkodiert; externe
+//! BLAKE3-Pfade erscheinen nur im Transcript. Das Profil verlangt Tests fuer
+//! reine Insert-/Delete-/Update-Serien (akzeptierend) sowie fuer fehlerhafte
+//! Permutationen, Formate, Op-Tags, triviale Updates und Boundary-Verletzungen.
 
 use super::ProofAirKind;
 
@@ -17,62 +21,74 @@ impl StateAirProfile {
     pub const TRACE_STEPS_MAX: usize = 1 << 22;
     /// Core-Register in kanonischer Reihenfolge.
     pub const CORE_REGISTERS: &'static [&'static str] = &[
-        "acc_pre",
-        "acc_post",
-        "delta_acc",
-        "apply_flag",
-        "key_acc",
-        "value_acc",
-        "scan_index",
+        "A_pre", "A_post", "A_diff", "K", "V_old", "V_new", "Op_tag", "H_acc",
     ];
     /// Aux-Register fuer Zerlegungen und Lookup-Hilfen.
     pub const AUX_REGISTERS: &'static [&'static str] = &[
-        "key_limb_0",
-        "key_limb_1",
-        "key_limb_2",
-        "value_limb_0",
-        "value_limb_1",
-        "value_limb_2",
-        "sign_flag",
-        "permutation_running",
+        "key_limb_lo",
+        "key_limb_hi",
+        "value_old_lo",
+        "value_old_hi",
+        "value_new_lo",
+        "value_new_hi",
+        "null_flag",
+        "delta_helper",
+        "grand_product_z",
     ];
     /// Selektoren (deterministisch aus Zeilenindex und Profil-Konstanten).
-    pub const SELECTOR_REGISTERS: &'static [&'static str] =
-        &["is_first", "is_last", "phase_scan", "phase_apply"];
+    pub const SELECTOR_REGISTERS: &'static [&'static str] = &["sigma_scan", "sigma_finalize"];
     /// Public-Input-Reihenfolge (LE-Layout).
     pub const PUBLIC_INPUTS: &'static [&'static str] =
         &["PreStateRoot[32]", "PostStateRoot[32]", "DiffDigest[32]"];
     /// Boundary-Regeln mit Bindung an Public Inputs.
     pub const BOUNDARY_CONSTRAINTS: &'static [&'static str] = &[
-        "acc_pre(0) = PreStateDigest_arith",
-        "acc_post(T-1) = PostStateDigest_arith",
-        "delta_acc(T-1) = DiffDigest_arith",
+        "sigma_scan(0) * (A_pre - PreStateDigest) = 0",
+        "sigma_finalize(T-1) * (A_post - PostStateDigest) = 0",
+        "sigma_finalize(T-1) * (A_diff - DiffDigest) = 0",
+        "grand_product_z(0) = 1",
+        "grand_product_z(T-1) = 1",
     ];
     /// Transition-Phasen.
     pub const TRANSITION_PHASES: &'static [&'static str] = &[
-        "phase_scan: scannt geordnete Key/Value-Paare und aktualisiert acc_pre/acc_post",
-        "phase_apply: erzwingt Einfuegen/Ersetzen/Loeschen via apply_flag",
+        "phi_pre: absorbiert (K, V_old) in A_pre",
+        "phi_diff: absorbiert (Op_tag, K, V_old, V_new) in A_diff",
+        "phi_post: absorbiert (K, V_new) in A_post",
+        "grand_product: koppelt A_pre und A_diff gegen A_post via β,γ,δ",
+        "sigma_finalize: haelt A_pre/A_post/A_diff/K/V_* konstant",
     ];
     /// Lookup- und Permutationsargumente.
     pub const LOOKUPS: &'static [&'static str] = &[
-        "permutation_pre_plus_diff_equals_post",
+        "op_tag_in_{INS,UPD,DEL}",
         "range_key_format",
         "range_value_format",
+        "null_representation",
+        "update_non_trivial",
+        "grand_product_pre_plus_diff_equals_post",
     ];
     /// OOD-Oeffnungen.
-    pub const OOD_OPENINGS: &'static [&'static str] =
-        &["acc_pre", "acc_post", "delta_acc", "composition_polynomial"];
+    pub const OOD_OPENINGS: &'static [&'static str] = &[
+        "A_pre",
+        "A_post",
+        "A_diff",
+        "grand_product_z",
+        "composition_polynomial",
+    ];
     /// Grad-Hinweise.
     pub const DEGREE_HINT: &'static str =
-        "Lineare Aggregation Grad <=2; Permutationsargument Grad < LDE-Bound";
+        "Linearitaet Grad <=2; Grand-Product & Permutation Grad < LDE-Bound";
     /// Fehlermodi dieses Profils.
-    pub const FAILURE_MODES: &'static [&'static str] =
-        &["ErrStateDeltaMismatch", "ErrStatePermutation"];
+    pub const FAILURE_MODES: &'static [&'static str] = &[
+        "ErrStateBoundary",
+        "ErrStateOpTag",
+        "ErrStateFormat",
+        "ErrStateUpdateTrivial",
+        "ErrStatePermutation",
+        "ErrStateSelector",
+    ];
     /// Selektorformeln.
     pub const SELECTOR_FORMULAS: &'static [&'static str] = &[
-        "is_first(i) = 1 falls i=0",
-        "is_last(i) = 1 falls i=T-1",
-        "phase_scan(i) = 1 fuer alle Scan-Zeilen gem. Profil-Konstanten",
-        "phase_apply(i) = 1 auf Zeilen, in denen apply_flag wirkt",
+        "sigma_scan(i) * sigma_finalize(i) = 0",
+        "sigma_scan(i) + sigma_finalize(i) = 1",
+        "sigma_scan(0) = 1 und sigma_finalize(T-1) = 1",
     ];
 }
