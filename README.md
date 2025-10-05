@@ -56,3 +56,27 @@ The binary format is free of padding and all integers are little-endian:
 
 Equal byte sequences imply identical parameter sets and therefore the same
 `params_hash`.
+
+## Transcript subsystem
+
+The [`transcript`](src/transcript/mod.rs) module documents a deterministic
+Fiat–Shamir transcript shared by prover and verifier.  The transcript operates
+over labelled phases; each label is an enum variant to guarantee domain
+separation at compile time.
+
+| Phase | Label | Purpose |
+|-------|-------|---------|
+| Init | `ParamsHash`, `ProtocolTag`, `Seed`, `ContextTag` | Bind the transcript to the negotiated [`StarkParams`](src/params/stark_params.rs). |
+| Public | `PublicInputsDigest` | Absorb canonical public inputs. |
+| TraceCommit | `TraceRoot`, `TraceChallengeA` | Bind the execution trace commitment and emit the first challenge. |
+| CompCommit | `CompRoot`, `CompChallengeA` | Bind composition commitments and emit the folding seed. |
+| FRI | `FriRoot(i)`, `FriFoldChallenge(i)` | Iterate through each FRI layer. |
+| Queries | `QueryCount`, `QueryIndexStream` | Fix the number of queries and derive deterministic indices. |
+| Final | `ProofClose` | Produce the final 32-byte proof binding digest. |
+
+Determinism is guaranteed by deriving every sponge update from the parameter
+hash, transcript seed, protocol tag and context label.  Replaying the exact same
+label/data sequence reproduces the state digest and challenge stream bit for
+bit.  The query index stream uses a modulo reduction; the residual bias is
+negligible for domain sizes above 2<sup>16</sup> and is documented in the
+rustdoc comments.
