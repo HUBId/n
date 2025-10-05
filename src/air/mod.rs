@@ -1,73 +1,33 @@
 //! # Algebraic Intermediate Representation (AIR)
 //!
-//! Dieses Modul beschreibt die vollstaendige Spezifikation fuer die
-//! ausfuehrungsspuren (`Execution Traces`) und die zugehoerigen
-//! algebraischen Nebenbedingungen innerhalb von `rpp-stark`.
+//! The AIR layer binds together the formal description of the STARK proving
+//! pipeline. The documentation assembled here is intentionally high level and
+//! focuses on sequencing, naming and interoperability requirements. Concrete
+//! algorithms will be introduced incrementally in the dedicated modules.
 //!
-//! Die Definitionen in diesem Modul enthalten **ausschliesslich**
-//! Schnittstellen, Typcontainer, feste IDs und umfangreiche Dokumentation.
-//! Implementierungslogik gehoert in die Ebenen oberhalb der Spezifikation und
-//! ist bewusst ausgeschlossen, damit die AIR stabil, auditierbar und
-//! deterministisch bleibt. Alle Beschreibungen folgen dem LE-Endian Layout,
-//! nutzen ausschliesslich stable Rust und verzichten auf externe Crates.
+//! ## Pipeline overview
 //!
-//! ## Uebersicht
+//! 1. [`types`] establishes the canonical data containers shared between the
+//!    prover and verifier. They document layout expectations without committing
+//!    to storage backends.
+//! 2. [`trace`] records how witness data is organised across execution steps and
+//!    columns. The trace API is responsible for exposing the read interfaces
+//!    consumed by constraint evaluation.
+//! 3. [`composition`] captures how transition and boundary constraints are
+//!    assembled into the polynomial commitments that feed the low-degree
+//!    extension and FRI layers.
+//! 4. [`traits`] defines the behavioural contracts that concrete AIRs must
+//!    implement. These traits will later be implemented by each proof flavour to
+//!    guarantee deterministic ordering and naming.
+//! 5. [`example`] contains small, focused reference AIRs that double as tutorial
+//!    material for integrators experimenting with the crate.
 //!
-//! * [`context`] stellt Trace- und Kontextinformationen bereit.
-//! * [`descriptors`] fasst Metadaten zu Rand-, Uebergangs- und Lookup-Regeln
-//!   zusammen.
-//! * [`errors`] benennt alle deterministischen Fehlertypen.
-//! * [`ids`] deklariert stabile Kennungen fuer AIR-Spezifikationen und Plansaetze.
-//! * [`inputs`] enthaelt die Public-Input-Container fuer jede Beweisart.
-//! * [`parallel`] dokumentiert die deterministische Parallelisierungsstrategie.
-//! * [`proofs`] beschreibt die einzelnen AIR-Profile (Registerrollen,
-//!   Constraints, Selektoren) fuer alle Beweisarten.
-//! * [`selectors`] listet alle erlaubten Selektoren und deren Formeln.
-//! * [`traits`] definiert die zentralen Traits (`AirSpec`, `AirContext`,
-//!   `PublicInputs`-Vertraege) und damit die Schnittstelle zur STARK-Maschine.
-//!
-//! ## Determinismus
-//!
-//! Alle Datenstrukturen fixieren eine kanonische Ordnung fuer Register,
-//! Constraints, Lookup-Argumente und OOD-Evaluierungen. Die Dokumentation
-//! beschreibt explizit, wie diese Ordnungen zu interpretieren sind. Jede
-//! Implementierung **muss** diese Ordnung exakt einhalten, damit identische
-//! Eingaben zu bit-identischen Beweisergebnissen fuehren.
-//!
-//! ## Dichte Spuren
-//!
-//! Die Trace-Layouts setzen auf ein dichtes Modell (Schrittweite = 1). Alle
-//! Phasenwechsel erfolgen ueber Selektoren; auszulassende Zeilen sind nicht
-//! gestattet. Dieses Vorgehen vereinfacht LDE, DEEP und FRI und ist fuer die
-//! Sicherheitsgarantien zwingend erforderlich.
+//! Each section is currently a placeholder awaiting the detailed specification.
+//! The module structure is kept in place so downstream crates can start wiring
+//! their APIs without depending on unstable documentation artifacts.
 
-pub mod context;
-pub mod descriptors;
-pub mod errors;
-pub mod ids;
-pub mod inputs;
-pub mod parallel;
-pub mod proofs;
-pub mod selectors;
+pub mod composition;
+pub mod example;
+pub mod trace;
 pub mod traits;
-
-pub use context::{AirContext, FriPlanDigest, TraceDomainOffset, TraceInfo, TraceRegister};
-pub use descriptors::{
-    BoundaryConstraintDescriptor, CompositionPolynomialDescriptor, LookupArgumentDescriptor,
-    PermutationArgumentDescriptor,
-};
-pub use errors::AirErrorKind;
-pub use ids::{AirSpecId, ParameterDigest};
-pub use inputs::{
-    AggregationPublicInputs, ConsensusPublicInputs, IdentityPublicInputs, PruningPublicInputs,
-    PublicInputs, StatePublicInputs, TransactionPublicInputs, UptimePublicInputs, VrfPublicInputs,
-};
-pub use parallel::{DeterministicParallelization, ParallelChunkingRule};
-pub use proofs::{
-    AggregationAirProfile, ConsensusAirProfile, IdentityAirProfile, ProofAirKind,
-    PruningAirProfile, StateAirProfile, TransactionAirProfile, UptimeAirProfile, VrfAirProfile,
-};
-pub use selectors::{SelectorColumnDescriptor, SelectorForm, SelectorSet};
-pub use traits::{
-    AirSpec, CompositionChallengeSet, LookupTableAccess, TraceGroup, TransitionConstraintOrder,
-};
+pub mod types;
