@@ -8,10 +8,7 @@
 use std::convert::TryInto;
 
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
-use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError};
-use crate::field::FieldElement;
-use crate::fri::types::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
-use crate::hash::merkle::{MerkleIndex, MerklePathElement};
+use crate::fri::FriProof;
 use crate::hash::Hasher;
 use crate::proof::public_inputs::{
     AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
@@ -532,128 +529,13 @@ fn decode_proof_kind(byte: u8) -> Result<ProofKind, EnvelopeError> {
 }
 
 fn serialize_fri_proof(proof: &FriProof) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    buffer.push(match proof.security_level {
-        FriSecurityLevel::Standard => 0,
-        FriSecurityLevel::HiSec => 1,
-        FriSecurityLevel::Throughput => 2,
-    });
-    buffer.extend_from_slice(&(proof.initial_domain_size as u32).to_le_bytes());
-    buffer.extend_from_slice(&(proof.layer_roots.len() as u32).to_le_bytes());
-    for root in &proof.layer_roots {
-        buffer.extend_from_slice(root);
-    }
-    buffer.extend_from_slice(&(proof.fold_challenges.len() as u32).to_le_bytes());
-    for challenge in &proof.fold_challenges {
-        buffer.extend_from_slice(&field_to_bytes(*challenge));
-    }
-    buffer.extend_from_slice(&(proof.final_polynomial.len() as u32).to_le_bytes());
-    for value in &proof.final_polynomial {
-        buffer.extend_from_slice(&field_to_bytes(*value));
-    }
-    buffer.extend_from_slice(&proof.final_polynomial_digest);
-    buffer.extend_from_slice(&(proof.queries.len() as u32).to_le_bytes());
-    for query in &proof.queries {
-        buffer.extend_from_slice(&(query.position as u64).to_le_bytes());
-        buffer.extend_from_slice(&(query.layers.len() as u32).to_le_bytes());
-        for layer in &query.layers {
-            buffer.extend_from_slice(&field_to_bytes(layer.value));
-            buffer.extend_from_slice(&(layer.path.len() as u32).to_le_bytes());
-            for element in &layer.path {
-                buffer.push(element.index.0);
-                for sibling in &element.siblings {
-                    buffer.extend_from_slice(sibling);
-                }
-            }
-        }
-        buffer.extend_from_slice(&field_to_bytes(query.final_value));
-    }
-    buffer
+    proof
+        .to_bytes()
+        .expect("FRI proofs embedded in envelopes must be valid")
 }
 
 fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
-    let mut cursor = Cursor::new(bytes);
-    let security_level = match cursor.read_u8()? {
-        0 => FriSecurityLevel::Standard,
-        1 => FriSecurityLevel::HiSec,
-        2 => FriSecurityLevel::Throughput,
-        _ => return Err(EnvelopeError::InvalidFriSection("security_level")),
-    };
-    let initial_domain_size = cursor.read_u32()? as usize;
-    let layer_count = cursor.read_u32()? as usize;
-    let mut layer_roots = Vec::with_capacity(layer_count);
-    for _ in 0..layer_count {
-        layer_roots.push(cursor.read_digest()?);
-    }
-    let fold_len = cursor.read_u32()? as usize;
-    let mut fold_challenges = Vec::with_capacity(fold_len);
-    for _ in 0..fold_len {
-        fold_challenges.push(field_from_bytes(cursor.read_digest()?)?);
-    }
-    let final_len = cursor.read_u32()? as usize;
-    let mut final_polynomial = Vec::with_capacity(final_len);
-    for _ in 0..final_len {
-        final_polynomial.push(field_from_bytes(cursor.read_digest()?)?);
-    }
-    let final_polynomial_digest = cursor.read_digest()?;
-    let query_len = cursor.read_u32()? as usize;
-    let mut queries = Vec::with_capacity(query_len);
-    for _ in 0..query_len {
-        let position = cursor.read_u64()? as usize;
-        let layer_len = cursor.read_u32()? as usize;
-        let mut layers = Vec::with_capacity(layer_len);
-        for _ in 0..layer_len {
-            let value = field_from_bytes(cursor.read_digest()?)?;
-            let path_len = cursor.read_u32()? as usize;
-            let mut path = Vec::with_capacity(path_len);
-            for _ in 0..path_len {
-                let index = cursor.read_u8()?;
-                let mut siblings = [[0u8; 32]; 1];
-                for sibling in siblings.iter_mut() {
-                    *sibling = cursor.read_digest()?;
-                }
-                path.push(MerklePathElement {
-                    index: MerkleIndex(index),
-                    siblings,
-                });
-            }
-            layers.push(FriQueryLayer { value, path });
-        }
-        let final_value = field_from_bytes(cursor.read_digest()?)?;
-        queries.push(FriQuery {
-            position,
-            layers,
-            final_value,
-        });
-    }
-
-    if cursor.remaining() != 0 {
-        return Err(EnvelopeError::InvalidFriSection("trailing_bytes"));
-    }
-
-    Ok(FriProof {
-        security_level,
-        initial_domain_size,
-        layer_roots,
-        fold_challenges,
-        final_polynomial,
-        final_polynomial_digest,
-        queries,
-    })
-}
-
-fn field_to_bytes(value: FieldElement) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    out[..8].copy_from_slice(&value.0.to_le_bytes());
-    out
-}
-
-fn field_from_bytes(bytes: [u8; 32]) -> Result<FieldElement, EnvelopeError> {
-    let mut buf = [0u8; 8];
-    buf.copy_from_slice(&bytes[..8]);
-    FieldElement::from_bytes(&buf).map_err(|FieldDeserializeError::FieldDeserializeNonCanonical| {
-        EnvelopeError::NonCanonicalFieldElement
-    })
+    FriProof::from_bytes(bytes).map_err(|_| EnvelopeError::InvalidFriSection("fri_proof"))
 }
 
 /// Thin cursor helper used by the serializer/deserializer.
@@ -692,11 +574,6 @@ impl<'a> Cursor<'a> {
     fn read_u32(&mut self) -> Result<u32, EnvelopeError> {
         let bytes = self.read_fixed::<4>()?;
         Ok(u32::from_le_bytes(bytes))
-    }
-
-    fn read_u64(&mut self) -> Result<u64, EnvelopeError> {
-        let bytes = self.read_fixed::<8>()?;
-        Ok(u64::from_le_bytes(bytes))
     }
 
     fn read_vec(&mut self, len: usize) -> Result<Vec<u8>, EnvelopeError> {
@@ -738,7 +615,7 @@ mod tests {
         PROOF_VERSION_V1,
     };
     use crate::field::FieldElement;
-    use crate::fri::types::FriSecurityLevel;
+    use crate::fri::FriSecurityLevel;
     use crate::proof::prover::build_envelope as build_proof_envelope;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::utils::serialization::{DigestBytes, WitnessBlob};

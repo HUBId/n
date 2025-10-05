@@ -1,7 +1,7 @@
 use super::folding::{coset_shift_schedule, next_domain_size, parent_index};
 use super::layer::verify_query_opening;
-use super::proof::{derive_query_positions, hash_final_layer};
-use super::types::{FriError, FriProof, FriSecurityLevel};
+use super::proof::{derive_query_positions, hash_final_layer, FriProof};
+use super::types::{FriError, FriSecurityLevel};
 use super::{fe_mul, fe_sub, hash_leaf, BINARY_FOLD_ARITY};
 use crate::field::prime_field::FieldElementOps;
 use crate::field::FieldElement;
