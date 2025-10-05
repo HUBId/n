@@ -375,7 +375,7 @@ fn map_fri_error(error: FriError) -> VerificationFailure {
         FriError::LayerRootMismatch { .. } => VerificationFailure::ErrFRILayerRootMismatch,
         FriError::SecurityLevelMismatch => VerificationFailure::ErrFRILayerRootMismatch,
         FriError::QueryBudgetMismatch { .. } => VerificationFailure::ErrFRILayerRootMismatch,
-        FriError::InvalidStructure(_) => VerificationFailure::ErrFRILayerRootMismatch,
+        FriError::InvalidStructure(_) => VerificationFailure::ErrFRIPathInvalid,
     }
 }
 
