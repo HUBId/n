@@ -10,18 +10,14 @@ use crate::fri::folding::derive_coset_shift;
 use crate::fri::types::{
     FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel, FriTranscriptSeed,
 };
-use crate::fri::{binary_fold, next_domain_size, parent_index, phi, BINARY_FOLD_ARITY};
-use crate::fri::{
-    field_from_hash, field_to_bytes, hash_internal, hash_leaf, pseudo_blake3, PseudoBlake3Xof,
-};
+use crate::fri::{binary_fold, next_domain_size, parent_index, phi, BINARY_FOLD_ARITY, FriLayer};
+use crate::fri::{field_from_hash, field_to_bytes, pseudo_blake3, PseudoBlake3Xof};
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::hash::merkle::{
-    compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, EMPTY_DIGEST,
+    compute_root_from_path, encode_leaf, MerkleError, MerklePathElement,
 };
 use crate::params::{BuiltinProfile, StarkParams, StarkParamsBuilder};
 use std::sync::OnceLock;
-
-const MERKLE_ARITY: usize = 2;
 
 /// Helper struct representing a prover transcript.
 #[derive(Debug, Clone)]
@@ -67,73 +63,6 @@ impl FriTranscript {
         let seed = pseudo_blake3(&payload);
         self.state = pseudo_blake3(&seed);
         seed
-    }
-}
-
-/// Merkle tree specialised for quartic arity.
-#[derive(Debug, Clone)]
-struct MerkleTree {
-    levels: Vec<Vec<[u8; 32]>>,
-}
-
-impl MerkleTree {
-    fn new(values: &[FieldElement]) -> Self {
-        let mut levels = Vec::new();
-        let mut current: Vec<[u8; 32]> = values.iter().map(hash_leaf).collect();
-        if current.is_empty() {
-            current.push(hash_leaf(&FieldElement::ZERO));
-        }
-        levels.push(current.clone());
-
-        while current.len() > 1 {
-            let mut next = Vec::with_capacity((current.len() + MERKLE_ARITY - 1) / MERKLE_ARITY);
-            for chunk in current.chunks(MERKLE_ARITY) {
-                let mut children = [EMPTY_DIGEST; MERKLE_ARITY];
-                for (position, child) in chunk.iter().enumerate() {
-                    children[position] = *child;
-                }
-                next.push(hash_internal(&children));
-            }
-            current = next.clone();
-            levels.push(next);
-        }
-
-        Self { levels }
-    }
-
-    fn root(&self) -> [u8; 32] {
-        self.levels
-            .last()
-            .and_then(|level| level.first())
-            .copied()
-            .unwrap_or(EMPTY_DIGEST)
-    }
-
-    fn prove(&self, mut index: usize) -> Vec<MerklePathElement> {
-        let mut path = Vec::new();
-        for level in 0..self.levels.len() - 1 {
-            let nodes = &self.levels[level];
-            let parent_index = index / MERKLE_ARITY;
-            let position = index % MERKLE_ARITY;
-            let base = parent_index * MERKLE_ARITY;
-            let sibling = if position == 0 {
-                if base + 1 < nodes.len() {
-                    nodes[base + 1]
-                } else {
-                    EMPTY_DIGEST
-                }
-            } else if base < nodes.len() {
-                nodes[base]
-            } else {
-                EMPTY_DIGEST
-            };
-            path.push(MerklePathElement {
-                index: MerkleIndex(position as u8),
-                siblings: [sibling],
-            });
-            index /= MERKLE_ARITY;
-        }
-        path
     }
 }
 
@@ -183,34 +112,25 @@ impl FriProof {
             return Err(FriError::EmptyCodeword);
         }
 
-        struct LayerWitness {
-            values: Vec<FieldElement>,
-            tree: MerkleTree,
-        }
-
         let mut transcript = FriTranscript::new(seed);
-        let mut witnesses: Vec<LayerWitness> = Vec::new();
+        let mut layers: Vec<FriLayer> = Vec::new();
         let mut current = evaluations.to_vec();
         let mut layer_roots = Vec::new();
         let mut layer_index = 0usize;
         let mut coset_shift = derive_coset_shift(params);
 
         while current.len() > 1 && (current.len() > CAP_DEGREE || current.len() > CAP_SIZE) {
-            let tree = MerkleTree::new(&current);
-            let root = tree.root();
-            transcript.absorb_layer(layer_index, &root);
-            let eta = transcript.draw_eta(layer_index);
+            let layer = FriLayer::new(layer_index, coset_shift, current);
+            let root = layer.root();
+            transcript.absorb_layer(layer.index(), &root);
+            let eta = transcript.draw_eta(layer.index());
             layer_roots.push(root);
 
-            let next = binary_fold(&current, eta, coset_shift);
-            witnesses.push(LayerWitness {
-                values: current,
-                tree,
-            });
-
+            let next = binary_fold(layer.evaluations(), eta, layer.coset_shift());
             current = next;
-            coset_shift = phi(coset_shift);
-            layer_index += 1;
+            coset_shift = phi(layer.coset_shift());
+            layer_index = layer.index() + 1;
+            layers.push(layer);
         }
 
         // Record the final layer (values only).
@@ -225,14 +145,10 @@ impl FriProof {
         let mut queries = Vec::with_capacity(query_positions.len());
         for &position in &query_positions {
             let mut index = position;
-            let mut layers_openings = Vec::with_capacity(witnesses.len());
-            for witness in witnesses.iter() {
-                if index >= witness.values.len() {
-                    return Err(FriError::QueryOutOfRange { position });
-                }
-                let value = witness.values[index];
-                let path = witness.tree.prove(index);
-                layers_openings.push(FriQueryLayer { value, path });
+            let mut layers_openings: Vec<FriQueryLayer> = Vec::with_capacity(layers.len());
+            for layer in layers.iter() {
+                let opening = layer.open(index)?;
+                layers_openings.push(opening);
                 index = parent_index(index);
             }
 
