@@ -10,12 +10,10 @@ use crate::fri::folding::derive_coset_shift;
 use crate::fri::types::{
     FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel, FriTranscriptSeed,
 };
-use crate::fri::{binary_fold, next_domain_size, parent_index, phi, BINARY_FOLD_ARITY, FriLayer};
+use crate::fri::{binary_fold, next_domain_size, parent_index, phi, FriLayer, BINARY_FOLD_ARITY};
 use crate::fri::{field_from_hash, field_to_bytes, pseudo_blake3, PseudoBlake3Xof};
 use crate::hash::blake3::FiatShamirChallengeRules;
-use crate::hash::merkle::{
-    compute_root_from_path, encode_leaf, MerkleError, MerklePathElement,
-};
+use crate::hash::merkle::{compute_root_from_path, encode_leaf, MerkleError, MerklePathElement};
 use crate::params::{BuiltinProfile, StarkParams, StarkParamsBuilder};
 use std::sync::OnceLock;
 
@@ -67,7 +65,7 @@ impl FriTranscript {
 }
 
 /// Residual polynomial commitment hashing all final-layer evaluations.
-fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
+pub(crate) fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
     let mut payload = Vec::with_capacity(4 + values.len() * 8);
     payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
     for value in values {
@@ -116,6 +114,7 @@ impl FriProof {
         let mut layers: Vec<FriLayer> = Vec::new();
         let mut current = evaluations.to_vec();
         let mut layer_roots = Vec::new();
+        let mut fold_challenges = Vec::new();
         let mut layer_index = 0usize;
         let mut coset_shift = derive_coset_shift(params);
 
@@ -124,6 +123,7 @@ impl FriProof {
             let root = layer.root();
             transcript.absorb_layer(layer.index(), &root);
             let eta = transcript.draw_eta(layer.index());
+            fold_challenges.push(eta);
             layer_roots.push(root);
 
             let next = binary_fold(layer.evaluations(), eta, layer.coset_shift());
@@ -167,6 +167,7 @@ impl FriProof {
             security_level,
             initial_domain_size: evaluations.len(),
             layer_roots,
+            fold_challenges,
             final_polynomial,
             final_polynomial_digest,
             queries,
@@ -231,10 +232,22 @@ impl FriVerifier {
             });
         }
 
+        if proof.fold_challenges.len() != proof.layer_roots.len() {
+            return Err(FriError::InvalidStructure("fold challenge length"));
+        }
+
         let mut transcript = FriTranscript::new(seed);
         for (layer_index, root) in proof.layer_roots.iter().enumerate() {
             transcript.absorb_layer(layer_index, root);
-            let _ = transcript.draw_eta(layer_index);
+            let eta = transcript.draw_eta(layer_index);
+            let expected_eta = proof
+                .fold_challenges
+                .get(layer_index)
+                .copied()
+                .ok_or(FriError::InvalidStructure("missing fold challenge"))?;
+            if eta != expected_eta {
+                return Err(FriError::InvalidStructure("fold challenge mismatch"));
+            }
         }
 
         let recomputed_digest = hash_final_layer(&proof.final_polynomial);
@@ -303,7 +316,11 @@ impl FriVerifier {
     }
 }
 
-fn derive_query_positions(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<usize> {
+pub(crate) fn derive_query_positions(
+    seed: [u8; 32],
+    count: usize,
+    domain_size: usize,
+) -> Vec<usize> {
     assert!(domain_size > 0, "domain size must be positive");
     let mut xof = PseudoBlake3Xof::new(&seed);
     let target = count.min(domain_size);
@@ -477,6 +494,7 @@ mod tests {
             security_level: security,
             initial_domain_size: 1024,
             layer_roots: Vec::new(),
+            fold_challenges: Vec::new(),
             final_polynomial,
             final_polynomial_digest: final_digest,
             queries: positions

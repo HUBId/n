@@ -543,6 +543,10 @@ fn serialize_fri_proof(proof: &FriProof) -> Vec<u8> {
     for root in &proof.layer_roots {
         buffer.extend_from_slice(root);
     }
+    buffer.extend_from_slice(&(proof.fold_challenges.len() as u32).to_le_bytes());
+    for challenge in &proof.fold_challenges {
+        buffer.extend_from_slice(&field_to_bytes(*challenge));
+    }
     buffer.extend_from_slice(&(proof.final_polynomial.len() as u32).to_le_bytes());
     for value in &proof.final_polynomial {
         buffer.extend_from_slice(&field_to_bytes(*value));
@@ -580,6 +584,11 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
     let mut layer_roots = Vec::with_capacity(layer_count);
     for _ in 0..layer_count {
         layer_roots.push(cursor.read_digest()?);
+    }
+    let fold_len = cursor.read_u32()? as usize;
+    let mut fold_challenges = Vec::with_capacity(fold_len);
+    for _ in 0..fold_len {
+        fold_challenges.push(field_from_bytes(cursor.read_digest()?)?);
     }
     let final_len = cursor.read_u32()? as usize;
     let mut final_polynomial = Vec::with_capacity(final_len);
@@ -626,6 +635,7 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
         security_level,
         initial_domain_size,
         layer_roots,
+        fold_challenges,
         final_polynomial,
         final_polynomial_digest,
         queries,

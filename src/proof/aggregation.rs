@@ -366,6 +366,7 @@ mod tests {
                         security_level: crate::fri::types::FriSecurityLevel::Standard,
                         initial_domain_size: 1,
                         layer_roots: Vec::new(),
+                        fold_challenges: Vec::new(),
                         final_polynomial: Vec::new(),
                         final_polynomial_digest: [0u8; 32],
                         queries: Vec::new(),

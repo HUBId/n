@@ -2,6 +2,7 @@ use core::fmt;
 
 use crate::field::FieldElement;
 use crate::hash::merkle::{MerkleError, MerklePathElement};
+use crate::params::StarkParams;
 
 /// Transcript seed used when instantiating the FRI prover and verifier.
 pub type FriTranscriptSeed = [u8; 32];
@@ -193,6 +194,8 @@ pub struct FriProof {
     pub initial_domain_size: usize,
     /// Merkle roots for each folded layer.
     pub layer_roots: Vec<[u8; 32]>,
+    /// Transcript fold challenges sampled after each layer commitment.
+    pub fold_challenges: Vec<FieldElement>,
     /// Residual polynomial evaluations.
     pub final_polynomial: Vec<FieldElement>,
     /// Digest binding the final polynomial values.
@@ -203,11 +206,51 @@ pub struct FriProof {
 
 /// Borrowed view over the parameters required when verifying a proof.
 #[derive(Debug, Clone, Copy)]
-pub struct FriParamsView<'a> {
+pub struct FriParamsView {
     /// Declared proof version.
     pub version: FriProofVersion,
     /// Security profile used for the proof.
     pub security_level: FriSecurityLevel,
     /// Query plan identifier derived from the security level.
-    pub query_plan: &'a [u8; 32],
+    pub query_plan: [u8; 32],
+    /// Number of verifier queries requested by the parameter set.
+    pub query_count: usize,
+    /// Maximum number of folding layers executed by the prover.
+    pub num_layers: usize,
+    /// Log<sub>2</sub> of the initial evaluation domain size.
+    pub domain_log2: usize,
+}
+
+impl FriParamsView {
+    /// Constructs a view binding the static parameter fields used by the prover.
+    pub fn from_params(
+        params: &StarkParams,
+        security_level: FriSecurityLevel,
+        query_plan: [u8; 32],
+    ) -> Self {
+        let fri_params = params.fri();
+        Self {
+            version: FriProofVersion::CURRENT,
+            security_level,
+            query_plan,
+            query_count: fri_params.queries as usize,
+            num_layers: fri_params.num_layers as usize,
+            domain_log2: fri_params.domain_log2 as usize,
+        }
+    }
+
+    /// Returns the initial domain size derived from the parameter set.
+    pub fn initial_domain_size(&self) -> usize {
+        1usize << self.domain_log2
+    }
+
+    /// Returns the configured query count.
+    pub fn query_count(&self) -> usize {
+        self.query_count
+    }
+
+    /// Returns the number of folding layers.
+    pub fn num_layers(&self) -> usize {
+        self.num_layers
+    }
 }
