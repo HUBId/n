@@ -864,4 +864,41 @@ mod tests {
         let err = stream.draw_ood_seed().expect_err("need two points");
         assert!(matches!(err, TranscriptError::ErrChallengeCount { .. }));
     }
+
+    #[test]
+    fn transcript_rejects_query_seed_without_fri_seed() {
+        let header = make_header(ProofKind::Tx, 7);
+        let mut transcript = Transcript::new(header).unwrap();
+        transcript.absorb_public_inputs(&[]).unwrap();
+        transcript.absorb_commitment_roots([0; 32], None).unwrap();
+        transcript.absorb_air_spec_id(AirSpecId(digest(3))).unwrap();
+        let mut stream = transcript.finalize().unwrap();
+        stream.draw_alpha_vector(2).unwrap();
+        stream.draw_ood_points(2).unwrap();
+        stream.draw_ood_seed().unwrap();
+
+        let err = stream
+            .draw_query_seed()
+            .expect_err("fri seed must precede query seed");
+        assert!(matches!(err, TranscriptError::ErrTranscriptOrder { .. }));
+    }
+
+    #[test]
+    fn transcript_rejects_duplicate_fri_seed_draws() {
+        let header = make_header(ProofKind::Tx, 9);
+        let mut transcript = Transcript::new(header).unwrap();
+        transcript.absorb_public_inputs(&[]).unwrap();
+        transcript.absorb_commitment_roots([0; 32], None).unwrap();
+        transcript.absorb_air_spec_id(AirSpecId(digest(3))).unwrap();
+        let mut stream = transcript.finalize().unwrap();
+        stream.draw_alpha_vector(2).unwrap();
+        stream.draw_ood_points(2).unwrap();
+        stream.draw_ood_seed().unwrap();
+        let _ = stream.draw_fri_seed().unwrap();
+
+        let err = stream
+            .draw_fri_seed()
+            .expect_err("second fri seed draw must fail");
+        assert!(matches!(err, TranscriptError::ErrTranscriptOrder { .. }));
+    }
 }

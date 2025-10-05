@@ -176,29 +176,42 @@ impl ProofEnvelope {
             return Err(EnvelopeError::UnexpectedEndOfBuffer("body_padding"));
         }
 
-        Ok(Self {
-            header: ProofEnvelopeHeader {
-                proof_version,
-                proof_kind,
-                param_digest,
-                air_spec_id,
-                public_inputs,
-                commitment_digest,
-                header_length,
-                body_length,
+        let header = ProofEnvelopeHeader {
+            proof_version,
+            proof_kind,
+            param_digest,
+            air_spec_id,
+            public_inputs,
+            commitment_digest,
+            header_length,
+            body_length,
+        };
+
+        let mut body = ProofEnvelopeBody {
+            core_root,
+            aux_root,
+            fri_layer_roots,
+            ood_openings,
+            fri_proof,
+            fri_parameters,
+            integrity_digest: DigestBytes {
+                bytes: integrity_digest,
             },
-            body: ProofEnvelopeBody {
-                core_root,
-                aux_root,
-                fri_layer_roots,
-                ood_openings,
-                fri_proof,
-                fri_parameters,
-                integrity_digest: DigestBytes {
-                    bytes: integrity_digest,
-                },
-            },
-        })
+        };
+
+        let header_bytes = header.serialize(&body);
+        let payload = body.serialize_payload();
+        let computed_integrity = compute_integrity_digest(&header_bytes, &payload);
+        if computed_integrity != integrity_digest {
+            return Err(EnvelopeError::IntegrityDigestMismatch);
+        }
+
+        // Preserve the canonical integrity digest in the body before returning.
+        body.integrity_digest = DigestBytes {
+            bytes: integrity_digest,
+        };
+
+        Ok(Self { header, body })
     }
 }
 
@@ -703,5 +716,177 @@ impl<'a> Cursor<'a> {
 impl Default for DigestBytes {
     fn default() -> Self {
         Self { bytes: [0u8; 32] }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        build_prover_context, compute_param_digest, ChunkingPolicy, ParamDigest, ProofKind,
+        ProofSystemConfig, ThreadPoolProfile, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
+        PROOF_VERSION_V1,
+    };
+    use crate::field::FieldElement;
+    use crate::fri::FriSecurityLevel;
+    use crate::proof::prover::build_envelope as build_proof_envelope;
+    use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+    use crate::utils::serialization::{DigestBytes, WitnessBlob};
+
+    fn sample_fri_proof() -> FriProof {
+        let evaluations: Vec<FieldElement> =
+            (0..1024).map(|i| FieldElement(i as u64 + 1)).collect();
+        let seed = [7u8; 32];
+        FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("fri proof")
+    }
+
+    fn build_sample_envelope() -> ProofEnvelope {
+        let fri_proof = sample_fri_proof();
+        let fri_layer_roots = fri_proof.layer_roots.clone();
+        let core_root = fri_layer_roots.first().copied().unwrap_or([0u8; 32]);
+        let aux_root = [1u8; 32];
+        let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
+
+        let header = ExecutionHeaderV1 {
+            version: PublicInputVersion::V1,
+            program_digest: DigestBytes { bytes: [2u8; 32] },
+            trace_length: 1024,
+            trace_width: 16,
+        };
+        let body_bytes: Vec<u8> = Vec::new();
+        let public_inputs = PublicInputs::Execution {
+            header: header.clone(),
+            body: &body_bytes,
+        };
+        let public_input_bytes = serialize_public_inputs(&public_inputs);
+
+        let mut body = ProofEnvelopeBody {
+            core_root,
+            aux_root,
+            fri_layer_roots,
+            ood_openings: Vec::new(),
+            fri_parameters: FriParametersMirror {
+                fold: 4,
+                cap_degree: 256,
+                cap_size: fri_proof.final_polynomial.len() as u32,
+                query_budget: FriSecurityLevel::Standard.query_budget() as u16,
+            },
+            fri_proof,
+            integrity_digest: DigestBytes::default(),
+        };
+
+        let payload = body.serialize_payload();
+        let body_length = (payload.len() + 32) as u32;
+        let header_length = (2 + 32 + 32 + 4 + public_input_bytes.len() + 32 + 4 + 4) as u32;
+
+        let header = ProofEnvelopeHeader {
+            proof_version: PROOF_VERSION,
+            proof_kind: ProofKind::Tx,
+            param_digest: ParamDigest(DigestBytes { bytes: [3u8; 32] }),
+            air_spec_id: AirSpecId(DigestBytes { bytes: [4u8; 32] }),
+            public_inputs: public_input_bytes,
+            commitment_digest: DigestBytes {
+                bytes: commitment_digest,
+            },
+            header_length,
+            body_length,
+        };
+
+        let header_bytes = header.serialize(&body);
+        let integrity = compute_integrity_digest(&header_bytes, &payload);
+        body.integrity_digest = DigestBytes { bytes: integrity };
+
+        ProofEnvelope { header, body }
+    }
+
+    fn witness_blob(len: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(4 + len * 8);
+        bytes.extend_from_slice(&(len as u32).to_le_bytes());
+        for i in 0..len {
+            bytes.extend_from_slice(&(i as u64 + 1).to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn proof_envelope_serialization_is_deterministic() {
+        let envelope_a = build_sample_envelope();
+        let envelope_b = build_sample_envelope();
+        assert_eq!(envelope_a.to_bytes(), envelope_b.to_bytes());
+    }
+
+    #[test]
+    fn proof_envelope_roundtrip_preserves_structure() {
+        let envelope = build_sample_envelope();
+        let bytes = envelope.to_bytes();
+        let decoded = ProofEnvelope::from_bytes(&bytes).expect("roundtrip");
+        assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn proof_envelope_detects_integrity_mismatch() {
+        let envelope = build_sample_envelope();
+        let mut bytes = envelope.to_bytes();
+        let last = bytes.last_mut().expect("non-empty proof");
+        *last ^= 0x01;
+        let err = ProofEnvelope::from_bytes(&bytes).expect_err("integrity mismatch");
+        assert_eq!(err, EnvelopeError::IntegrityDigestMismatch);
+    }
+
+    #[test]
+    fn prover_pipeline_produces_identical_proof_bytes() {
+        let profile = PROFILE_STANDARD_CONFIG.clone();
+        let common = COMMON_IDENTIFIERS.clone();
+        let param_digest = compute_param_digest(&profile, &common);
+        let config = ProofSystemConfig {
+            proof_version: PROOF_VERSION_V1,
+            profile: profile.clone(),
+            param_digest: param_digest.clone(),
+        };
+        let prover_context = build_prover_context(
+            &profile,
+            &common,
+            &param_digest,
+            ThreadPoolProfile::SingleThread,
+            ChunkingPolicy {
+                min_chunk_items: 64,
+                max_chunk_items: 256,
+                stride: 1,
+            },
+        );
+
+        let body_bytes: Vec<u8> = Vec::new();
+        let header = ExecutionHeaderV1 {
+            version: PublicInputVersion::V1,
+            program_digest: DigestBytes { bytes: [5u8; 32] },
+            trace_length: 1024,
+            trace_width: 16,
+        };
+        let public_inputs = PublicInputs::Execution {
+            header: header.clone(),
+            body: &body_bytes,
+        };
+
+        let witness_bytes = witness_blob(1024);
+        let envelope_a = build_proof_envelope(
+            &public_inputs,
+            WitnessBlob {
+                bytes: &witness_bytes,
+            },
+            &config,
+            &prover_context,
+        )
+        .expect("first envelope");
+        let envelope_b = build_proof_envelope(
+            &public_inputs,
+            WitnessBlob {
+                bytes: &witness_bytes,
+            },
+            &config,
+            &prover_context,
+        )
+        .expect("second envelope");
+
+        assert_eq!(envelope_a.to_bytes(), envelope_b.to_bytes());
     }
 }

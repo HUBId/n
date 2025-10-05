@@ -506,3 +506,128 @@ fn verify_path(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_evaluations() -> Vec<FieldElement> {
+        (0..1024).map(|i| FieldElement(i as u64 + 1)).collect()
+    }
+
+    fn sample_seed() -> FriTranscriptSeed {
+        [42u8; 32]
+    }
+
+    fn final_value_oracle(values: Vec<FieldElement>) -> impl FnMut(usize) -> FieldElement {
+        move |index| values[index]
+    }
+
+    #[test]
+    fn fri_prover_is_deterministic() {
+        let evaluations = sample_evaluations();
+        let seed = sample_seed();
+
+        let proof_a =
+            FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("first proof");
+        let proof_b =
+            FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("second proof");
+
+        assert_eq!(proof_a, proof_b, "proofs must be identical across runs");
+
+        let finals = proof_a.final_polynomial.clone();
+        FriVerifier::verify(
+            &proof_a,
+            FriSecurityLevel::Standard,
+            seed,
+            final_value_oracle(finals),
+        )
+        .expect("verification");
+    }
+
+    #[test]
+    fn fri_verifier_enforces_query_budget() {
+        let evaluations = sample_evaluations();
+        let seed = sample_seed();
+
+        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+        let mut tampered = proof.clone();
+        tampered.queries.pop();
+
+        let finals = tampered.final_polynomial.clone();
+        let err = FriVerifier::verify(
+            &tampered,
+            FriSecurityLevel::Standard,
+            seed,
+            final_value_oracle(finals),
+        )
+        .expect_err("query budget mismatch");
+
+        assert!(
+            matches!(err, FriError::QueryBudgetMismatch { expected, actual } if expected == FriSecurityLevel::Standard.query_budget() && actual + 1 == expected)
+        );
+    }
+
+    #[test]
+    fn fri_verifier_reports_path_mismatch() {
+        let evaluations = sample_evaluations();
+        let seed = sample_seed();
+        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+
+        let mut tampered = proof.clone();
+        if let Some(layer) = tampered
+            .queries
+            .get_mut(0)
+            .and_then(|query| query.layers.get_mut(0))
+        {
+            if let Some(element) = layer.path.get_mut(0) {
+                element.siblings[0][0] ^= 0x01;
+            }
+        }
+
+        let finals = tampered.final_polynomial.clone();
+        let err = FriVerifier::verify(
+            &tampered,
+            FriSecurityLevel::Standard,
+            seed,
+            final_value_oracle(finals),
+        )
+        .expect_err("path corruption");
+
+        assert!(matches!(err, FriError::PathInvalid { layer: 0, .. }));
+    }
+
+    #[test]
+    fn fri_verifier_reports_query_out_of_range() {
+        let seed = sample_seed();
+        let security = FriSecurityLevel::Standard;
+        let final_polynomial: Vec<FieldElement> = Vec::new();
+        let final_digest = hash_final_layer(&final_polynomial);
+
+        let mut transcript = FriTranscript::new(seed);
+        transcript.absorb_final(&final_digest);
+        let query_seed = transcript.derive_query_seed();
+        let positions = derive_query_positions(query_seed, security.query_budget(), 1024);
+
+        let proof = FriProof {
+            security_level: security,
+            initial_domain_size: 1024,
+            layer_roots: Vec::new(),
+            final_polynomial,
+            final_polynomial_digest: final_digest,
+            queries: positions
+                .into_iter()
+                .map(|position| FriQuery {
+                    position,
+                    layers: Vec::new(),
+                    final_value: FieldElement::ZERO,
+                })
+                .collect(),
+        };
+
+        let err = FriVerifier::verify(&proof, security, seed, |_| FieldElement::ZERO)
+            .expect_err("query out of range");
+
+        assert!(matches!(err, FriError::QueryOutOfRange { .. }));
+    }
+}
