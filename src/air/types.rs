@@ -129,6 +129,11 @@ impl DegreeBounds {
             Ok(())
         }
     }
+
+    /// Ensures the observed degree stays within the configured bounds for `role`.
+    pub fn ensure(&self, role: TraceRole, observed_degree: usize) -> Result<(), AirError> {
+        self.check_role(role, observed_degree)
+    }
 }
 
 /// Boundary position within the execution trace.
