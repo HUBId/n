@@ -88,8 +88,10 @@ impl Blake3MerkleTree {
         }
 
         if leaf_count == 0 {
-            hashed.push(hash_leaf(&encode_leaf(&[]))?);
-            leaf_count = 1;
+            return Ok(Self {
+                levels: vec![vec![EMPTY_DIGEST]],
+                leaf_count: 0,
+            });
         }
 
         let mut levels = Vec::new();
@@ -296,6 +298,14 @@ mod tests {
         let mut expected = [0u8; DIGEST_SIZE];
         expected.copy_from_slice(blake3::hash(b"RPP-MERKLE-EMPTY\0").as_bytes());
         assert_eq!(EMPTY_DIGEST, expected);
+    }
+
+    #[test]
+    fn empty_tree_root_is_empty() {
+        let leaves: Vec<Vec<u8>> = Vec::new();
+        let tree = Blake3MerkleTree::from_leaves(leaves).expect("tree");
+        assert_eq!(tree.leaf_count(), 0);
+        assert_eq!(tree.root(), EMPTY_DIGEST);
     }
 
     #[test]
