@@ -1,8 +1,6 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
 use rpp_stark::merkle::{DeterministicMerkleHasher, Leaf, MerkleCommit, MerkleTree};
-use rpp_stark::params::builder::StarkParamsBuilder;
-use rpp_stark::params::types::{Endianness, HashKind, MerkleArity};
-use rpp_stark::params::StarkParams;
+use rpp_stark::params::{Endianness, HashKind, MerkleArity, StarkParams, StarkParamsBuilder};
 
 fn build_params(arity: MerkleArity, leaf_width: u8) -> StarkParams {
     let mut builder = StarkParamsBuilder::new();
@@ -77,9 +75,9 @@ fn bench_verify(c: &mut Criterion) {
     let params = build_params(MerkleArity::Binary, 4);
     let sizes = [16usize, 64, 256];
     let leaves = make_leaves(1 << 12, params.merkle().leaf_width);
-    let (root, aux) =
-        MerkleTree::<DeterministicMerkleHasher>::commit(&params, leaves.clone().into_iter())
-            .unwrap();
+    let mut tree = MerkleTree::<DeterministicMerkleHasher>::new(&params).unwrap();
+    let root = tree.commit(leaves.clone().into_iter()).unwrap();
+    let aux = tree.into_aux();
     for &queries in &sizes {
         let indices: Vec<u32> = (0..queries as u32).collect();
         let proof = MerkleTree::<DeterministicMerkleHasher>::open(&params, &aux, &indices).unwrap();

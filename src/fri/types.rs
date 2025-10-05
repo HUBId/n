@@ -27,6 +27,18 @@ impl FriSecurityLevel {
         }
     }
 
+    /// Infers the security profile corresponding to a query budget.
+    pub fn from_query_count(count: usize) -> Option<Self> {
+        match count {
+            c if c == FriSecurityLevel::Standard.query_budget() => Some(FriSecurityLevel::Standard),
+            c if c == FriSecurityLevel::HiSec.query_budget() => Some(FriSecurityLevel::HiSec),
+            c if c == FriSecurityLevel::Throughput.query_budget() => {
+                Some(FriSecurityLevel::Throughput)
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn tag(self) -> &'static str {
         match self {
             FriSecurityLevel::Standard => "STD",
