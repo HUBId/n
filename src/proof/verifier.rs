@@ -261,10 +261,49 @@ fn precheck_body(
         return Err(VerificationFailure::ErrProofTooLarge);
     }
 
+    enforce_resource_limits(header.proof_kind, public_inputs, context, body)?;
+
     Ok(PrecheckedBody {
         fri_seed,
         security_level,
     })
+}
+
+fn enforce_resource_limits(
+    proof_kind: ConfigProofKind,
+    public_inputs: &PublicInputs<'_>,
+    context: &VerifierContext,
+    body: &ProofEnvelopeBody,
+) -> Result<(), VerificationFailure> {
+    if body.fri_proof.layer_roots.len() > context.limits.max_layers as usize {
+        return Err(VerificationFailure::ErrFRILayerRootMismatch);
+    }
+
+    if body.fri_proof.queries.len() > context.limits.max_queries as usize {
+        return Err(VerificationFailure::ErrFRIQueryOutOfRange);
+    }
+
+    enforce_trace_limits(proof_kind, public_inputs, context)
+}
+
+fn enforce_trace_limits(
+    proof_kind: ConfigProofKind,
+    public_inputs: &PublicInputs<'_>,
+    context: &VerifierContext,
+) -> Result<(), VerificationFailure> {
+    let width_limit = *context.limits.per_proof_max_trace_width.get(proof_kind) as u32;
+    let step_limit = *context.limits.per_proof_max_trace_steps.get(proof_kind);
+
+    if let PublicInputs::Execution { header, .. } = public_inputs {
+        if header.trace_width > width_limit {
+            return Err(VerificationFailure::ErrDegreeBoundExceeded);
+        }
+        if header.trace_length > step_limit {
+            return Err(VerificationFailure::ErrDegreeBoundExceeded);
+        }
+    }
+
+    Ok(())
 }
 
 fn verify_ood_openings(
