@@ -757,7 +757,7 @@ mod tests {
     }
 
     #[test]
-    fn param_digest_changes_when_switching_profiles() {
+    fn paramdigest_differs_between_std_and_hisec_ok() {
         let common_ids = COMMON_IDENTIFIERS.clone();
         let std_profile = PROFILE_STANDARD_CONFIG.clone();
         let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
@@ -769,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn proof_version_remains_constant_across_profiles() {
+    fn paramdigest_profile_switch_preserves_proof_version_ok() {
         let common_ids = COMMON_IDENTIFIERS.clone();
         let std_profile = PROFILE_STANDARD_CONFIG.clone();
         let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
@@ -784,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn verifier_rejects_param_digest_mismatch() {
+    fn paramdigest_enforced_by_verifier_rejects_mismatch() {
         let common_ids = COMMON_IDENTIFIERS.clone();
         let std_profile = PROFILE_STANDARD_CONFIG.clone();
         let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
