@@ -502,7 +502,10 @@ mod tests {
         forward.forward(&mut values);
         inverse.inverse(&mut values);
 
-        assert_eq!(values, original, "FFT followed by IFFT must recover the input");
+        assert_eq!(
+            values, original,
+            "FFT followed by IFFT must recover the input"
+        );
     }
 
     #[test]
@@ -514,7 +517,10 @@ mod tests {
 
         let plan = Radix2Fft::natural_order(log2_size);
         let cached_root = from_montgomery_repr(plan.domain().generators.forward[1]);
-        assert_eq!(cached_root, first, "generator table must reuse the derived primitive root");
+        assert_eq!(
+            cached_root, first,
+            "generator table must reuse the derived primitive root"
+        );
     }
 
     #[test]

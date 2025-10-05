@@ -1,4 +1,7 @@
-//! Fully deterministic quartic FRI implementation used by the prover and verifier.
+//! Fully deterministic binary FRI implementation used by the prover and verifier.
+//! The folding helpers expose the canonical coset-shift schedule derived from
+//! [`StarkParams`](crate::params::StarkParams) so that integrators can mirror the
+//! prover's domain adjustments.
 //!
 //! The implementation in this module intentionally favours readability and
 //! auditability over raw performance.  All hashing is performed using the
@@ -15,7 +18,10 @@ pub mod types;
 
 pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
-pub use folding::{quartic_fold, FoldingLayer, FoldingLayout, LayerCommitment, QUARTIC_FOLD};
+pub use folding::{
+    binary_fold, coset_shift_schedule, FoldingLayer, FoldingLayout, LayerCommitment,
+    BINARY_FOLD_ARITY,
+};
 pub use proof::{derive_query_plan_id, FriVerifier};
 pub use types::{
     FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
@@ -109,7 +115,7 @@ pub(crate) fn hash_leaf(value: &FieldElement) -> [u8; 32] {
     hash(&payload).into()
 }
 
-/// Hashes four children digests into their parent digest.
+/// Hashes four child digests into their parent digest.
 #[inline]
 pub(crate) fn hash_internal(children: &[[u8; 32]; 4]) -> [u8; 32] {
     let mut payload = Vec::with_capacity(128);

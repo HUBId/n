@@ -166,7 +166,7 @@ fn build_sample_envelope(
         ood_openings,
         fri_proof,
         fri_parameters: FriParametersMirror {
-            fold: 4,
+            fold: 2,
             cap_degree: profile.limits.max_layers as u16,
             cap_size: profile.limits.max_queries as u32,
             query_budget: profile.fri_queries,

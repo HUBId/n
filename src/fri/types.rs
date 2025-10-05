@@ -39,7 +39,7 @@ impl FriSecurityLevel {
 /// Version tag attached to FRI proofs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FriProofVersion {
-    /// Initial version of the quartic FRI proof format.
+    /// Initial version of the binary FRI proof format.
     V1,
 }
 

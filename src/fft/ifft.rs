@@ -103,7 +103,10 @@ mod tests {
         forward.forward(&mut values);
         inverse.inverse(&mut values);
 
-        assert_eq!(values, original, "IFFT must invert the natural-order forward transform");
+        assert_eq!(
+            values, original,
+            "IFFT must invert the natural-order forward transform"
+        );
     }
 
     #[test]
