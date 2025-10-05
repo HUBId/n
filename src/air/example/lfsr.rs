@@ -436,6 +436,8 @@ fn check_transitions(trace: &Trace, expr: &PolyExpr, column: ColIx) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use insta::assert_json_snapshot;
+    use proptest::prelude::*;
 
     #[test]
     fn codec_roundtrip() {
@@ -444,6 +446,23 @@ mod tests {
         let encoded = codec.encode(&inputs).unwrap();
         let decoded = codec.decode(&encoded).unwrap();
         assert_eq!(decoded, inputs);
+    }
+
+    #[test]
+    fn codec_rejects_non_canonical_encoding() {
+        let codec = PublicInputsCodec;
+        let mut non_canonical = FieldElementBytes { bytes: [0u8; 32] };
+        non_canonical.bytes[8] = 1;
+        let err = codec
+            .decode(&[non_canonical.clone(), non_canonical])
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            AirError::Serialization {
+                kind: SerKind::PublicInput,
+                detail
+            } if detail.contains("non-canonical")
+        ));
     }
 
     #[test]
@@ -461,6 +480,16 @@ mod tests {
         let trace_data = builder.build(degree_bounds).unwrap();
         assert_eq!(trace_data.num_columns(), 1);
 
+        let mut second_builder = air.new_trace_builder().unwrap();
+        second_builder
+            .add_column(TraceRole::Main, expected_column.clone())
+            .unwrap();
+        let second_trace_data = second_builder.build(schema.degree_bounds).unwrap();
+        assert_eq!(
+            trace_data.column(STATE_COL).unwrap(),
+            second_trace_data.column(STATE_COL).unwrap()
+        );
+
         let mut mismatched = expected_column.clone();
         mismatched[3] = mismatched[3].add(&Felt::ONE);
         let mut failing_builder = air.new_trace_builder().unwrap();
@@ -468,6 +497,12 @@ mod tests {
             .add_column(TraceRole::Main, mismatched)
             .unwrap_err();
         assert!(matches!(err, AirError::NonDeterministicWitness { .. }));
+    }
+
+    #[test]
+    fn public_input_digest_snapshot() {
+        let inputs = PublicInputs::new(Felt(3), 8).unwrap();
+        assert_json_snapshot!("public_input_digest_seed3_len8", inputs.digest());
     }
 
     #[test]
@@ -480,5 +515,99 @@ mod tests {
         let trace = Trace::from_columns(schema, vec![column]).unwrap();
         let err = check_transitions(&trace, &transition_expr(STATE_COL), STATE_COL).unwrap_err();
         assert!(matches!(err, AirError::InvalidTransition { .. }));
+    }
+
+    #[test]
+    fn boundary_tampering_is_detected() {
+        let inputs = PublicInputs::new(Felt(5), 8).unwrap();
+        let air = Air::new(inputs.clone());
+        let mut builder = air.new_boundary_builder().unwrap();
+        builder
+            .set(STATE_COL, BoundaryAt::First, inputs.seed)
+            .unwrap();
+        builder
+            .set(
+                STATE_COL,
+                BoundaryAt::Last,
+                generate_column(&inputs).last().copied().unwrap(),
+            )
+            .unwrap();
+        builder.build().unwrap();
+
+        let mut tampered = air.new_boundary_builder().unwrap();
+        let err = tampered
+            .set(STATE_COL, BoundaryAt::First, inputs.seed.add(&Felt::ONE))
+            .unwrap_err();
+        assert!(matches!(err, AirError::NonDeterministicWitness { .. }));
+    }
+
+    #[test]
+    fn trace_data_boundary_checks_enforced() {
+        let inputs = PublicInputs::new(Felt(17), 8).unwrap();
+        let air = Air::new(inputs.clone());
+        let schema = air.trace_schema().unwrap();
+        let expected = generate_column(&inputs);
+        let mut builder = air.new_trace_builder().unwrap();
+        builder
+            .add_column(TraceRole::Main, expected.clone())
+            .unwrap();
+        let trace_data = builder.build(schema.degree_bounds).unwrap();
+
+        let last = expected.last().copied().unwrap();
+        assert_eq!(
+            trace_data
+                .boundary_value(STATE_COL, BoundaryAt::First)
+                .unwrap(),
+            inputs.seed
+        );
+        assert_eq!(
+            trace_data
+                .boundary_value(STATE_COL, BoundaryAt::Last)
+                .unwrap(),
+            last
+        );
+
+        let err = trace_data
+            .boundary_value(STATE_COL, BoundaryAt::Row(expected.len() + 1))
+            .unwrap_err();
+        assert!(matches!(err, AirError::BoundaryViolation { .. }));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn proptest_trace_is_deterministic(seed in 0u64..32, length_factor in 1usize..4) {
+            let length = (length_factor + 1) * LDE_BLOWUP;
+            let inputs = PublicInputs::new(Felt(seed), length).unwrap();
+            let air = Air::new(inputs.clone());
+            let schema = air.trace_schema().unwrap();
+            let expected_column = generate_column(&inputs);
+
+            let mut builder_a = air.new_trace_builder().unwrap();
+            builder_a.add_column(TraceRole::Main, expected_column.clone()).unwrap();
+            let trace_a = builder_a.build(schema.degree_bounds).unwrap();
+
+            let mut builder_b = air.new_trace_builder().unwrap();
+            builder_b.add_column(TraceRole::Main, expected_column.clone()).unwrap();
+            let trace_b = builder_b.build(schema.degree_bounds).unwrap();
+
+            prop_assert_eq!(trace_a.column(STATE_COL).unwrap(), trace_b.column(STATE_COL).unwrap());
+
+            if length > 1 {
+                let mut tampered = expected_column.clone();
+                let ix = (seed as usize) % length;
+                tampered[ix] = tampered[ix].add(&Felt::ONE);
+                let mut tampered_builder = air.new_trace_builder().unwrap();
+                let err = tampered_builder.add_column(TraceRole::Main, tampered).unwrap_err();
+                let witness_violation = matches!(err, AirError::NonDeterministicWitness { .. });
+                prop_assert!(witness_violation);
+            }
+
+            let mut boundary_builder = air.new_boundary_builder().unwrap();
+            boundary_builder.set(STATE_COL, BoundaryAt::First, inputs.seed).unwrap();
+            let last = expected_column.last().copied().unwrap();
+            boundary_builder.set(STATE_COL, BoundaryAt::Last, last).unwrap();
+            boundary_builder.build().unwrap();
+        }
     }
 }
