@@ -15,6 +15,7 @@
 //! tampered length prefixes).
 
 use crate::hash::{hash, Hasher};
+use core::fmt;
 
 /// Number of children per internal node.
 const ARITY: usize = 4;
@@ -59,9 +60,24 @@ pub enum MerkleError {
     ErrMerkleLeafLength,
     /// Missing leaves on the right-hand side were not padded with `EMPTY`.
     ErrMerkleEmptyPadding,
+    /// Sibling order within a Merkle proof was inconsistent with the specification.
+    ErrMerkleSiblingOrder,
     /// Encountered an invalid index byte or inconsistent path structure.
     ErrPathIndexByte,
 }
+
+impl fmt::Display for MerkleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MerkleError::ErrMerkleLeafLength => write!(f, "ErrFRIPathInvalid: leaf length"),
+            MerkleError::ErrMerkleEmptyPadding => write!(f, "ErrFRIPathInvalid: right padding"),
+            MerkleError::ErrMerkleSiblingOrder => write!(f, "ErrFRIPathInvalid: sibling order"),
+            MerkleError::ErrPathIndexByte => write!(f, "ErrFRIPathInvalid: index byte"),
+        }
+    }
+}
+
+impl std::error::Error for MerkleError {}
 
 /// Convenience wrapper for a 4-ary BLAKE3 Merkle tree.
 #[derive(Debug, Clone)]
@@ -284,7 +300,7 @@ pub fn verify_path(
 ) -> Result<(), MerkleError> {
     let computed = compute_root_from_path(leaf, index, leaf_count, path)?;
     if &computed != expected_root {
-        return Err(MerkleError::ErrPathIndexByte);
+        return Err(MerkleError::ErrMerkleSiblingOrder);
     }
     Ok(())
 }
@@ -307,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_proofs() {
+    fn build_path_verify_roundtrip_ok() {
         let payloads = vec![
             encode_leaf(&[1, 2, 3]),
             encode_leaf(&[4, 5, 6, 7]),
@@ -326,43 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_length_mismatch() {
-        let mut leaf = encode_leaf(&[1, 2, 3]);
-        leaf[0] ^= 0x01; // corrupt the length prefix
-        let path = Vec::new();
-        let error = compute_root_from_path(&leaf, 0, 1, &path).unwrap_err();
-        assert_eq!(error, MerkleError::ErrMerkleLeafLength);
-    }
-
-    #[test]
-    fn rejects_incorrect_padding() {
-        let payloads = vec![encode_leaf(&[1]), encode_leaf(&[2])];
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
-        let mut path = tree.open(0).expect("path");
-        // Force an incorrect padding hash for the last sibling at the top level.
-        path.last_mut().unwrap().siblings[2] = [0u8; DIGEST_SIZE];
-        let err = compute_root_from_path(&payloads[0], 0, tree.leaf_count(), &path).unwrap_err();
-        assert_eq!(err, MerkleError::ErrMerkleEmptyPadding);
-    }
-
-    #[test]
-    fn index_byte_three_with_padding() {
-        let payloads = (0..6).map(|i| encode_leaf(&[i as u8])).collect::<Vec<_>>();
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
-        let index = 3usize; // position 3 within its chunk
-        let path = tree.open(index).expect("path");
-        verify_path(
-            &payloads[index],
-            index,
-            tree.leaf_count(),
-            &path,
-            &tree.root(),
-        )
-        .expect("verification");
-    }
-
-    #[test]
-    fn sibling_order_mismatch_rejected() {
+    fn verify_fails_on_wrong_sibling_order() {
         let payloads = vec![
             encode_leaf(&[1, 2, 3, 4]),
             encode_leaf(&[5, 6, 7, 8]),
@@ -375,6 +355,66 @@ mod tests {
         // Swap two siblings to break the order constraint.
         path[0].siblings.swap(0, 1);
         let err = verify_path(&payloads[2], 2, tree.leaf_count(), &path, &tree.root()).unwrap_err();
+        assert_eq!(err, MerkleError::ErrMerkleSiblingOrder);
+        assert_eq!(err.to_string(), "ErrFRIPathInvalid: sibling order");
+    }
+
+    #[test]
+    fn verify_fails_on_bad_index_byte() {
+        let payloads = vec![encode_leaf(&[42]), encode_leaf(&[43])];
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
+        let mut path = tree.open(0).expect("path");
+        path[0].index = MerkleIndex(4);
+        let err = verify_path(&payloads[0], 0, tree.leaf_count(), &path, &tree.root()).unwrap_err();
         assert_eq!(err, MerkleError::ErrPathIndexByte);
+        assert_eq!(err.to_string(), "ErrFRIPathInvalid: index byte");
+    }
+
+    #[test]
+    fn verify_fails_on_leaf_len_mismatch() {
+        let mut leaf = encode_leaf(&[1, 2, 3]);
+        leaf[0] ^= 0x01; // corrupt the length prefix
+        let path = Vec::new();
+        let err = compute_root_from_path(&leaf, 0, 1, &path).unwrap_err();
+        assert_eq!(err, MerkleError::ErrMerkleLeafLength);
+        assert_eq!(err.to_string(), "ErrFRIPathInvalid: leaf length");
+    }
+
+    #[test]
+    fn verify_fails_on_bad_padding() {
+        let payloads = vec![encode_leaf(&[1]), encode_leaf(&[2])];
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
+        let mut path = tree.open(0).expect("path");
+        path.last_mut().unwrap().siblings[2] = [0u8; DIGEST_SIZE];
+        let err = compute_root_from_path(&payloads[0], 0, tree.leaf_count(), &path).unwrap_err();
+        assert_eq!(err, MerkleError::ErrMerkleEmptyPadding);
+        assert_eq!(err.to_string(), "ErrFRIPathInvalid: right padding");
+    }
+
+    #[test]
+    fn right_padding_with_empty_constant_ok() {
+        assert_eq!(EMPTY_DIGEST, hash(b"RPP-MERKLE-EMPTY\0").into_bytes());
+        let payloads = vec![
+            encode_leaf(&[1]),
+            encode_leaf(&[2]),
+            encode_leaf(&[3]),
+            encode_leaf(&[4]),
+            encode_leaf(&[5]),
+        ];
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
+        let index = payloads.len() - 1;
+        let path = tree.open(index).expect("path");
+        assert!(path.iter().any(|element| element
+            .siblings
+            .iter()
+            .any(|sibling| sibling == &EMPTY_DIGEST)));
+        verify_path(
+            &payloads[index],
+            index,
+            tree.leaf_count(),
+            &path,
+            &tree.root(),
+        )
+        .expect("verification");
     }
 }
