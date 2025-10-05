@@ -248,17 +248,15 @@ impl Transcript {
             return Err(TranscriptError::UnsupportedTranscriptVersion);
         }
 
-        let mut state = [0u8; 32];
-        state.copy_from_slice(blake3::hash(TRANSCRIPT_DOMAIN_TAG).as_bytes());
-
         let mut transcript = Self {
             stage: TranscriptStage::ExpectPublicInputs,
-            state,
+            state: [0u8; 32],
             proof_kind: header.proof_kind,
             vrf_required: matches!(header.proof_kind, ProofKind::VRF),
             vrf_present: false,
         };
 
+        transcript.absorb_section_raw(TRANSCRIPT_DOMAIN_TAG);
         let proof_kind_code = transcript.proof_kind_code();
         transcript.absorb_section_raw(&proof_kind_code);
         transcript.absorb_section_raw(&header.param_digest.0.bytes);
@@ -327,16 +325,12 @@ impl Transcript {
             }
         }
 
-        let mut payload = Vec::with_capacity(65);
-        payload.extend_from_slice(&core_root);
+        self.absorb_section_raw(&core_root);
         if let Some(aux) = aux_root {
-            payload.push(1);
-            payload.extend_from_slice(&aux);
+            self.absorb_section_raw(&aux);
         } else {
-            payload.push(0);
+            self.absorb_section_raw(&[]);
         }
-
-        self.absorb_section_raw(&payload);
         self.stage = TranscriptStage::ExpectAirSpecId;
         Ok(())
     }
@@ -597,6 +591,13 @@ impl TranscriptChallenges {
             });
         }
 
+        if !self.fri_seed_drawn {
+            return Err(TranscriptError::ErrTranscriptOrder {
+                expected: "fri_seed",
+                found: "fri_eta",
+            });
+        }
+
         if layer != self.next_fri_eta {
             return Err(TranscriptError::ErrChallengeCount {
                 label: "RPP-FS/FRI/η*",
@@ -697,6 +698,12 @@ impl ChallengeStream for TranscriptChallenges {
             if !self.ood_seed_drawn {
                 return Err(TranscriptError::ErrTranscriptOrder {
                     expected: "ood_seed",
+                    found: "fri_eta",
+                });
+            }
+            if !self.fri_seed_drawn {
+                return Err(TranscriptError::ErrTranscriptOrder {
+                    expected: "fri_seed",
                     found: "fri_eta",
                 });
             }
