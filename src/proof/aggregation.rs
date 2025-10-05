@@ -362,8 +362,8 @@ mod tests {
                     aux_root: [0u8; 32],
                     fri_layer_roots: Vec::new(),
                     ood_openings: Vec::new(),
-                    fri_proof: crate::fri::FriProof {
-                        security_level: crate::fri::FriSecurityLevel::Standard,
+                    fri_proof: crate::fri::types::FriProof {
+                        security_level: crate::fri::types::FriSecurityLevel::Standard,
                         initial_domain_size: 1,
                         layer_roots: Vec::new(),
                         final_polynomial: Vec::new(),
@@ -375,7 +375,7 @@ mod tests {
                 },
             },
             fri_seed: [10u8; 32],
-            security_level: crate::fri::FriSecurityLevel::Standard,
+            security_level: crate::fri::types::FriSecurityLevel::Standard,
         }
     }
 

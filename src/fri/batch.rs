@@ -7,8 +7,9 @@
 
 use crate::field::FieldElement;
 
-use super::proof::{FriError, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
+use super::proof::FriVerifier;
 use super::pseudo_blake3;
+use super::types::{FriError, FriProof, FriSecurityLevel, FriTranscriptSeed};
 
 /// Seed shared across the batch, typically derived from a transcript challenge.
 #[derive(Debug, Clone, PartialEq, Eq)]

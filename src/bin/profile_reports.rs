@@ -8,7 +8,7 @@ use rpp_stark::config::{
     PROFILE_STD, PROFILE_THROUGHPUT_CONFIG,
 };
 use rpp_stark::field::FieldElement;
-use rpp_stark::fri::{FriProof, FriSecurityLevel};
+use rpp_stark::fri::types::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
