@@ -229,6 +229,7 @@ fn build_envelope(
         security_level,
         initial_domain_size: 1024,
         layer_roots: fri_layer_roots.clone(),
+        fold_challenges: Vec::new(),
         final_polynomial,
         final_polynomial_digest: [0x33; 32],
         queries,

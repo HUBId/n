@@ -15,6 +15,7 @@ pub mod config;
 mod folding;
 mod layer;
 mod proof;
+mod prover;
 pub mod types;
 
 pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
@@ -25,6 +26,7 @@ pub use folding::{
 };
 pub(crate) use layer::FriLayer;
 pub use proof::{derive_query_plan_id, FriVerifier};
+pub use prover::fri_prove;
 pub use types::{
     FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
     FriTranscriptSeed, SerKind,

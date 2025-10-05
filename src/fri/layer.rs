@@ -41,7 +41,8 @@ impl LayerTree {
         levels.push(current.clone());
 
         while current.len() > 1 {
-            let mut next = Vec::with_capacity((current.len() + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY);
+            let mut next =
+                Vec::with_capacity((current.len() + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY);
             for chunk in current.chunks(BINARY_FOLD_ARITY) {
                 let mut children = [[0u8; 32]; BINARY_FOLD_ARITY];
                 for (position, slot) in children.iter_mut().enumerate() {
@@ -110,7 +111,11 @@ pub(crate) struct FriLayer {
 
 impl FriLayer {
     /// Materialises a new layer by hashing the provided evaluations.
-    pub(crate) fn new(index: usize, coset_shift: FieldElement, evaluations: Vec<FieldElement>) -> Self {
+    pub(crate) fn new(
+        index: usize,
+        coset_shift: FieldElement,
+        evaluations: Vec<FieldElement>,
+    ) -> Self {
         let domain_size = evaluations.len();
         let tree = LayerTree::new(&evaluations);
         Self {
@@ -159,4 +164,3 @@ impl FriLayer {
         Ok(FriQueryLayer { value, path })
     }
 }
-

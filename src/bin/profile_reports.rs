@@ -154,6 +154,7 @@ fn build_sample_envelope(
         security_level: profile_to_security_level(profile.id),
         initial_domain_size: 16,
         layer_roots: fri_layer_roots.clone(),
+        fold_challenges: Vec::new(),
         final_polynomial,
         final_polynomial_digest: sample_digest(&mut reader),
         queries: Vec::new(),
