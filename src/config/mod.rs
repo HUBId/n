@@ -8,6 +8,8 @@
 //! records the change-control rules, test obligations and canonical ordering of
 //! all configuration artefacts.
 
+use blake3::Hasher;
+
 use crate::utils::serialization::DigestBytes;
 
 /// Fixed domain separator used when hashing the parameter layout into the
@@ -67,6 +69,12 @@ impl PoseidonParamId {
     pub const fn bytes(self) -> DigestBytes {
         self.0
     }
+
+    /// Returns the canonical byte representation without transferring
+    /// ownership. Useful when hashing parameters.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
+    }
 }
 
 /// Identifier describing the Merkle commitment scheme.
@@ -77,6 +85,12 @@ impl MerkleSchemeId {
     /// Returns the raw 32-byte identifier.
     pub const fn bytes(self) -> DigestBytes {
         self.0
+    }
+
+    /// Returns the canonical byte representation without transferring
+    /// ownership.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
     }
 }
 
@@ -89,6 +103,12 @@ impl TranscriptVersionId {
     pub const fn bytes(self) -> DigestBytes {
         self.0
     }
+
+    /// Returns the canonical byte representation without transferring
+    /// ownership.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
+    }
 }
 
 /// Identifier describing the canonical FRI folding plan.
@@ -100,6 +120,12 @@ impl FriPlanId {
     pub const fn bytes(self) -> DigestBytes {
         self.0
     }
+
+    /// Returns the canonical byte representation without transferring
+    /// ownership.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
+    }
 }
 
 /// Identifier describing the AIR specification bound to a proof kind.
@@ -110,6 +136,12 @@ impl AirSpecId {
     /// Returns the raw 32-byte identifier.
     pub const fn bytes(self) -> DigestBytes {
         self.0
+    }
+
+    /// Returns the canonical byte representation without transferring
+    /// ownership.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
     }
 }
 
@@ -175,6 +207,23 @@ pub struct ProofKindLayout<T> {
     pub identity: T,
     pub aggregation: T,
     pub vrf: T,
+}
+
+impl<T> ProofKindLayout<T> {
+    /// Returns a reference to the value associated with the given
+    /// [`ProofKind`].
+    pub fn get(&self, kind: ProofKind) -> &T {
+        match kind {
+            ProofKind::Tx => &self.tx,
+            ProofKind::State => &self.state,
+            ProofKind::Pruning => &self.pruning,
+            ProofKind::Uptime => &self.uptime,
+            ProofKind::Consensus => &self.consensus,
+            ProofKind::Identity => &self.identity,
+            ProofKind::Aggregation => &self.aggregation,
+            ProofKind::VRF => &self.vrf,
+        }
+    }
 }
 
 /// Poseidon round configuration.
@@ -336,6 +385,101 @@ impl ProofSystemConfig {
     pub const DESCRIPTION: &'static str =
         "ProofVersion bumps are reserved for envelope layout changes;\
          ParamDigest changes capture all parameter, limit or AIR updates.";
+}
+
+/// Computes the canonical [`ParamDigest`] for the provided profile.
+///
+/// The profile is hashed together with the shared identifiers contained in
+/// [`CommonIdentifiers`] using the canonical order documented above. The digest
+/// is deterministic and must be shared between prover and verifier.
+pub fn compute_param_digest(
+    profile: &ProfileConfig,
+    common_ids: &CommonIdentifiers,
+) -> ParamDigest {
+    let mut hasher = Hasher::new();
+    hasher.update(PARAM_DIGEST_DOMAIN_TAG);
+    hasher.update(&profile.id.to_le_bytes());
+    hasher.update(&common_ids.field_id.to_le_bytes());
+    hasher.update(profile.poseidon_param_id.as_bytes());
+    hasher.update(common_ids.merkle_scheme_id.as_bytes());
+    hasher.update(common_ids.transcript_version_id.as_bytes());
+    hasher.update(common_ids.fri_plan_id.as_bytes());
+    hasher.update(&profile.lde_factor.to_le_bytes());
+    hasher.update(&profile.fri_queries.to_le_bytes());
+    hasher.update(&profile.fri_depth_range.min.to_le_bytes());
+    hasher.update(&profile.fri_depth_range.max.to_le_bytes());
+    hasher.update(&profile.limits.max_proof_size_bytes.to_le_bytes());
+    hasher.update(&profile.limits.max_layers.to_le_bytes());
+    hasher.update(&profile.limits.max_queries.to_le_bytes());
+
+    for kind in ProofKind::ORDER.iter() {
+        let width = *profile.limits.per_proof_max_trace_width.get(*kind);
+        hasher.update(&width.to_le_bytes());
+    }
+
+    for kind in ProofKind::ORDER.iter() {
+        let steps = *profile.limits.per_proof_max_trace_steps.get(*kind);
+        hasher.update(&steps.to_le_bytes());
+    }
+
+    for kind in ProofKind::ORDER.iter() {
+        let air_spec_id = profile.air_spec_ids.get(*kind);
+        hasher.update(air_spec_id.as_bytes());
+    }
+
+    hasher.update(&0u16.to_le_bytes());
+
+    ParamDigest(DigestBytes {
+        bytes: *hasher.finalize().as_bytes(),
+    })
+}
+
+/// Binds the proof version to the provided profile and parameter digest.
+pub fn build_proof_system_config(
+    profile: &ProfileConfig,
+    param_digest: &ParamDigest,
+) -> ProofSystemConfig {
+    ProofSystemConfig {
+        proof_version: PROOF_VERSION_V1,
+        profile: profile.clone(),
+        param_digest: param_digest.clone(),
+    }
+}
+
+/// Builds a [`ProverContext`] by pairing the profile with deterministic
+/// threading information and the canonical parameter digest.
+pub fn build_prover_context(
+    profile: &ProfileConfig,
+    common_ids: &CommonIdentifiers,
+    param_digest: &ParamDigest,
+    thread_pool: ThreadPoolProfile,
+    chunking: ChunkingPolicy,
+) -> ProverContext {
+    ProverContext {
+        profile: profile.clone(),
+        param_digest: param_digest.clone(),
+        common_ids: common_ids.clone(),
+        limits: profile.limits.clone(),
+        thread_pool,
+        chunking,
+    }
+}
+
+/// Builds a [`VerifierContext`] tied to the canonical parameter digest and
+/// optional deterministic metrics.
+pub fn build_verifier_context(
+    profile: &ProfileConfig,
+    common_ids: &CommonIdentifiers,
+    param_digest: &ParamDigest,
+    metrics: Option<DeterministicMetrics>,
+) -> VerifierContext {
+    VerifierContext {
+        profile: profile.clone(),
+        param_digest: param_digest.clone(),
+        common_ids: common_ids.clone(),
+        limits: profile.limits.clone(),
+        metrics,
+    }
 }
 
 const fn digest(bytes: [u8; 32]) -> DigestBytes {
@@ -592,3 +736,82 @@ PI digests updated on public-input layout changes.";
 ///    verifying reproducible digests.
 pub const TEST_OBLIGATIONS: &str = "Determinism, profile switching, AIR updates, limit changes,\
 proof-kind order invariants and prover/verifier cross-checks must be covered.";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proof::errors::VerificationFailure;
+    use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+    use crate::proof::verifier::precheck_proof_bytes;
+    use crate::utils::serialization::{DigestBytes, ProofBytes};
+
+    fn sample_public_inputs() -> PublicInputs<'static> {
+        PublicInputs::Execution {
+            header: ExecutionHeaderV1 {
+                version: PublicInputVersion::V1,
+                program_digest: DigestBytes { bytes: [0u8; 32] },
+                trace_length: 1,
+                trace_width: 1,
+            },
+            body: b"",
+        }
+    }
+
+    #[test]
+    fn param_digest_changes_when_switching_profiles() {
+        let common_ids = COMMON_IDENTIFIERS.clone();
+        let std_profile = PROFILE_STANDARD_CONFIG.clone();
+        let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
+
+        let std_digest = compute_param_digest(&std_profile, &common_ids);
+        let hisec_digest = compute_param_digest(&hisec_profile, &common_ids);
+
+        assert_ne!(std_digest, hisec_digest);
+    }
+
+    #[test]
+    fn proof_version_remains_constant_across_profiles() {
+        let common_ids = COMMON_IDENTIFIERS.clone();
+        let std_profile = PROFILE_STANDARD_CONFIG.clone();
+        let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
+
+        let std_digest = compute_param_digest(&std_profile, &common_ids);
+        let hisec_digest = compute_param_digest(&hisec_profile, &common_ids);
+
+        let std_config = build_proof_system_config(&std_profile, &std_digest);
+        let hisec_config = build_proof_system_config(&hisec_profile, &hisec_digest);
+
+        assert_eq!(std_config.proof_version, hisec_config.proof_version);
+    }
+
+    #[test]
+    fn verifier_rejects_param_digest_mismatch() {
+        let common_ids = COMMON_IDENTIFIERS.clone();
+        let std_profile = PROFILE_STANDARD_CONFIG.clone();
+        let hisec_profile = PROFILE_HIGH_SECURITY_CONFIG.clone();
+
+        let std_digest = compute_param_digest(&std_profile, &common_ids);
+        let hisec_digest = compute_param_digest(&hisec_profile, &common_ids);
+
+        let std_config = build_proof_system_config(&std_profile, &std_digest);
+        let hisec_context =
+            build_verifier_context(&hisec_profile, &common_ids, &hisec_digest, None);
+
+        let public_inputs = sample_public_inputs();
+        let proof_bytes = ProofBytes::new(Vec::new());
+
+        let result = precheck_proof_bytes(
+            ProofKind::Tx,
+            &public_inputs,
+            &proof_bytes,
+            &std_config,
+            &hisec_context,
+            None,
+        );
+
+        assert!(matches!(
+            result,
+            Err(VerificationFailure::ErrParamDigestMismatch)
+        ));
+    }
+}
