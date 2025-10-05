@@ -416,6 +416,15 @@ pub enum AirError {
         /// Actual cardinality encountered.
         actual: usize,
     },
+    /// Schema declared a boundary outside the trace layout.
+    InvalidBoundary {
+        /// Column where the invalid boundary was declared.
+        column: ColIx,
+        /// Boundary location that failed validation.
+        boundary: BoundaryAt,
+        /// Additional diagnostic context.
+        detail: &'static str,
+    },
     /// Boundary constraint violation.
     BoundaryViolation {
         /// Column where the violation occurred.
@@ -476,6 +485,14 @@ impl fmt::Display for AirError {
                     "schema mismatch for {what}: expected {expected}, got {actual}"
                 )
             }
+            AirError::InvalidBoundary {
+                column,
+                boundary,
+                detail,
+            } => write!(
+                f,
+                "invalid boundary at column {column} ({boundary}): {detail}"
+            ),
             AirError::BoundaryViolation {
                 column,
                 boundary,
