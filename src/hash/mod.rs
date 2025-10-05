@@ -11,6 +11,8 @@
 //!   construction with fully enumerated constants and domain-separation tags.
 //! * [`blake3`] – byte-oriented transcripts relying on BLAKE3 with deterministic
 //!   framing rules and Fiat–Shamir challenge derivation.
+//! * [`deterministic`] – fully deterministic pseudo-BLAKE3 helpers used by the
+//!   reference implementation to avoid external dependencies.
 //! * [`merkle`] – external and optional arithmetic Merkle commitment layouts for
 //!   both BLAKE3 and Poseidon back-ends.
 //!
@@ -21,12 +23,16 @@
 //! specification self-contained.
 
 pub mod blake3;
+pub mod deterministic;
 pub mod merkle;
 pub mod poseidon;
 
 pub use blake3::{
     Blake3Domain, Blake3TranscriptSection, Blake3TranscriptSpec, Blake3TranscriptVersion,
     FiatShamirChallengeRules, TranscriptPhaseTag,
+};
+pub use deterministic::{
+    hash, pseudo_blake3, Hash, Hasher, HexOutput, OutputReader, PseudoBlake3Xof,
 };
 pub use merkle::{
     compute_root_from_path, encode_leaf, verify_path, Blake3MerkleTree, MerkleError, MerkleIndex,

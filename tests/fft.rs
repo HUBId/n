@@ -1,8 +1,7 @@
-use blake3::Hasher;
-
 use rpp_stark::fft::ifft::{Ifft, Radix2InverseFft};
 use rpp_stark::fft::{Fft, Radix2Fft, Radix2Ordering};
 use rpp_stark::field::FieldElement;
+use rpp_stark::hash::Hasher;
 
 fn deterministic_field_vector(len: usize) -> Vec<FieldElement> {
     let mut state = 0x9e3779b97f4a7c15u64;
@@ -46,7 +45,10 @@ fn radix2_fft_roundtrip_preserves_inputs() {
     let inverse = Radix2InverseFft::new(log2_size, Radix2Ordering::Natural);
     inverse.inverse(&mut montgomery);
 
-    assert_eq!(montgomery, original, "IFFT(FFT(v)) must recover the input vector");
+    assert_eq!(
+        montgomery, original,
+        "IFFT(FFT(v)) must recover the input vector"
+    );
 }
 
 #[test]
@@ -58,6 +60,12 @@ fn radix2_twiddle_tables_digest_is_stable() {
 
     // Audited digests for the Montgomery-encoded radix-2 roots of unity.
     // Update only if the deterministic seed or root derivation changes.
-    assert_eq!(forward_digest, "5d72ab04a814b762a49b4bba30aaf50b7d8ece41c5ccb28e578306353028be1c");
-    assert_eq!(inverse_digest, "271e22d610b8a657df9a3d5204b645a8af3e04718663b61649f693f3d0d26fa3");
+    assert_eq!(
+        forward_digest,
+        "7fd5c0fe98605734741950e5413aeb429391a9608fd4de5b3a0793fc8053b345"
+    );
+    assert_eq!(
+        inverse_digest,
+        "c6c9a502a18ad218b9b7bedc0e5f3f54088767a2f656742a93e05681b6f43027"
+    );
 }

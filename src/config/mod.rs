@@ -8,8 +8,7 @@
 //! records the change-control rules, test obligations and canonical ordering of
 //! all configuration artefacts.
 
-use blake3::Hasher;
-
+use crate::hash::Hasher;
 use crate::utils::serialization::DigestBytes;
 
 /// Fixed domain separator used when hashing the parameter layout into the

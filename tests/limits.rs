@@ -1,11 +1,10 @@
-use blake3::Hasher;
-
 use rpp_stark::config::{
     compute_param_digest, CommonIdentifiers, ParamDigest, ProfileConfig,
     ProofKind as ConfigProofKind, ProofSystemConfig, ResourceLimits, VerifierContext,
     COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG, PROOF_VERSION_V1,
 };
 use rpp_stark::field::FieldElement;
+use rpp_stark::hash::Hasher;
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, serialize_public_inputs, FriParametersMirror, OutOfDomainOpening,
     ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader, PROOF_VERSION,

@@ -17,4 +17,3 @@ audit-lde = []
 audit-lde-hisec = ["audit-lde"]
 
 [dependencies]
-blake3 = "1"

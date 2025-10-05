@@ -6,12 +6,11 @@
 //! throughout the proof system.  The layout follows the `RPP-FS/V1`
 //! specification and is bound to the negotiated [`ParamDigest`].
 
-use blake3::Hasher;
-
 use crate::config::{
     AirSpecId, ParamDigest, PoseidonParamId, ProofKind, TranscriptVersionId,
     TRANSCRIPT_VERSION_ID_RPP_FS_V1,
 };
+use crate::hash::Hasher;
 
 /// Domain tag absorbed as the very first section of every transcript.
 const TRANSCRIPT_DOMAIN_TAG: &[u8] = b"RPP-FS/V1";

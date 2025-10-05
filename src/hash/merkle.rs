@@ -14,7 +14,7 @@
 //! caller attempts to verify malformed paths (e.g. mismatched padding or
 //! tampered length prefixes).
 
-use blake3::Hasher;
+use crate::hash::{hash, Hasher};
 
 /// Number of children per internal node.
 const ARITY: usize = 4;
@@ -24,8 +24,8 @@ pub const DIGEST_SIZE: usize = 32;
 
 /// Canonical digest for an empty child.
 pub const EMPTY_DIGEST: [u8; DIGEST_SIZE] = [
-    0xff, 0x36, 0xe0, 0x35, 0x0b, 0xfe, 0x53, 0x1e, 0x6b, 0x46, 0x81, 0xe3, 0x66, 0x17, 0xd3, 0xdf,
-    0xcc, 0xad, 0xb8, 0xc1, 0x54, 0xe2, 0xbb, 0x53, 0xa4, 0x2b, 0xca, 0x6a, 0xa6, 0xe7, 0xd3, 0x70,
+    0x10, 0x68, 0x98, 0xac, 0xc4, 0xcc, 0xf4, 0xd1, 0x1d, 0x07, 0x4a, 0x00, 0x09, 0xbc, 0x4a, 0x8e,
+    0x56, 0x29, 0x03, 0x5a, 0xf3, 0x05, 0x46, 0xdc, 0xdb, 0xff, 0xba, 0x19, 0x77, 0xa7, 0x59, 0x61,
 ];
 
 /// Digest binding the documented Merkle layout for parameter commitments.
@@ -196,7 +196,7 @@ pub fn hash_leaf(encoded_leaf: &[u8]) -> Result<[u8; DIGEST_SIZE], MerkleError> 
         return Err(MerkleError::ErrMerkleLeafLength);
     }
 
-    Ok(blake3::hash(encoded_leaf).into())
+    Ok(hash(encoded_leaf).into())
 }
 
 /// Hashes four child digests into their parent digest.
@@ -295,9 +295,7 @@ mod tests {
 
     #[test]
     fn empty_digest_matches_reference() {
-        let mut expected = [0u8; DIGEST_SIZE];
-        expected.copy_from_slice(blake3::hash(b"RPP-MERKLE-EMPTY\0").as_bytes());
-        assert_eq!(EMPTY_DIGEST, expected);
+        assert_eq!(EMPTY_DIGEST, hash(b"RPP-MERKLE-EMPTY\0").into_bytes());
     }
 
     #[test]

@@ -6,7 +6,10 @@
 //! domain, covering blowup factors, deterministic evaluation ordering, mapping
 //! conventions and chunking constraints.
 
-use crate::fft::{ifft::{Ifft, Radix2InverseFft}, Fft, Radix2Fft, Radix2Ordering};
+use crate::fft::{
+    ifft::{Ifft, Radix2InverseFft},
+    Fft, Radix2Fft, Radix2Ordering,
+};
 use crate::field::FieldElement;
 
 /// Ordering in which evaluation points are produced by the LDE engine.
@@ -169,7 +172,10 @@ impl LowDegreeExtender {
         trace_columns: usize,
         params: &'static LowDegreeExtensionParameters,
     ) -> Self {
-        assert!(trace_rows.is_power_of_two(), "trace height must be a power of two");
+        assert!(
+            trace_rows.is_power_of_two(),
+            "trace height must be a power of two"
+        );
         assert!(trace_rows > 0, "trace height must be non-zero");
         assert!(trace_columns > 0, "trace width must be non-zero");
         assert!(
@@ -276,7 +282,10 @@ impl LowDegreeExtender {
                 for chunk_idx in (worker_id..total_chunks).step_by(worker_count) {
                     let start = chunk_idx * chunk_size;
                     let end = (start + chunk_size).min(total_rows);
-                    assignments.push(LdeChunk { start_row: start, end_row: end });
+                    assignments.push(LdeChunk {
+                        start_row: start,
+                        end_row: end,
+                    });
                 }
             }
             ChunkingDeterminism::WorkerMajor => {
@@ -286,7 +295,10 @@ impl LowDegreeExtender {
                 for chunk_idx in start_chunk..end_chunk {
                     let start = chunk_idx * chunk_size;
                     let end = (start + chunk_size).min(total_rows);
-                    assignments.push(LdeChunk { start_row: start, end_row: end });
+                    assignments.push(LdeChunk {
+                        start_row: start,
+                        end_row: end,
+                    });
                 }
             }
         }
@@ -314,7 +326,9 @@ impl LowDegreeExtender {
         let evaluation_index = self.evaluation_position(natural_row);
         match self.params.trace_mapping {
             TraceToLdeMapping::RowMajorContiguous => evaluation_index * self.trace_columns + column,
-            TraceToLdeMapping::ColumnInterleaved => column * self.extended_rows() + evaluation_index,
+            TraceToLdeMapping::ColumnInterleaved => {
+                column * self.extended_rows() + evaluation_index
+            }
         }
     }
 
@@ -325,7 +339,12 @@ impl LowDegreeExtender {
         }
     }
 
-    fn scatter_column(&self, column: usize, evaluations: &[FieldElement], output: &mut [FieldElement]) {
+    fn scatter_column(
+        &self,
+        column: usize,
+        evaluations: &[FieldElement],
+        output: &mut [FieldElement],
+    ) {
         assert_eq!(evaluations.len(), self.extended_rows());
         assert_eq!(output.len(), self.extended_rows() * self.trace_columns);
         for natural_row in 0..self.extended_rows() {
@@ -392,11 +411,13 @@ mod tests {
         assert_eq!(extender.extended_rows(), 32);
         assert_eq!(extender.lde_index(0, 0), 0);
         assert_eq!(extender.lde_index(0, 1), 1);
-        let row_one_index = reverse_bits(1, extender.log2_extended_rows()) * extender.trace_columns();
+        let row_one_index =
+            reverse_bits(1, extender.log2_extended_rows()) * extender.trace_columns();
         assert_eq!(extender.lde_index(1, 0), row_one_index);
         assert_eq!(extender.lde_index(1, 1), row_one_index + 1);
         let last_row = extender.extended_rows() - 1;
-        let last_index = reverse_bits(last_row, extender.log2_extended_rows()) * extender.trace_columns();
+        let last_index =
+            reverse_bits(last_row, extender.log2_extended_rows()) * extender.trace_columns();
         assert_eq!(extender.lde_index(last_row, 0), last_index);
     }
 
@@ -418,13 +439,17 @@ mod tests {
             let evaluation_index = reverse_bits(natural_row, extender.log2_extended_rows());
             evaluations[evaluation_index] = FieldElement::from(natural_row as u64);
         }
-        let mut output = vec![FieldElement::ZERO; extender.extended_rows() * extender.trace_columns()];
+        let mut output =
+            vec![FieldElement::ZERO; extender.extended_rows() * extender.trace_columns()];
         extender.scatter_column(0, &evaluations, &mut output);
 
         for natural_row in 0..extender.extended_rows() {
             let evaluation_index = reverse_bits(natural_row, extender.log2_extended_rows());
             let expected_index = evaluation_index * extender.trace_columns();
-            assert_eq!(output[expected_index], FieldElement::from(natural_row as u64));
+            assert_eq!(
+                output[expected_index],
+                FieldElement::from(natural_row as u64)
+            );
         }
     }
 
@@ -454,11 +479,29 @@ mod tests {
         let extender = LowDegreeExtender::new(8, 2, &PROFILE_X8);
         let mut iter = extender.chunk_iter(0, 3);
         let first = iter.next().unwrap();
-        assert_eq!(first, LdeChunk { start_row: 0, end_row: 8 });
+        assert_eq!(
+            first,
+            LdeChunk {
+                start_row: 0,
+                end_row: 8
+            }
+        );
         let second = iter.next().unwrap();
-        assert_eq!(second, LdeChunk { start_row: 24, end_row: 32 });
+        assert_eq!(
+            second,
+            LdeChunk {
+                start_row: 24,
+                end_row: 32
+            }
+        );
         let third = iter.next().unwrap();
-        assert_eq!(third, LdeChunk { start_row: 48, end_row: 56 });
+        assert_eq!(
+            third,
+            LdeChunk {
+                start_row: 48,
+                end_row: 56
+            }
+        );
         assert!(iter.next().is_none());
     }
 

@@ -8,14 +8,13 @@
 //! 4. Produce a quartic FRI proof using the deterministic seed.
 //! 5. Assemble the envelope header/body, compute digests and enforce size limits.
 
-use blake3::Hasher;
-
 use crate::config::{
     AirSpecId, ProfileConfig, ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig,
     ProverContext,
 };
 use crate::field::FieldElement;
 use crate::fri::{FriError, FriProof, FriSecurityLevel};
+use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, map_public_to_config_kind, serialize_public_inputs,
     FriParametersMirror, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader,
