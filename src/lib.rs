@@ -1,3 +1,6 @@
+#![deny(unsafe_code)]
+#![deny(rust_2018_idioms)]
+
 //! Core library entry point for the `rpp-stark` proof system.
 //!
 //! The crate exposes declarative contracts for proof generation, verification
