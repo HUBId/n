@@ -15,7 +15,7 @@ use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, Transcrip
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
-use rpp_stark::fri::types::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
+use rpp_stark::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
 use rpp_stark::hash::merkle::{MerkleIndex, MerklePathElement};
 
 const ALPHA_VECTOR_LEN: usize = 4;
@@ -224,16 +224,18 @@ fn build_envelope(
 
     let final_polynomial = vec![FieldElement::ZERO; final_poly_len];
     let queries = build_queries(layer_count, query_count);
+    let fold_challenges = vec![FieldElement::ZERO; fri_layer_roots.len()];
 
-    let fri_proof = FriProof {
+    let fri_proof = FriProof::new(
         security_level,
-        initial_domain_size: 1024,
-        layer_roots: fri_layer_roots.clone(),
-        fold_challenges: Vec::new(),
+        1024,
+        fri_layer_roots.clone(),
+        fold_challenges,
         final_polynomial,
-        final_polynomial_digest: [0x33; 32],
+        [0x33; 32],
         queries,
-    };
+    )
+    .expect("synthetic fri proof");
 
     let ood_openings = build_ood_openings(context, &header, &public_inputs, &core_root, &aux_root);
 
@@ -256,12 +258,12 @@ fn build_envelope(
     ProofBytes::new(envelope.to_bytes())
 }
 
-fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQuery> {
+fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
     (0..query_count)
-        .map(|idx| FriQuery {
+        .map(|idx| FriQueryProof {
             position: idx,
             layers: (0..layer_count)
-                .map(|_| FriQueryLayer {
+                .map(|_| FriQueryLayerProof {
                     value: FieldElement::ZERO,
                     path: vec![MerklePathElement {
                         index: MerkleIndex(0),

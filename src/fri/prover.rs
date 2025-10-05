@@ -1,7 +1,7 @@
 use super::folding::{binary_fold, coset_shift_schedule, parent_index};
 use super::layer::FriLayer;
-use super::proof::{derive_query_positions, hash_final_layer};
-use super::types::{FriError, FriParamsView, FriProof, FriQuery, FriSecurityLevel};
+use super::proof::{derive_query_positions, hash_final_layer, FriProof, FriQueryProof};
+use super::types::{FriError, FriParamsView, FriSecurityLevel};
 use crate::field::FieldElement;
 use crate::params::StarkParams;
 use crate::transcript::{Felt, Transcript, TranscriptError, TranscriptLabel};
@@ -105,20 +105,20 @@ pub fn fri_prove(
         }
 
         let final_value = final_polynomial[index];
-        queries.push(FriQuery {
+        queries.push(FriQueryProof {
             position,
             layers: layers_openings,
             final_value,
         });
     }
 
-    Ok(FriProof {
+    FriProof::new(
         security_level,
-        initial_domain_size: evaluations.len(),
+        evaluations.len(),
         layer_roots,
         fold_challenges,
         final_polynomial,
         final_polynomial_digest,
         queries,
-    })
+    )
 }

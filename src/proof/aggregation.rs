@@ -362,21 +362,22 @@ mod tests {
                     aux_root: [0u8; 32],
                     fri_layer_roots: Vec::new(),
                     ood_openings: Vec::new(),
-                    fri_proof: crate::fri::types::FriProof {
-                        security_level: crate::fri::types::FriSecurityLevel::Standard,
-                        initial_domain_size: 1,
-                        layer_roots: Vec::new(),
-                        fold_challenges: Vec::new(),
-                        final_polynomial: Vec::new(),
-                        final_polynomial_digest: [0u8; 32],
-                        queries: Vec::new(),
-                    },
+                    fri_proof: crate::fri::FriProof::new(
+                        crate::fri::FriSecurityLevel::Standard,
+                        1,
+                        Vec::new(),
+                        Vec::new(),
+                        Vec::new(),
+                        [0u8; 32],
+                        Vec::new(),
+                    )
+                    .expect("empty fri proof"),
                     fri_parameters: crate::proof::envelope::FriParametersMirror::default(),
                     integrity_digest: DigestBytes { bytes: [9u8; 32] },
                 },
             },
             fri_seed: [10u8; 32],
-            security_level: crate::fri::types::FriSecurityLevel::Standard,
+            security_level: crate::fri::FriSecurityLevel::Standard,
         }
     }
 

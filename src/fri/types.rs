@@ -1,7 +1,6 @@
 use core::fmt;
 
-use crate::field::FieldElement;
-use crate::hash::merkle::{MerkleError, MerklePathElement};
+use crate::hash::merkle::MerkleError;
 use crate::params::StarkParams;
 
 /// Transcript seed used when instantiating the FRI prover and verifier.
@@ -35,6 +34,23 @@ impl FriSecurityLevel {
             FriSecurityLevel::Throughput => "THR",
         }
     }
+
+    pub(crate) fn code(self) -> u8 {
+        match self {
+            FriSecurityLevel::Standard => 0,
+            FriSecurityLevel::HiSec => 1,
+            FriSecurityLevel::Throughput => 2,
+        }
+    }
+
+    pub(crate) fn from_code(code: u8) -> Option<Self> {
+        match code {
+            0 => Some(FriSecurityLevel::Standard),
+            1 => Some(FriSecurityLevel::HiSec),
+            2 => Some(FriSecurityLevel::Throughput),
+            _ => None,
+        }
+    }
 }
 
 /// Version tag attached to FRI proofs.
@@ -47,6 +63,19 @@ pub enum FriProofVersion {
 impl FriProofVersion {
     /// Latest supported proof version.
     pub const CURRENT: FriProofVersion = FriProofVersion::V1;
+
+    pub(crate) fn to_u16(self) -> u16 {
+        match self {
+            FriProofVersion::V1 => 1,
+        }
+    }
+
+    pub(crate) fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            1 => Some(FriProofVersion::V1),
+            _ => None,
+        }
+    }
 }
 
 /// Kind markers used when reporting serialization errors.
@@ -164,45 +193,6 @@ impl fmt::Display for FriError {
 }
 
 impl std::error::Error for FriError {}
-
-/// Declarative representation of a single query opening.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriQuery {
-    /// Position sampled from the LDE domain.
-    pub position: usize,
-    /// Layer openings ascending from the original codeword to the residual layer.
-    pub layers: Vec<FriQueryLayer>,
-    /// Value revealed at the residual polynomial for this query.
-    pub final_value: FieldElement,
-}
-
-/// Opening data for a specific FRI layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriQueryLayer {
-    /// Evaluation revealed at this layer.
-    pub value: FieldElement,
-    /// Merkle authentication path proving membership.
-    pub path: Vec<MerklePathElement>,
-}
-
-/// Declarative representation of a FRI proof.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FriProof {
-    /// Declared security profile for the proof.
-    pub security_level: FriSecurityLevel,
-    /// Size of the initial evaluation domain.
-    pub initial_domain_size: usize,
-    /// Merkle roots for each folded layer.
-    pub layer_roots: Vec<[u8; 32]>,
-    /// Transcript fold challenges sampled after each layer commitment.
-    pub fold_challenges: Vec<FieldElement>,
-    /// Residual polynomial evaluations.
-    pub final_polynomial: Vec<FieldElement>,
-    /// Digest binding the final polynomial values.
-    pub final_polynomial_digest: [u8; 32],
-    /// Query openings.
-    pub queries: Vec<FriQuery>,
-}
 
 /// Borrowed view over the parameters required when verifying a proof.
 #[derive(Debug, Clone, Copy)]

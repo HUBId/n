@@ -26,11 +26,12 @@ pub use folding::{
     FoldingLayout, LayerCommitment, BINARY_FOLD_ARITY,
 };
 pub(crate) use layer::FriLayer;
-pub use proof::{derive_query_plan_id, FriVerifier};
+pub use proof::{
+    derive_query_plan_id, DeepOodsProof, FriProof, FriQueryLayerProof, FriQueryProof, FriVerifier,
+};
 pub use prover::fri_prove;
 pub use types::{
-    FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
-    FriTranscriptSeed, SerKind,
+    FriError, FriParamsView, FriProofVersion, FriSecurityLevel, FriTranscriptSeed, SerKind,
 };
 pub use verifier::fri_verify;
 
