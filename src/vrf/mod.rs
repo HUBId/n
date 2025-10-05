@@ -9,8 +9,8 @@
 pub mod pq;
 
 use crate::config::TranscriptVersionId;
+use crate::hash::Hash;
 use crate::proof::public_inputs::ProofKind;
-use blake3::Hash;
 
 /// Canonical domain separation tag absorbed into the transcript.
 pub const DOMAIN_TAG: &str = "RPP-VRF-V1";
@@ -42,7 +42,7 @@ impl RlweParamId {
         Self(bytes)
     }
 
-    /// Builds an identifier from a [`blake3::Hash`].
+    /// Builds an identifier from a deterministic 32-byte hash.
     pub fn from_hash(hash: Hash) -> Self {
         Self(*hash.as_bytes())
     }
@@ -71,7 +71,7 @@ impl VrfParamId {
         Self(bytes)
     }
 
-    /// Builds an identifier from a [`blake3::Hash`].
+    /// Builds an identifier from a deterministic 32-byte hash.
     pub fn from_hash(hash: Hash) -> Self {
         Self(*hash.as_bytes())
     }

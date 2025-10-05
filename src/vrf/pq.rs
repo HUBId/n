@@ -1,4 +1,4 @@
-use blake3::{Hash, Hasher};
+use crate::hash::{hash, Hash, Hasher, OutputReader};
 
 use super::{VrfVerificationFailure, OUTPUT_XOF_PREFIX};
 
@@ -215,7 +215,7 @@ pub fn deserialize_polynomial(
 
 /// Computes the VRF public key commitment `pk = BLAKE3(encode(s))`.
 pub fn derive_public_key(secret_key: &SecretKey) -> Hash {
-    blake3::hash(&secret_key.serialize())
+    hash(&secret_key.serialize())
 }
 
 /// Normalizes the RLWE output coefficients into a 32-byte VRF output.
@@ -229,7 +229,7 @@ pub fn normalize_output(coeffs: &[u64]) -> [u8; 32] {
     rejection_sample_32(&mut reader)
 }
 
-fn rejection_sample_32(reader: &mut blake3::OutputReader) -> [u8; 32] {
+fn rejection_sample_32(reader: &mut OutputReader) -> [u8; 32] {
     // Target space is 2^256; the rejection loop is implemented generically even though
     // every 32-byte value is valid. The structure mirrors the specification and allows
     // future tightening of the range without touching the logic.
@@ -249,7 +249,7 @@ fn select_primitive_root(degree: u32) -> u64 {
     seed_hasher.update(ROOT_SELECTION_VERSION.as_bytes());
     let seed = seed_hasher.finalize();
 
-    let mut xof = blake3::Hasher::new();
+    let mut xof = Hasher::new();
     xof.update(seed.as_bytes());
     let mut reader = xof.finalize_xof();
 

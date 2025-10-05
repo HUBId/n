@@ -5,13 +5,12 @@
 //! structural checks (length prefixes, digests and bounds) are performed before
 //! any expensive cryptographic operation.
 
-use blake3::Hasher;
-
 use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
 };
 use crate::field::FieldElement;
 use crate::fri::{FriError, FriSecurityLevel, FriVerifier};
+use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
     serialize_public_inputs, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody,

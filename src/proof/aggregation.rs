@@ -3,9 +3,8 @@
 //! All items in this module are declarative contracts capturing ordering,
 //! hashing domains and failure signalling for the batch verification API.
 
-use blake3::Hasher;
-
 use crate::config::{ProofSystemConfig, VerifierContext};
+use crate::hash::Hasher;
 use crate::proof::envelope::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::public_inputs::ProofKind;
 use crate::proof::transcript::TranscriptBlockContext;

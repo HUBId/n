@@ -7,12 +7,11 @@
 
 use std::convert::TryInto;
 
-use blake3::Hasher;
-
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
 use crate::field::FieldElement;
 use crate::fri::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
 use crate::hash::merkle::{MerkleIndex, MerklePathElement};
+use crate::hash::Hasher;
 use crate::proof::public_inputs::{
     AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     VrfHeaderV1,
