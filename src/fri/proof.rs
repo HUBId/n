@@ -11,7 +11,9 @@ use crate::fri::{
     field_from_hash, field_to_bytes, hash_internal, hash_leaf, pseudo_blake3, PseudoBlake3Xof,
 };
 use crate::hash::blake3::FiatShamirChallengeRules;
-use crate::hash::merkle::{MerkleIndex, MerklePathElement, EMPTY_DIGEST};
+use crate::hash::merkle::{
+    compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, EMPTY_DIGEST,
+};
 use core::fmt;
 
 /// Transcript seed used when instantiating the FRI prover and verifier.
@@ -55,7 +57,7 @@ pub enum FriError {
     /// Query position exceeded the LDE domain size.
     QueryOutOfRange { position: usize },
     /// Merkle path was malformed (index byte mismatch or inconsistent height).
-    PathInvalid { layer: usize },
+    PathInvalid { layer: usize, reason: MerkleError },
     /// Merkle layer root mismatch.
     LayerRootMismatch { layer: usize },
     /// Proof declared a different security profile.
@@ -73,7 +75,9 @@ impl fmt::Display for FriError {
             FriError::QueryOutOfRange { position } => {
                 write!(f, "query position {position} outside evaluation domain")
             }
-            FriError::PathInvalid { layer } => write!(f, "invalid Merkle path at layer {layer}"),
+            FriError::PathInvalid { layer, reason } => {
+                write!(f, "invalid Merkle path at layer {layer}: {reason}")
+            }
             FriError::LayerRootMismatch { layer } => {
                 write!(f, "layer {layer} root mismatch")
             }
@@ -419,10 +423,19 @@ impl FriVerifier {
                 return Err(FriError::InvalidStructure("layer count mismatch"));
             }
             let mut index = *expected_position;
+            let mut layer_domain_size = proof.initial_domain_size;
             for (layer_idx, layer) in query.layers.iter().enumerate() {
                 let root = &proof.layer_roots[layer_idx];
-                verify_path(layer.value, &layer.path, root, index, layer_idx)?;
+                verify_path(
+                    layer.value,
+                    &layer.path,
+                    root,
+                    index,
+                    layer_idx,
+                    layer_domain_size,
+                )?;
                 index /= QUARTIC_FOLD;
+                layer_domain_size = (layer_domain_size + QUARTIC_FOLD - 1) / QUARTIC_FOLD;
             }
 
             if index >= proof.final_polynomial.len() {
@@ -471,37 +484,25 @@ fn verify_path(
     value: FieldElement,
     path: &[MerklePathElement],
     expected_root: &[u8; 32],
-    mut index: usize,
+    index: usize,
     layer_index: usize,
+    leaf_count: usize,
 ) -> Result<(), FriError> {
-    let mut hash = hash_leaf(&value);
-    for element in path {
-        if element.index.0 > MerkleIndex::MAX {
-            return Err(FriError::PathInvalid { layer: layer_index });
-        }
-        let expected_child = (index % QUARTIC_FOLD) as u8;
-        if element.index.0 != expected_child {
-            return Err(FriError::PathInvalid { layer: layer_index });
-        }
-        let mut children = [[0u8; 32]; QUARTIC_FOLD];
-        let mut sibling_iter = element.siblings.iter();
-        for offset in 0..QUARTIC_FOLD {
-            if offset == expected_child as usize {
-                children[offset] = hash;
-            } else {
-                let sibling = sibling_iter.next().copied().unwrap_or(EMPTY_DIGEST);
-                children[offset] = sibling;
+    let encoded_leaf = encode_leaf(&field_to_bytes(&value));
+    let computed =
+        compute_root_from_path(&encoded_leaf, index, leaf_count, path).map_err(|err| {
+            FriError::PathInvalid {
+                layer: layer_index,
+                reason: err,
             }
-        }
-        hash = hash_internal(&children);
-        index /= QUARTIC_FOLD;
+        })?;
+
+    if &computed != expected_root {
+        return Err(FriError::PathInvalid {
+            layer: layer_index,
+            reason: MerkleError::ErrMerkleSiblingOrder,
+        });
     }
 
-    if hash != *expected_root {
-        return Err(FriError::LayerRootMismatch { layer: layer_index });
-    }
-    if index != 0 {
-        return Err(FriError::PathInvalid { layer: layer_index });
-    }
     Ok(())
 }
