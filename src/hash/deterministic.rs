@@ -133,8 +133,7 @@ pub fn pseudo_blake3(input: &[u8]) -> [u8; 32] {
         let mut buf = [0u8; 8];
         buf[..chunk.len()].copy_from_slice(chunk);
         let mut value = u64::from_le_bytes(buf);
-        value ^= ((i as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15))
-            .rotate_left((i % 8) as u32 + 1);
+        value ^= ((i as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15)).rotate_left((i % 8) as u32 + 1);
         let idx = i % 4;
         state[idx] = state[idx].wrapping_add(value);
         state[idx] = state[idx].rotate_left(13);

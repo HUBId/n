@@ -8,6 +8,7 @@
 use std::convert::TryInto;
 
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
+use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError};
 use crate::field::FieldElement;
 use crate::fri::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
 use crate::hash::merkle::{MerkleIndex, MerklePathElement};
@@ -38,6 +39,8 @@ pub enum EnvelopeError {
     IntegrityDigestMismatch,
     /// The FRI section contained invalid structure.
     InvalidFriSection(&'static str),
+    /// Encountered a non-canonical field element while decoding.
+    NonCanonicalFieldElement,
 }
 
 /// Complete proof envelope grouping header and body.
@@ -568,7 +571,7 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
     let final_len = cursor.read_u32()? as usize;
     let mut final_polynomial = Vec::with_capacity(final_len);
     for _ in 0..final_len {
-        final_polynomial.push(field_from_bytes(cursor.read_digest()?));
+        final_polynomial.push(field_from_bytes(cursor.read_digest()?)?);
     }
     let final_polynomial_digest = cursor.read_digest()?;
     let query_len = cursor.read_u32()? as usize;
@@ -578,7 +581,7 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
         let layer_len = cursor.read_u32()? as usize;
         let mut layers = Vec::with_capacity(layer_len);
         for _ in 0..layer_len {
-            let value = field_from_bytes(cursor.read_digest()?);
+            let value = field_from_bytes(cursor.read_digest()?)?;
             let path_len = cursor.read_u32()? as usize;
             let mut path = Vec::with_capacity(path_len);
             for _ in 0..path_len {
@@ -594,7 +597,7 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
             }
             layers.push(FriQueryLayer { value, path });
         }
-        let final_value = field_from_bytes(cursor.read_digest()?);
+        let final_value = field_from_bytes(cursor.read_digest()?)?;
         queries.push(FriQuery {
             position,
             layers,
@@ -622,10 +625,12 @@ fn field_to_bytes(value: FieldElement) -> [u8; 32] {
     out
 }
 
-fn field_from_bytes(bytes: [u8; 32]) -> FieldElement {
+fn field_from_bytes(bytes: [u8; 32]) -> Result<FieldElement, EnvelopeError> {
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[..8]);
-    FieldElement(u64::from_le_bytes(buf))
+    FieldElement::from_bytes(&buf).map_err(|FieldDeserializeError::FieldDeserializeNonCanonical| {
+        EnvelopeError::NonCanonicalFieldElement
+    })
 }
 
 /// Thin cursor helper used by the serializer/deserializer.
