@@ -14,6 +14,7 @@ pub mod fft;
 pub mod field;
 pub mod fri;
 pub mod hash;
+pub mod merkle;
 pub mod params;
 pub mod proof;
 pub mod transcript;
