@@ -1,4 +1,4 @@
-//! Quartic FRI prover and verifier implementation.
+//! Binary FRI prover and verifier implementation.
 //!
 //! The prover operates purely in-memory and produces fully deterministic proofs
 //! that can be re-verified using the [`FriVerifier`] helper.  Hashing and query
@@ -6,7 +6,7 @@
 //! implementation self-contained and dependency free.
 
 use crate::field::FieldElement;
-use crate::fri::folding::{quartic_fold, QUARTIC_FOLD};
+use crate::fri::folding::{binary_fold, BINARY_FOLD_ARITY};
 use crate::fri::types::{
     FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel, FriTranscriptSeed,
 };
@@ -17,6 +17,10 @@ use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::hash::merkle::{
     compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, EMPTY_DIGEST,
 };
+use crate::params::{BuiltinProfile, StarkParams, StarkParamsBuilder};
+use std::sync::OnceLock;
+
+const MERKLE_ARITY: usize = 4;
 
 /// Helper struct representing a prover transcript.
 #[derive(Debug, Clone)]
@@ -81,10 +85,10 @@ impl MerkleTree {
         levels.push(current.clone());
 
         while current.len() > 1 {
-            let mut next = Vec::with_capacity((current.len() + QUARTIC_FOLD - 1) / QUARTIC_FOLD);
-            for chunk in current.chunks(QUARTIC_FOLD) {
-                let mut children = [[0u8; 32]; QUARTIC_FOLD];
-                for i in 0..QUARTIC_FOLD {
+            let mut next = Vec::with_capacity((current.len() + MERKLE_ARITY - 1) / MERKLE_ARITY);
+            for chunk in current.chunks(MERKLE_ARITY) {
+                let mut children = [[0u8; 32]; MERKLE_ARITY];
+                for i in 0..MERKLE_ARITY {
                     children[i] = if i < chunk.len() {
                         chunk[i]
                     } else {
@@ -112,12 +116,12 @@ impl MerkleTree {
         let mut path = Vec::new();
         for level in 0..self.levels.len() - 1 {
             let nodes = &self.levels[level];
-            let parent_index = index / QUARTIC_FOLD;
-            let position = index % QUARTIC_FOLD;
-            let base = parent_index * QUARTIC_FOLD;
-            let mut siblings = [[0u8; 32]; 3];
+            let parent_index = index / MERKLE_ARITY;
+            let position = index % MERKLE_ARITY;
+            let base = parent_index * MERKLE_ARITY;
+            let mut siblings = [[0u8; 32]; MERKLE_ARITY - 1];
             let mut s_idx = 0;
-            for offset in 0..QUARTIC_FOLD {
+            for offset in 0..MERKLE_ARITY {
                 let digest = if base + offset < nodes.len() {
                     nodes[base + offset]
                 } else {
@@ -132,7 +136,7 @@ impl MerkleTree {
                 index: MerkleIndex(position as u8),
                 siblings,
             });
-            index /= QUARTIC_FOLD;
+            index /= MERKLE_ARITY;
         }
         path
     }
@@ -146,6 +150,15 @@ fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
         payload.extend_from_slice(&field_to_bytes(value));
     }
     pseudo_blake3(&payload)
+}
+
+fn default_fri_params() -> &'static StarkParams {
+    static PARAMS: OnceLock<StarkParams> = OnceLock::new();
+    PARAMS.get_or_init(|| {
+        StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_X8)
+            .build()
+            .expect("default FRI params")
+    })
 }
 
 /// Maximum degree allowed for the residual polynomial.
@@ -182,7 +195,8 @@ impl FriProof {
             let eta = transcript.draw_eta(layer_index);
             layer_roots.push(root);
 
-            let next = quartic_fold(&current, eta);
+            let params = default_fri_params();
+            let next = binary_fold(&current, eta, params);
             witnesses.push(LayerWitness {
                 values: current,
                 tree,
@@ -212,7 +226,7 @@ impl FriProof {
                 let value = witness.values[index];
                 let path = witness.tree.prove(index);
                 layers_openings.push(FriQueryLayer { value, path });
-                index /= QUARTIC_FOLD;
+                index /= BINARY_FOLD_ARITY;
             }
 
             if index >= final_polynomial.len() {
@@ -240,8 +254,8 @@ impl FriProof {
 /// Derives the canonical query plan identifier.
 pub fn derive_query_plan_id(level: FriSecurityLevel) -> [u8; 32] {
     let mut payload = Vec::new();
-    payload.extend_from_slice(b"FRI-PLAN/QUARTIC");
-    payload.extend_from_slice(&(QUARTIC_FOLD as u32).to_le_bytes());
+    payload.extend_from_slice(b"FRI-PLAN/BINARY");
+    payload.extend_from_slice(&(BINARY_FOLD_ARITY as u32).to_le_bytes());
     payload.extend_from_slice(&(CAP_DEGREE as u32).to_le_bytes());
     payload.extend_from_slice(&(CAP_SIZE as u32).to_le_bytes());
     payload.extend_from_slice(&(level.query_budget() as u32).to_le_bytes());
@@ -322,8 +336,8 @@ impl FriVerifier {
                     layer_idx,
                     layer_domain_size,
                 )?;
-                index /= QUARTIC_FOLD;
-                layer_domain_size = (layer_domain_size + QUARTIC_FOLD - 1) / QUARTIC_FOLD;
+                index /= BINARY_FOLD_ARITY;
+                layer_domain_size = (layer_domain_size + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY;
             }
 
             if index >= proof.final_polynomial.len() {

@@ -5,7 +5,7 @@
 //! 1. Parse the witness into a list of LDE evaluations.
 //! 2. Compute the initial commitment roots and bind them to the transcript.
 //! 3. Derive Fiat–Shamir challenges (α-vector, OOD points, FRI seed).
-//! 4. Produce a quartic FRI proof using the deterministic seed.
+//! 4. Produce a binary FRI proof using the deterministic seed.
 //! 5. Assemble the envelope header/body, compute digests and enforce size limits.
 
 use crate::config::{
@@ -40,7 +40,7 @@ pub enum ProverError {
     MalformedWitness(&'static str),
     /// Failed to derive Fiat–Shamir challenges.
     Transcript(crate::proof::transcript::TranscriptError),
-    /// Quartic FRI prover returned an error.
+    /// Binary FRI prover returned an error.
     Fri(FriError),
     /// The resulting proof exceeded the configured size limit.
     ProofTooLarge { actual: usize, limit: u32 },
@@ -128,7 +128,7 @@ pub fn build_envelope(
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
     let fri_parameters = FriParametersMirror {
-        fold: 4,
+        fold: 2,
         cap_degree: context.profile.fri_depth_range.max as u16,
         cap_size: fri_proof.final_polynomial.len() as u32,
         query_budget: security_level.query_budget() as u16,

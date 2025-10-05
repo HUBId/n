@@ -15,8 +15,8 @@ pub type ParameterDigest = &'static str;
 pub struct FriProfile {
     /// Human readable profile identifier.
     pub name: &'static str,
-    /// Folding factor applied to each layer; we only expose quartic
-    /// folding in this module.
+    /// Folding factor applied to each layer; we expose the canonical binary
+    /// folding schedule in this module.
     pub folding_factor: usize,
     /// Number of sampling queries performed by the verifier.
     pub query_count: usize,
@@ -29,7 +29,7 @@ pub struct FriProfile {
 /// Standard security profile targeting typical rollup deployments.
 pub const STANDARD_FRI_PROFILE: FriProfile = FriProfile {
     name: "standard",
-    folding_factor: 4,
+    folding_factor: 2,
     query_count: 64,
     target_depth: 6,
     parameter_digest: "31d7f096bd7cf0ebc5d4d88dbcccf20ebb6a520fe52b39cac3d1a1a0f1d5e2aa",
@@ -38,7 +38,7 @@ pub const STANDARD_FRI_PROFILE: FriProfile = FriProfile {
 /// High security profile with an increased query budget.
 pub const HISEC_FRI_PROFILE: FriProfile = FriProfile {
     name: "hisec",
-    folding_factor: 4,
+    folding_factor: 2,
     query_count: 96,
     target_depth: 8,
     parameter_digest: "8f44b61cfe2b67ab681a2a19d4e9febb0e5bc2b1de9a5596d1f52e8f8e0cd5a4",

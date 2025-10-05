@@ -440,14 +440,20 @@ mod tests {
                 seen[index] = true;
             }
         }
-        assert!(seen.into_iter().all(|flag| flag), "row-major mapping must cover the domain");
+        assert!(
+            seen.into_iter().all(|flag| flag),
+            "row-major mapping must cover the domain"
+        );
 
         let hi_sec = LowDegreeExtender::new(4, 3, &PROFILE_HISEC_X16);
         for column in 0..hi_sec.trace_columns() {
             for row in 0..hi_sec.extended_rows() {
                 let index = hi_sec.lde_index(row, column);
                 let expected = column * hi_sec.extended_rows() + row;
-                assert_eq!(index, expected, "column-interleaved mapping must be deterministic");
+                assert_eq!(
+                    index, expected,
+                    "column-interleaved mapping must be deterministic"
+                );
             }
         }
     }
@@ -481,7 +487,10 @@ mod tests {
                 }
             }
 
-            assert!(visited.into_iter().all(|flag| flag), "chunks must cover the entire domain");
+            assert!(
+                visited.into_iter().all(|flag| flag),
+                "chunks must cover the entire domain"
+            );
             assert_eq!(
                 reconstructed, reference,
                 "LDE output must be byte-identical regardless of worker count ({worker_count})"

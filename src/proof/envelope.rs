@@ -309,7 +309,7 @@ impl ProofEnvelopeBody {
 /// Mirror of the FRI parameters stored inside the envelope body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FriParametersMirror {
-    /// Folding factor (fixed to four in the current implementation).
+    /// Folding factor (fixed to two in the current implementation).
     pub fold: u8,
     /// Degree of the cap polynomial.
     pub cap_degree: u16,
@@ -322,7 +322,7 @@ pub struct FriParametersMirror {
 impl Default for FriParametersMirror {
     fn default() -> Self {
         Self {
-            fold: 4,
+            fold: 2,
             cap_degree: 0,
             cap_size: 0,
             query_budget: 0,
@@ -766,7 +766,7 @@ mod tests {
             fri_layer_roots,
             ood_openings: Vec::new(),
             fri_parameters: FriParametersMirror {
-                fold: 4,
+                fold: 2,
                 cap_degree: 256,
                 cap_size: fri_proof.final_polynomial.len() as u32,
                 query_budget: FriSecurityLevel::Standard.query_budget() as u16,
