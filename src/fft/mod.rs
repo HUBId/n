@@ -433,6 +433,7 @@ mod tests {
         canonical_add, canonical_mul, canonical_sub, from_montgomery_repr, montgomery_mul, pow_mod,
         reverse_bits, to_montgomery_repr, EvaluationDomain, Fft, FieldElement, Radix2Fft,
     };
+    use crate::fft::ifft::{Ifft, Radix2InverseFft};
     use crate::field::prime_field::MontgomeryConvertible;
 
     fn naive_dft(values: &[FieldElement], omega: FieldElement) -> Vec<FieldElement> {
@@ -485,6 +486,35 @@ mod tests {
         }
 
         values
+    }
+
+    #[test]
+    fn mandated_fft_roundtrip() {
+        let log2_size = 4;
+        let forward = Radix2Fft::natural_order(log2_size);
+        let inverse = Radix2InverseFft::natural_order(log2_size);
+        let mut values: Vec<FieldElement> = (0..(1 << log2_size))
+            .map(|i| FieldElement::from((i as u64) * 17 + 5))
+            .map(to_montgomery_repr)
+            .collect();
+
+        let original = values.clone();
+        forward.forward(&mut values);
+        inverse.inverse(&mut values);
+
+        assert_eq!(values, original, "FFT followed by IFFT must recover the input");
+    }
+
+    #[test]
+    fn mandated_fft_root_selection_is_stable() {
+        let log2_size = 5;
+        let first = super::derive_primitive_root(log2_size);
+        let second = super::derive_primitive_root(log2_size);
+        assert_eq!(first, second, "primitive root derivation must be stable");
+
+        let plan = Radix2Fft::natural_order(log2_size);
+        let cached_root = from_montgomery_repr(plan.domain().generators.forward[1]);
+        assert_eq!(cached_root, first, "generator table must reuse the derived primitive root");
     }
 
     #[test]
