@@ -20,8 +20,10 @@
 
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriQueryLayer};
-use crate::fri::{hash_internal, hash_leaf, BINARY_FOLD_ARITY};
-use crate::hash::merkle::{MerkleIndex, MerklePathElement, EMPTY_DIGEST};
+use crate::fri::{field_to_bytes, hash_internal, hash_leaf, BINARY_FOLD_ARITY};
+use crate::hash::merkle::{
+    compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, EMPTY_DIGEST,
+};
 
 /// Fully materialised view of a binary Merkle tree.
 #[derive(Debug, Clone)]
@@ -97,6 +99,31 @@ impl LayerTree {
 
         path
     }
+}
+
+/// Verifies a query opening against the expected Merkle root.
+pub(crate) fn verify_query_opening(
+    layer_index: usize,
+    opening: &FriQueryLayer,
+    expected_root: &[u8; 32],
+    position: usize,
+    domain_size: usize,
+) -> Result<(), FriError> {
+    let encoded_leaf = encode_leaf(&field_to_bytes(&opening.value));
+    let computed = compute_root_from_path(&encoded_leaf, position, domain_size, &opening.path)
+        .map_err(|reason| FriError::PathInvalid {
+            layer: layer_index,
+            reason,
+        })?;
+
+    if &computed != expected_root {
+        return Err(FriError::PathInvalid {
+            layer: layer_index,
+            reason: MerkleError::ErrMerkleSiblingOrder,
+        });
+    }
+
+    Ok(())
 }
 
 /// Encapsulates the state of a single FRI layer (values, commitment and domain metadata).

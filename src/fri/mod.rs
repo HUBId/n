@@ -17,6 +17,7 @@ mod layer;
 mod proof;
 mod prover;
 pub mod types;
+mod verifier;
 
 pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
@@ -31,6 +32,7 @@ pub use types::{
     FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
     FriTranscriptSeed, SerKind,
 };
+pub use verifier::fri_verify;
 
 use crate::field::FieldElement;
 use crate::hash::hash;
