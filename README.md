@@ -1,5 +1,86 @@
 # rpp-stark
 
+## AIR pipeline overview
+
+The AIR layer stitches together the execution trace, polynomial commitments, and
+FRI sampling strategy described in Kap. 2–4 and 7. The high-level data flow is:
+
+```text
+Trace (Kap. 2) --> Low-Degree Extension (Kap. 3)
+                    |
+                    v
+          Constraint Composition (Kap. 3–4)
+                    |
+                    v
+            Merkle Commitments (Kap. 4)
+                    |
+                    v
+        Transcript / Fiat–Shamir (Kap. 4)
+                    |
+                    v
+                FRI Queries (Kap. 7)
+```
+
+Each arrow corresponds to a module under `src/air`:
+
+| Stage | Module | Kap. | Deterministic contract |
+|-------|--------|------|------------------------|
+| Trace ingestion | [`src/air/trace.rs`](src/air/trace.rs) | 2–3 | Fixed row iterator and column ordering feeding the LDE. |
+| LDE profiles | [`src/fft/lde.rs`](src/fft/lde.rs) | 3 | Blowup, ordering, and coset labelling shared by prover and verifier. |
+| Composition | [`src/air/composition.rs`](src/air/composition.rs) | 3–4 | Transition/boundary combination bound to transcript challenges. |
+| Merkle commitments | [`src/params/mod.rs`](src/params/mod.rs) & [`src/air/types.rs`](src/air/types.rs) | 4 | Canonical leaf encodings and arity selection. |
+| Transcript | [`src/transcript/mod.rs`](src/transcript/mod.rs) | 4 | Label ordering for Fiat–Shamir challenges. |
+| FRI | [`src/fri`](src/fri) | 7 | Query schedule derived from transcript seeds. |
+
+### Trace and public-input schema
+
+```
+┌──────────────┐    ┌───────────────────────┐
+│ Trace main   │    │ context_tag : [u8;32] │
+│ Trace aux    │    │ trace_length : u32    │
+│ Trace perm   │    │ public_values : Vec<F>│
+│ Trace lookup │    │ challenge_bound : u32 │
+└──────────────┘    └───────────────────────┘
+```
+
+| Segment | Column symbol | Description |
+|---------|----------------|-------------|
+| `main` | `columns::MAIN_WIDTH` | Execution registers evaluated at every step. |
+| `aux` | `columns::AUX_WIDTH` | Auxiliary witness columns for helper relations. |
+| `permutation` | `columns::PERM_WIDTH` | State for permutation arguments (Kap. 3). |
+| `lookup` | `columns::LOOKUP_WIDTH` | Witnesses backing lookup constraints. |
+
+Public inputs mirror the schema from [`types::PublicInputs`](src/air/types.rs):
+
+| Field | Encoding | Purpose |
+|-------|----------|---------|
+| `context_tag` | 32-byte array | Names the execution instance and binds Kap. 2 metadata. |
+| `trace_length` | `u32` little-endian | Selects the LDE domain length. |
+| `public_values` | `Vec<FieldElement>` | Exposed registers absorbed into the transcript. |
+| `challenge_bound` | `u32` little-endian | Caps Fiat–Shamir sampling range as mandated in Kap. 4. |
+
+All serialisation is byte-for-byte reproducible; replaying the same trace and
+public inputs therefore yields identical transcript openings and FRI queries.
+
+### Transcript challenge ordering
+
+The Fiat–Shamir transcript emits challenges in the order shown below. The phase
+labels match [`AirTranscript`](src/air/traits.rs) and Kap. 4, ensuring that both
+sides derive the same folding seeds and query indices.
+
+```
+Init → Public → TraceCommit → CompCommit → FRI(layer i) → Queries → Final
+          │            │             │            │
+          │            │             │            └─ FriFoldChallenge(i)
+          │            │             └─ CompChallengeA
+          │            └─ TraceChallengeA
+          └─ PublicInputsDigest
+```
+
+The resulting challenge stream (`TraceChallengeA`, `CompChallengeA`, successive
+`FriFoldChallenge(i)`, then `QueryIndexStream`) is highlighted in Kap. 7’s
+worked example.
+
 ## Low-degree extension profiles
 
 Low-degree extension (LDE) configuration lives in [`src/fft/lde.rs`](src/fft/lde.rs).
