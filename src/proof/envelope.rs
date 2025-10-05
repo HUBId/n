@@ -599,7 +599,7 @@ fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, EnvelopeError> {
             let mut path = Vec::with_capacity(path_len);
             for _ in 0..path_len {
                 let index = cursor.read_u8()?;
-                let mut siblings = [[0u8; 32]; 3];
+                let mut siblings = [[0u8; 32]; 1];
                 for sibling in siblings.iter_mut() {
                     *sibling = cursor.read_digest()?;
                 }

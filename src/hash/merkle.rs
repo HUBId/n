@@ -1,13 +1,13 @@
-//! BLAKE3-based 4-ary Merkle tree implementation used by the proving system.
+//! BLAKE3-based binary Merkle tree implementation used by the proving system.
 //!
 //! The tree adheres to the specification circulated with the repository:
 //!
-//! * Inner nodes hash the concatenation of their four children in order.
+//! * Inner nodes hash the concatenation of their two children in order.
 //! * Leaves are hashed as `BLAKE3(u32_le(len) || payload)`.
 //! * Missing children on the right-hand side are padded with a fixed
 //!   `EMPTY` digest derived from the string `"RPP-MERKLE-EMPTY\0"`.
-//! * Authentication paths serialise an index byte followed by the three
-//!   sibling digests ordered by their position (0..3) within the parent.
+//! * Authentication paths serialise an index byte followed by the sibling
+//!   digest ordered by its position (0 or 1) within the parent.
 //!
 //! The module provides helpers to build Merkle trees, derive authentication
 //! paths and recompute the root from a path.  Errors are surfaced when a
@@ -18,7 +18,7 @@ use crate::hash::{hash, Hasher};
 use core::fmt;
 
 /// Number of children per internal node.
-const ARITY: usize = 4;
+const ARITY: usize = 2;
 
 /// Size of a digest emitted by the tree (BLAKE3 output size).
 pub const DIGEST_SIZE: usize = 32;
@@ -31,25 +31,25 @@ pub const EMPTY_DIGEST: [u8; DIGEST_SIZE] = [
 
 /// Digest binding the documented Merkle layout for parameter commitments.
 pub const MERKLE_SCHEME_ID: [u8; DIGEST_SIZE] = [
-    0xe3, 0x5d, 0x68, 0x51, 0x56, 0xe8, 0xb8, 0x9f, 0x9d, 0x2e, 0x9a, 0xe1, 0xfc, 0x7b, 0x02, 0xa0,
-    0x29, 0x2e, 0x38, 0x4a, 0xf9, 0x23, 0x85, 0xae, 0xc3, 0x2b, 0xbb, 0xc9, 0x1a, 0x96, 0x5b, 0xe0,
+    0xa0, 0x02, 0xd1, 0xc1, 0x58, 0xcd, 0x9b, 0x91, 0x2d, 0x51, 0x38, 0x67, 0x50, 0x7b, 0xcd, 0x19,
+    0x5a, 0xe8, 0x15, 0xfa, 0x16, 0xdb, 0x7b, 0x3a, 0xc2, 0x5f, 0xae, 0x6f, 0x6b, 0xd9, 0x13, 0xa4,
 ];
 
-/// Index of a child within a 4-ary node (stored as little-endian byte in proofs).
+/// Index of a child within a binary node (stored as little-endian byte in proofs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MerkleIndex(pub u8);
 
 impl MerkleIndex {
-    /// Maximum allowed index for the 4-ary fan-out.
-    pub const MAX: u8 = 3;
+    /// Maximum allowed index for the binary fan-out.
+    pub const MAX: u8 = 1;
 }
 
 /// Path element capturing siblings and the caller position.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MerklePathElement {
-    /// Position of the caller node within the parent (`0..=3`).
+    /// Position of the caller node within the parent (`0..=1`).
     pub index: MerkleIndex,
-    /// Sibling hashes ordered from left (0) to right (3).
+    /// Sibling hash ordered from left (0) to right (1).
     pub siblings: [[u8; DIGEST_SIZE]; ARITY - 1],
 }
 
@@ -79,7 +79,7 @@ impl fmt::Display for MerkleError {
 
 impl std::error::Error for MerkleError {}
 
-/// Convenience wrapper for a 4-ary BLAKE3 Merkle tree.
+/// Convenience wrapper for a binary BLAKE3 Merkle tree.
 #[derive(Debug, Clone)]
 pub struct Blake3MerkleTree {
     levels: Vec<Vec<[u8; DIGEST_SIZE]>>,
@@ -163,23 +163,21 @@ impl Blake3MerkleTree {
             let chunk_base = parent_index * ARITY;
             let chunk_len = nodes.len().saturating_sub(chunk_base).min(ARITY);
 
-            let mut siblings = [[0u8; DIGEST_SIZE]; ARITY - 1];
-            let mut s_idx = 0;
-            for offset in 0..ARITY {
-                if offset == position {
-                    continue;
-                }
-                siblings[s_idx] = if offset < chunk_len {
-                    nodes[chunk_base + offset]
+            let sibling = if position == 0 {
+                if chunk_len > 1 {
+                    nodes[chunk_base + 1]
                 } else {
                     EMPTY_DIGEST
-                };
-                s_idx += 1;
-            }
+                }
+            } else if chunk_len > 1 {
+                nodes[chunk_base]
+            } else {
+                EMPTY_DIGEST
+            };
 
             path.push(MerklePathElement {
                 index: MerkleIndex(position as u8),
-                siblings,
+                siblings: [sibling],
             });
 
             current_index /= ARITY;
@@ -215,7 +213,7 @@ pub fn hash_leaf(encoded_leaf: &[u8]) -> Result<[u8; DIGEST_SIZE], MerkleError> 
     Ok(hash(encoded_leaf).into())
 }
 
-/// Hashes four child digests into their parent digest.
+/// Hashes two child digests into their parent digest.
 pub fn hash_internal(children: &[[u8; DIGEST_SIZE]; ARITY]) -> [u8; DIGEST_SIZE] {
     let mut hasher = Hasher::new();
     for child in children {
@@ -258,25 +256,21 @@ pub fn compute_root_from_path(
         let chunk_len = nodes_in_level.saturating_sub(chunk_base).min(ARITY);
 
         let mut children = [[0u8; DIGEST_SIZE]; ARITY];
-        let mut sibling_iter = element.siblings.iter();
-        for offset in 0..ARITY {
-            if offset == expected_position {
-                children[offset] = hash;
-                continue;
-            }
-            let sibling = sibling_iter
-                .next()
-                .copied()
-                .ok_or(MerkleError::ErrPathIndexByte)?;
-            if offset >= chunk_len && sibling != EMPTY_DIGEST {
-                return Err(MerkleError::ErrMerkleEmptyPadding);
-            }
-            children[offset] = if offset < chunk_len {
-                sibling
-            } else {
-                EMPTY_DIGEST
-            };
+        children[expected_position] = hash;
+        let sibling = element
+            .siblings
+            .get(0)
+            .copied()
+            .ok_or(MerkleError::ErrPathIndexByte)?;
+        let sibling_position = expected_position ^ 1;
+        if sibling_position >= chunk_len && sibling != EMPTY_DIGEST {
+            return Err(MerkleError::ErrMerkleEmptyPadding);
         }
+        children[sibling_position] = if sibling_position < chunk_len {
+            sibling
+        } else {
+            EMPTY_DIGEST
+        };
 
         hash = hash_internal(&children);
         current_index = parent_index;
@@ -352,8 +346,8 @@ mod tests {
 
         let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
         let mut path = tree.open(2).expect("path");
-        // Swap two siblings to break the order constraint.
-        path[0].siblings.swap(0, 1);
+        // Corrupt the sibling digest to break the order constraint.
+        path[0].siblings[0][0] ^= 0x01;
         let err = verify_path(&payloads[2], 2, tree.leaf_count(), &path, &tree.root()).unwrap_err();
         assert_eq!(err, MerkleError::ErrMerkleSiblingOrder);
         assert_eq!(err.to_string(), "ErrFRIPathInvalid: sibling order");
@@ -364,7 +358,7 @@ mod tests {
         let payloads = vec![encode_leaf(&[42]), encode_leaf(&[43])];
         let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
         let mut path = tree.open(0).expect("path");
-        path[0].index = MerkleIndex(4);
+        path[0].index = MerkleIndex(2);
         let err = verify_path(&payloads[0], 0, tree.leaf_count(), &path, &tree.root()).unwrap_err();
         assert_eq!(err, MerkleError::ErrPathIndexByte);
         assert_eq!(err.to_string(), "ErrFRIPathInvalid: index byte");
@@ -382,11 +376,12 @@ mod tests {
 
     #[test]
     fn verify_fails_on_bad_padding() {
-        let payloads = vec![encode_leaf(&[1]), encode_leaf(&[2])];
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
-        let mut path = tree.open(0).expect("path");
-        path.last_mut().unwrap().siblings[2] = [0u8; DIGEST_SIZE];
-        let err = compute_root_from_path(&payloads[0], 0, tree.leaf_count(), &path).unwrap_err();
+        let leaf = encode_leaf(&[42]);
+        let path = vec![MerklePathElement {
+            index: MerkleIndex(0),
+            siblings: [[0xFF; DIGEST_SIZE]],
+        }];
+        let err = compute_root_from_path(&leaf, 0, 1, &path).unwrap_err();
         assert_eq!(err, MerkleError::ErrMerkleEmptyPadding);
         assert_eq!(err.to_string(), "ErrFRIPathInvalid: right padding");
     }

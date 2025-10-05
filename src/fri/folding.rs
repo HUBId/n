@@ -141,9 +141,8 @@ fn log2(size: usize) -> usize {
 pub fn binary_fold(
     values: &[FieldElement],
     beta: FieldElement,
-    params: &StarkParams,
+    coset_shift: FieldElement,
 ) -> Vec<FieldElement> {
-    let coset_shift = derive_coset_shift(params);
     let mut result = Vec::with_capacity((values.len() + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY);
     let mut chunks = values.chunks_exact(BINARY_FOLD_ARITY);
 
@@ -161,7 +160,7 @@ pub fn binary_fold(
     result
 }
 
-fn derive_coset_shift(params: &StarkParams) -> FieldElement {
+pub(crate) fn derive_coset_shift(params: &StarkParams) -> FieldElement {
     match params.fri().folding {
         FriFolding::Natural => FieldElement::ONE,
         FriFolding::Coset => FieldElement::GENERATOR,
@@ -205,8 +204,9 @@ mod tests {
 
     #[test]
     fn coset_shift_schedule_tracks_phi_mapping() {
-        let params =
-            StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_X8).build().unwrap();
+        let params = StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_X8)
+            .build()
+            .unwrap();
         let schedule = coset_shift_schedule(&params, 3);
         assert_eq!(schedule.len(), 3);
         assert_eq!(schedule[0], derive_coset_shift(&params));

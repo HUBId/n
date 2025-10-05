@@ -19,8 +19,8 @@ pub mod types;
 pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
 pub use folding::{
-    binary_fold, coset_shift_schedule, FoldingLayer, FoldingLayout, LayerCommitment,
-    BINARY_FOLD_ARITY, next_domain_size, parent_index, phi,
+    binary_fold, coset_shift_schedule, next_domain_size, parent_index, phi, FoldingLayer,
+    FoldingLayout, LayerCommitment, BINARY_FOLD_ARITY,
 };
 pub use proof::{derive_query_plan_id, FriVerifier};
 pub use types::{
@@ -115,10 +115,10 @@ pub(crate) fn hash_leaf(value: &FieldElement) -> [u8; 32] {
     hash(&payload).into()
 }
 
-/// Hashes four child digests into their parent digest.
+/// Hashes two child digests into their parent digest.
 #[inline]
-pub(crate) fn hash_internal(children: &[[u8; 32]; 4]) -> [u8; 32] {
-    let mut payload = Vec::with_capacity(128);
+pub(crate) fn hash_internal(children: &[[u8; 32]; 2]) -> [u8; 32] {
+    let mut payload = Vec::with_capacity(64);
     for child in children {
         payload.extend_from_slice(child);
     }

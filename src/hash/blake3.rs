@@ -43,8 +43,8 @@ impl Blake3Domain {
                 description: "Batch aggregation seed namespace",
             },
             Blake3Domain {
-                canonical_prefix: "RPP-MERKLE-4",
-                description: "4-ary Merkle commitment namespace",
+                canonical_prefix: "RPP-MERKLE-2",
+                description: "Binary Merkle commitment namespace",
             },
         ]
     }
