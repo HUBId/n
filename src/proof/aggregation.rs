@@ -380,24 +380,32 @@ mod tests {
     }
 
     #[test]
-    fn stable_sort_preserves_ties() {
+    fn batch_sort_orders_by_kind_pi_digest_then_index_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
-        let mut repeated = Vec::new();
-        repeated.extend(records.iter().cloned());
-        repeated.extend(records.iter().cloned());
 
-        let sorted = sort_batch_proofs(&repeated);
-        let mut last_seen = std::collections::BTreeMap::new();
+        // Shuffle the sample records and duplicate them so we observe ordering
+        // guarantees across distinct kinds, public-input digests and original
+        // indices.
+        let mut unsorted = vec![records[2].clone(), records[0].clone(), records[1].clone()];
+        unsorted.extend(records.iter().cloned());
+
+        let sorted = sort_batch_proofs(&unsorted);
+        let mut previous: Option<(ProofKind, [u8; 32], usize)> = None;
         for entry in sorted {
-            if let Some(previous) = last_seen.insert(entry.record.kind, entry.original_index) {
-                assert!(previous < entry.original_index);
+            let current = (entry.record.kind, entry.pi_digest, entry.original_index);
+            if let Some(prev) = previous {
+                assert!(
+                    prev <= current,
+                    "sorted order must be lexicographic over (kind, pi_digest, original_index)"
+                );
             }
+            previous = Some(current);
         }
     }
 
     #[test]
-    fn run_batch_reports_precheck_failure_index() {
+    fn batch_fast_path_rejects_and_reports_index_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
         let sorted = sort_batch_proofs(&records);
@@ -433,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn run_batch_reports_fri_failure_index() {
+    fn batch_executor_bubbles_fri_failures_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
         let sorted = sort_batch_proofs(&records);
@@ -469,7 +477,7 @@ mod tests {
     }
 
     #[test]
-    fn run_batch_accepts_when_no_failures() {
+    fn batch_accepts_when_all_checks_pass_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
         let sorted = sort_batch_proofs(&records);
