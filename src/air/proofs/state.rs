@@ -9,6 +9,123 @@
 //! Permutationen, Formate, Op-Tags, triviale Updates und Boundary-Verletzungen.
 
 use super::ProofAirKind;
+use crate::air::errors::AirErrorKind;
+use crate::air::inputs::StatePublicInputs;
+use crate::hash::Hasher;
+use std::collections::BTreeMap;
+
+const KEY_MAX: u64 = (1u64 << 48) - 1;
+const VALUE_MAX: u64 = (1u64 << 48) - 1;
+
+/// Kanonische Tags fuer State-Operationen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateOpTag {
+    /// Fuegt einen neuen Key/Value Eintrag hinzu.
+    Insert,
+    /// Aktualisiert einen bestehenden Key.
+    Update,
+    /// Entfernt einen Key aus dem Zustand.
+    Delete,
+}
+
+impl StateOpTag {
+    fn from_raw(raw: u8) -> Result<Self, AirErrorKind> {
+        match raw {
+            0 => Ok(StateOpTag::Insert),
+            1 => Ok(StateOpTag::Update),
+            2 => Ok(StateOpTag::Delete),
+            _ => Err(AirErrorKind::ErrStateOpTag),
+        }
+    }
+}
+
+/// Einzelne State-Operation im Trace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateOperation {
+    /// Rohes Tag-Encoding (0=INS,1=UPD,2=DEL).
+    pub tag: u8,
+    /// Feldkodierter Key.
+    pub key: u64,
+    /// Alter Wert (fuer DEL/UPD relevant).
+    pub value_old: u64,
+    /// Neuer Wert (fuer INS/UPD relevant).
+    pub value_new: u64,
+}
+
+/// Selektorfenster fuer State-Trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StateSelectorWindows {
+    /// Anzahl Scan-Zeilen.
+    pub scan_rows: usize,
+    /// Anzahl Finalize-Zeilen (>=1).
+    pub finalize_rows: usize,
+}
+
+impl StateSelectorWindows {
+    fn total_rows(self) -> usize {
+        self.scan_rows + self.finalize_rows
+    }
+}
+
+impl Default for StateSelectorWindows {
+    fn default() -> Self {
+        Self {
+            scan_rows: 0,
+            finalize_rows: 1,
+        }
+    }
+}
+
+/// Zeuge fuer das State-Profil.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateWitness {
+    /// Vorszustand als Liste eindeutiger Key/Value-Paare.
+    pub pre_state: Vec<(u64, u64)>,
+    /// Nachzustand als Liste eindeutiger Key/Value-Paare.
+    pub post_state: Vec<(u64, u64)>,
+    /// Aufeinander folgende Operationen.
+    pub operations: Vec<StateOperation>,
+    /// Selektorfenster fuer Scan/Finalize.
+    pub selectors: StateSelectorWindows,
+}
+
+fn hash_state(tag: &str, entries: &[(u64, u64)]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(tag.as_bytes());
+    hasher.update(&(entries.len() as u32).to_le_bytes());
+    for (key, value) in entries {
+        hasher.update(&key.to_le_bytes());
+        hasher.update(&value.to_le_bytes());
+    }
+    hasher.finalize().into_bytes()
+}
+
+fn hash_operations(ops: &[StateOperation]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"RPP-STATE-OPS");
+    hasher.update(&(ops.len() as u32).to_le_bytes());
+    for op in ops {
+        hasher.update(&[op.tag]);
+        hasher.update(&op.key.to_le_bytes());
+        hasher.update(&op.value_old.to_le_bytes());
+        hasher.update(&op.value_new.to_le_bytes());
+    }
+    hasher.finalize().into_bytes()
+}
+
+fn validate_key_value(key: u64, value: u64) -> Result<(), AirErrorKind> {
+    if key > KEY_MAX || value > VALUE_MAX {
+        Err(AirErrorKind::ErrStateFormat)
+    } else {
+        Ok(())
+    }
+}
+
+fn sort_state(entries: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let mut sorted = entries.to_vec();
+    sorted.sort_unstable();
+    sorted
+}
 
 /// AIR-Skelett fuer State-Beweise.
 pub struct StateAirProfile;
@@ -91,4 +208,96 @@ impl StateAirProfile {
         "sigma_scan(i) + sigma_finalize(i) = 1",
         "sigma_scan(0) = 1 und sigma_finalize(T-1) = 1",
     ];
+
+    /// Fuehrt die dokumentierten Konsistenzpruefungen fuer einen State-Zeugen aus.
+    pub fn evaluate_trace(
+        witness: &StateWitness,
+        public_inputs: &StatePublicInputs,
+    ) -> Result<(), AirErrorKind> {
+        if witness.selectors.finalize_rows == 0 {
+            return Err(AirErrorKind::ErrStateSelector);
+        }
+        if witness.selectors.scan_rows != witness.operations.len() {
+            return Err(AirErrorKind::ErrStateSelector);
+        }
+        if witness.selectors.total_rows() != witness.operations.len() + 1 {
+            return Err(AirErrorKind::ErrStateSelector);
+        }
+
+        for &(key, value) in &witness.pre_state {
+            validate_key_value(key, value)?;
+        }
+        for &(key, value) in &witness.post_state {
+            validate_key_value(key, value)?;
+        }
+
+        let mut state: BTreeMap<u64, u64> = witness.pre_state.iter().cloned().collect();
+
+        for op in &witness.operations {
+            let tag = StateOpTag::from_raw(op.tag)?;
+            validate_key_value(op.key, op.value_old)?;
+            validate_key_value(op.key, op.value_new)?;
+            match tag {
+                StateOpTag::Insert => {
+                    if op.value_new == 0 || op.value_old != 0 {
+                        return Err(AirErrorKind::ErrStateFormat);
+                    }
+                    if state.contains_key(&op.key) {
+                        return Err(AirErrorKind::ErrStatePermutation);
+                    }
+                    state.insert(op.key, op.value_new);
+                }
+                StateOpTag::Update => {
+                    if op.value_new == op.value_old {
+                        return Err(AirErrorKind::ErrStateUpdateTrivial);
+                    }
+                    let entry = state
+                        .get_mut(&op.key)
+                        .ok_or(AirErrorKind::ErrStatePermutation)?;
+                    if *entry != op.value_old {
+                        return Err(AirErrorKind::ErrStatePermutation);
+                    }
+                    *entry = op.value_new;
+                }
+                StateOpTag::Delete => {
+                    if op.value_old == 0 || op.value_new != 0 {
+                        return Err(AirErrorKind::ErrStateFormat);
+                    }
+                    let entry = state
+                        .remove(&op.key)
+                        .ok_or(AirErrorKind::ErrStatePermutation)?;
+                    if entry != op.value_old {
+                        return Err(AirErrorKind::ErrStatePermutation);
+                    }
+                }
+            }
+        }
+
+        let mut final_state: Vec<(u64, u64)> = state.into_iter().collect();
+        final_state.sort_unstable();
+        if final_state != sort_state(&witness.post_state) {
+            return Err(AirErrorKind::ErrStatePermutation);
+        }
+
+        if hash_state("STATE:pre", &witness.pre_state) != public_inputs.pre_state_root {
+            return Err(AirErrorKind::ErrStateBoundary);
+        }
+        if hash_state("STATE:post", &witness.post_state) != public_inputs.post_state_root {
+            return Err(AirErrorKind::ErrStateBoundary);
+        }
+        if hash_operations(&witness.operations) != public_inputs.diff_digest {
+            return Err(AirErrorKind::ErrStateBoundary);
+        }
+
+        Ok(())
+    }
+
+    /// Leitet deterministische Public Inputs aus dem Zeugen ab.
+    pub fn derive_public_inputs(witness: &StateWitness) -> StatePublicInputs {
+        StatePublicInputs {
+            pre_state_root: hash_state("STATE:pre", &witness.pre_state),
+            post_state_root: hash_state("STATE:post", &witness.post_state),
+            diff_digest: hash_operations(&witness.operations),
+        }
+    }
 }

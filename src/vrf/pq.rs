@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn ntt_root_determinism() {
+    fn ntt_root_selection_deterministic_ok() {
         let params_a = RlweParameters::new(1024).expect("params");
         let params_b = RlweParameters::new(1024).expect("params");
         assert_eq!(params_a.omega, params_b.omega);
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn prf_determinism() {
+    fn prf_evaluation_deterministic_ok() {
         let params = RlweParameters::new(256).expect("params");
         let secret = sample_secret(&params);
         let input = b"deterministic-input";
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn bias_sanity_check() {
+    fn normalize_output_bias_window_ok() {
         let params = RlweParameters::new(64).expect("params");
         let secret = sample_secret(&params);
         let mut histogram = [0usize; 256];
@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn parameter_ids_change_with_degree() {
+    fn parameter_digests_change_with_degree_ok() {
         let params_std = RlweParameters::new(1024).expect("params");
         let params_hi = RlweParameters::new(2048).expect("params");
 
@@ -455,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn polynomial_serialization_roundtrip() {
+    fn polynomial_serialization_roundtrip_ok() {
         let params = RlweParameters::new(1024).expect("params");
         let secret = sample_secret(&params);
         let serialized = serialize_polynomial(secret.coefficients());
@@ -464,7 +464,7 @@ mod tests {
     }
 
     #[test]
-    fn transcript_edge_cases_distinguish_inputs() {
+    fn transcript_edge_cases_distinguish_inputs_ok() {
         let params = RlweParameters::new(32).expect("params");
         let secret = sample_secret(&params);
 
