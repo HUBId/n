@@ -25,7 +25,7 @@ pub use folding::{
     binary_fold, coset_shift_schedule, next_domain_size, parent_index, phi, FoldingLayer,
     FoldingLayout, LayerCommitment, BINARY_FOLD_ARITY,
 };
-pub(crate) use layer::FriLayer;
+pub use layer::FriLayer;
 pub use proof::{
     derive_query_plan_id, DeepOodsProof, FriProof, FriQueryLayerProof, FriQueryProof, FriVerifier,
 };
