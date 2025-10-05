@@ -406,6 +406,90 @@ mod tests {
     use crate::field::FieldElement;
 
     #[test]
+    fn mandated_lde_blowup_lengths() {
+        let trace_rows = 4;
+        let row_major = LowDegreeExtender::new(trace_rows, 2, &PROFILE_X8);
+        assert_eq!(
+            row_major.extended_rows(),
+            trace_rows * PROFILE_X8.blowup_factor,
+            "×8 profile must extend the number of rows by its blowup factor"
+        );
+
+        let hisec_rows = 8;
+        let hi_sec = LowDegreeExtender::new(hisec_rows, 3, &PROFILE_HISEC_X16);
+        assert_eq!(
+            hi_sec.extended_rows(),
+            hisec_rows * PROFILE_HISEC_X16.blowup_factor,
+            "×16 profile must extend the number of rows by its blowup factor"
+        );
+    }
+
+    #[test]
+    fn mandated_lde_deterministic_index_mapping() {
+        let extender = LowDegreeExtender::new(8, 2, &PROFILE_X8);
+        let total_slots = extender.extended_rows() * extender.trace_columns();
+        let mut seen = vec![false; total_slots];
+        for natural_row in 0..extender.extended_rows() {
+            for column in 0..extender.trace_columns() {
+                let index = extender.lde_index(natural_row, column);
+                assert!(index < total_slots, "index out of bounds");
+                assert!(
+                    !seen[index],
+                    "row-major mapping must not revisit indices (row {natural_row}, column {column})"
+                );
+                seen[index] = true;
+            }
+        }
+        assert!(seen.into_iter().all(|flag| flag), "row-major mapping must cover the domain");
+
+        let hi_sec = LowDegreeExtender::new(4, 3, &PROFILE_HISEC_X16);
+        for column in 0..hi_sec.trace_columns() {
+            for row in 0..hi_sec.extended_rows() {
+                let index = hi_sec.lde_index(row, column);
+                let expected = column * hi_sec.extended_rows() + row;
+                assert_eq!(index, expected, "column-interleaved mapping must be deterministic");
+            }
+        }
+    }
+
+    #[test]
+    fn mandated_lde_worker_chunk_determinism() {
+        let trace_rows = 8;
+        let trace_columns = 3;
+        let extender = LowDegreeExtender::new(trace_rows, trace_columns, &PROFILE_X8);
+        let trace: Vec<FieldElement> = (0..trace_rows * trace_columns)
+            .map(|i| FieldElement::from((i as u64) + 1).to_montgomery())
+            .collect();
+        let reference = extender.extend_trace(&trace);
+
+        for worker_count in 1..=4 {
+            let mut reconstructed = vec![FieldElement::ZERO; reference.len()];
+            let mut visited = vec![false; reference.len()];
+            for worker_id in 0..worker_count {
+                for chunk in extender.chunk_iter(worker_id, worker_count) {
+                    for natural_row in chunk.start_row..chunk.end_row {
+                        for column in 0..extender.trace_columns() {
+                            let index = extender.lde_index(natural_row, column);
+                            assert!(
+                                !visited[index],
+                                "chunk scheduling must be disjoint across workers"
+                            );
+                            visited[index] = true;
+                            reconstructed[index] = reference[index];
+                        }
+                    }
+                }
+            }
+
+            assert!(visited.into_iter().all(|flag| flag), "chunks must cover the entire domain");
+            assert_eq!(
+                reconstructed, reference,
+                "LDE output must be byte-identical regardless of worker count ({worker_count})"
+            );
+        }
+    }
+
+    #[test]
     fn lde_index_row_major_bit_reversed_mapping() {
         let extender = LowDegreeExtender::new(4, 2, &PROFILE_X8);
         assert_eq!(extender.extended_rows(), 32);

@@ -90,6 +90,23 @@ mod tests {
     use crate::field::FieldElement;
 
     #[test]
+    fn mandated_ifft_roundtrip() {
+        let log2_size = 4;
+        let forward = Radix2Fft::natural_order(log2_size);
+        let inverse = Radix2InverseFft::natural_order(log2_size);
+        let mut values: Vec<FieldElement> = (0..(1 << log2_size))
+            .map(|i| FieldElement::from((i as u64) * 19 + 7))
+            .map(to_montgomery_repr)
+            .collect();
+
+        let original = values.clone();
+        forward.forward(&mut values);
+        inverse.inverse(&mut values);
+
+        assert_eq!(values, original, "IFFT must invert the natural-order forward transform");
+    }
+
+    #[test]
     fn inverse_is_left_inverse_of_forward_natural() {
         let log2_size = 3;
         let forward = Radix2Fft::natural_order(log2_size);
