@@ -3,11 +3,17 @@
 //! All items in this module are declarative contracts capturing ordering,
 //! hashing domains and failure signalling for the batch verification API.
 
+use blake3::Hasher;
+
+use crate::config::{ProofSystemConfig, VerifierContext};
+use crate::proof::envelope::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::public_inputs::ProofKind;
+use crate::proof::transcript::TranscriptBlockContext;
 use crate::utils::serialization::ProofBytes;
 
 use super::errors::VerificationFailure;
 use super::public_inputs::PublicInputs;
+use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
 
 /// Domain prefix used when deriving aggregation seeds.
 pub const AGGREGATION_DOMAIN_PREFIX: &str = "RPP-AGG";
@@ -78,4 +84,412 @@ impl BatchVerificationSpec {
     /// Description of the aggregation digest rule.
     pub const AGGREGATION_DIGEST_RULE: &'static str =
         "BLAKE3(concat(sorted individual digests by (ProofKind, PI digest)))";
+}
+
+/// Verifies a batch of proofs under a shared block context.
+pub fn batch_verify(
+    block_context: &BlockContext,
+    proofs: &[BatchProofRecord<'_>],
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
+) -> BatchVerificationOutcome {
+    let sorted = sort_batch_proofs(proofs);
+    run_batch_with_callbacks(
+        block_context,
+        &sorted,
+        config,
+        verifier_context,
+        |item, config, context, block_ctx| {
+            let config_kind = map_public_to_config_kind(item.record.kind);
+            precheck_proof_bytes(
+                config_kind,
+                item.record.public_inputs,
+                item.record.proof_bytes,
+                config,
+                context,
+                block_ctx,
+            )
+        },
+        |_, proof| execute_fri_stage(proof),
+    )
+}
+
+fn run_batch_with_callbacks<'a, Precheck, FriExec>(
+    block_context: &BlockContext,
+    sorted: &[SortedProof<'a>],
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
+    mut precheck: Precheck,
+    mut execute_fri: FriExec,
+) -> BatchVerificationOutcome
+where
+    Precheck: FnMut(
+        &SortedProof<'a>,
+        &ProofSystemConfig,
+        &VerifierContext,
+        Option<&TranscriptBlockContext>,
+    ) -> Result<PrecheckedProof, VerificationFailure>,
+    FriExec: FnMut(&SortedProof<'a>, &PrecheckedProof) -> Result<(), VerificationFailure>,
+{
+    let transcript_block_context = to_transcript_block_context(block_context);
+    let block_seed = derive_block_seed(block_context, sorted);
+    let _per_proof_seeds = derive_per_proof_seeds(&block_seed, sorted);
+
+    let mut prepared: Vec<(usize, PrecheckedProof)> = Vec::with_capacity(sorted.len());
+    for (sorted_index, item) in sorted.iter().enumerate() {
+        match precheck(
+            item,
+            config,
+            verifier_context,
+            Some(&transcript_block_context),
+        ) {
+            Ok(proof) => prepared.push((sorted_index, proof)),
+            Err(error) => {
+                return BatchVerificationOutcome::Reject {
+                    failing_proof_index: item.original_index,
+                    error,
+                }
+            }
+        }
+    }
+
+    for (sorted_index, proof) in &prepared {
+        let item = &sorted[*sorted_index];
+        if let Err(error) = execute_fri(item, proof) {
+            return BatchVerificationOutcome::Reject {
+                failing_proof_index: item.original_index,
+                error,
+            };
+        }
+    }
+
+    let _aggregate_digest = compute_aggregate_digest(sorted);
+
+    BatchVerificationOutcome::Accept
+}
+
+#[derive(Debug, Clone)]
+struct SortedProof<'a> {
+    record: &'a BatchProofRecord<'a>,
+    pi_digest: [u8; 32],
+    original_index: usize,
+}
+
+fn sort_batch_proofs<'a>(proofs: &'a [BatchProofRecord<'a>]) -> Vec<SortedProof<'a>> {
+    let mut entries: Vec<SortedProof<'a>> = proofs
+        .iter()
+        .enumerate()
+        .map(|(index, record)| SortedProof {
+            record,
+            pi_digest: compute_public_input_digest(record.kind, record.public_inputs),
+            original_index: index,
+        })
+        .collect();
+
+    entries.sort_by(|a, b| {
+        a.record
+            .kind
+            .cmp(&b.record.kind)
+            .then_with(|| a.pi_digest.cmp(&b.pi_digest))
+            .then_with(|| a.original_index.cmp(&b.original_index))
+    });
+
+    entries
+}
+
+fn compute_public_input_digest(kind: ProofKind, inputs: &PublicInputs<'_>) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(b"RPP-PI-V1");
+    hasher.update(&[kind.code()]);
+    let serialized = serialize_public_inputs(inputs);
+    hasher.update(&serialized);
+    *hasher.finalize().as_bytes()
+}
+
+fn derive_block_seed(block_context: &BlockContext, sorted: &[SortedProof<'_>]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(AGGREGATION_DOMAIN_PREFIX.as_bytes());
+    hasher.update(&block_context.block_height.to_le_bytes());
+    hasher.update(&block_context.previous_state_root);
+    hasher.update(&block_context.network_id.to_le_bytes());
+    let mut codes: Vec<u8> = sorted.iter().map(|item| item.record.kind.code()).collect();
+    codes.sort_unstable();
+    hasher.update(&codes);
+    *hasher.finalize().as_bytes()
+}
+
+fn derive_per_proof_seeds(block_seed: &[u8; 32], sorted: &[SortedProof<'_>]) -> Vec<[u8; 32]> {
+    sorted
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let mut hasher = Hasher::new();
+            hasher.update(block_seed);
+            hasher.update(&(index as u32).to_le_bytes());
+            hasher.update(&[item.record.kind.code()]);
+            *hasher.finalize().as_bytes()
+        })
+        .collect()
+}
+
+fn compute_aggregate_digest(sorted: &[SortedProof<'_>]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    for item in sorted {
+        hasher.update(&item.pi_digest);
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn to_transcript_block_context(block_context: &BlockContext) -> TranscriptBlockContext {
+    TranscriptBlockContext {
+        block_height: block_context.block_height,
+        previous_state_root: block_context.previous_state_root,
+        network_id: block_context.network_id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{
+        CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig, ProofVersion,
+        PROFILE_STANDARD_CONFIG,
+    };
+    use crate::proof::envelope::{
+        ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader, PROOF_VERSION,
+    };
+    use crate::proof::public_inputs::{
+        AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
+    };
+    use crate::proof::verifier::PrecheckedProof;
+    use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
+
+    fn dummy_config() -> (ProofSystemConfig, VerifierContext) {
+        let profile: ProfileConfig = PROFILE_STANDARD_CONFIG.clone();
+        let param_digest = ParamDigest(DigestBytes { bytes: [1u8; 32] });
+        let config = ProofSystemConfig {
+            proof_version: ProofVersion(PROOF_VERSION),
+            profile: profile.clone(),
+            param_digest: param_digest.clone(),
+        };
+        let verifier_context = VerifierContext {
+            profile,
+            param_digest,
+            common_ids: CommonIdentifiers {
+                field_id: crate::config::FIELD_ID_GOLDILOCKS_64,
+                merkle_scheme_id: crate::config::MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+                transcript_version_id: crate::config::TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+                fri_plan_id: crate::config::FRI_PLAN_ID_FOLD4_V1,
+            },
+            limits: PROFILE_STANDARD_CONFIG.limits.clone(),
+            metrics: None,
+        };
+        (config, verifier_context)
+    }
+
+    fn sample_public_inputs() -> Vec<PublicInputs<'static>> {
+        vec![
+            PublicInputs::Execution {
+                header: ExecutionHeaderV1 {
+                    version: PublicInputVersion::V1,
+                    program_digest: DigestBytes { bytes: [2u8; 32] },
+                    trace_length: 8,
+                    trace_width: 4,
+                },
+                body: b"exec",
+            },
+            PublicInputs::Aggregation {
+                header: AggregationHeaderV1 {
+                    version: PublicInputVersion::V1,
+                    circuit_digest: DigestBytes { bytes: [3u8; 32] },
+                    leaf_count: 2,
+                    root_digest: DigestBytes { bytes: [4u8; 32] },
+                },
+                body: b"agg",
+            },
+            PublicInputs::Recursion {
+                header: RecursionHeaderV1 {
+                    version: PublicInputVersion::V1,
+                    depth: 1,
+                    boundary_digest: DigestBytes { bytes: [5u8; 32] },
+                    recursion_seed: FieldElementBytes { bytes: [6u8; 32] },
+                },
+                body: b"rec",
+            },
+        ]
+    }
+
+    fn sample_records<'a>(inputs: &'a [PublicInputs<'a>]) -> Vec<BatchProofRecord<'a>> {
+        let proofs: Vec<&'static ProofBytes> = vec![
+            Box::leak(Box::new(ProofBytes::new(vec![0u8; 4]))),
+            Box::leak(Box::new(ProofBytes::new(vec![1u8; 4]))),
+            Box::leak(Box::new(ProofBytes::new(vec![2u8; 4]))),
+        ];
+
+        vec![
+            BatchProofRecord {
+                kind: ProofKind::Execution,
+                public_inputs: &inputs[0],
+                proof_bytes: proofs[0],
+            },
+            BatchProofRecord {
+                kind: ProofKind::Aggregation,
+                public_inputs: &inputs[1],
+                proof_bytes: proofs[1],
+            },
+            BatchProofRecord {
+                kind: ProofKind::Recursion,
+                public_inputs: &inputs[2],
+                proof_bytes: proofs[2],
+            },
+        ]
+    }
+
+    fn dummy_prechecked_proof() -> PrecheckedProof {
+        PrecheckedProof {
+            envelope: ProofEnvelope {
+                header: ProofEnvelopeHeader {
+                    proof_version: PROOF_VERSION,
+                    proof_kind: crate::config::ProofKind::Tx,
+                    param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
+                    air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
+                    public_inputs: Vec::new(),
+                    commitment_digest: DigestBytes { bytes: [8u8; 32] },
+                    header_length: 0,
+                    body_length: 0,
+                },
+                body: ProofEnvelopeBody {
+                    core_root: [0u8; 32],
+                    aux_root: [0u8; 32],
+                    fri_layer_roots: Vec::new(),
+                    ood_openings: Vec::new(),
+                    fri_proof: crate::fri::FriProof {
+                        security_level: crate::fri::FriSecurityLevel::Standard,
+                        initial_domain_size: 1,
+                        layer_roots: Vec::new(),
+                        final_polynomial: Vec::new(),
+                        final_polynomial_digest: [0u8; 32],
+                        queries: Vec::new(),
+                    },
+                    fri_parameters: crate::proof::envelope::FriParametersMirror::default(),
+                    integrity_digest: DigestBytes { bytes: [9u8; 32] },
+                },
+            },
+            fri_seed: [10u8; 32],
+            security_level: crate::fri::FriSecurityLevel::Standard,
+        }
+    }
+
+    #[test]
+    fn stable_sort_preserves_ties() {
+        let inputs = sample_public_inputs();
+        let records = sample_records(&inputs);
+        let mut repeated = Vec::new();
+        repeated.extend(records.iter().cloned());
+        repeated.extend(records.iter().cloned());
+
+        let sorted = sort_batch_proofs(&repeated);
+        let mut last_seen = std::collections::BTreeMap::new();
+        for entry in sorted {
+            if let Some(previous) = last_seen.insert(entry.record.kind, entry.original_index) {
+                assert!(previous < entry.original_index);
+            }
+        }
+    }
+
+    #[test]
+    fn run_batch_reports_precheck_failure_index() {
+        let inputs = sample_public_inputs();
+        let records = sample_records(&inputs);
+        let sorted = sort_batch_proofs(&records);
+        let (config, verifier_context) = dummy_config();
+        let block_context = BlockContext {
+            block_height: 42,
+            previous_state_root: [11u8; 32],
+            network_id: 7,
+        };
+
+        let outcome = run_batch_with_callbacks(
+            &block_context,
+            &sorted,
+            &config,
+            &verifier_context,
+            |item, _, _, _| {
+                if item.original_index == 1 {
+                    Err(VerificationFailure::ErrParamDigestMismatch)
+                } else {
+                    Ok(dummy_prechecked_proof())
+                }
+            },
+            |_, _| Ok(()),
+        );
+
+        assert_eq!(
+            outcome,
+            BatchVerificationOutcome::Reject {
+                failing_proof_index: 1,
+                error: VerificationFailure::ErrParamDigestMismatch,
+            }
+        );
+    }
+
+    #[test]
+    fn run_batch_reports_fri_failure_index() {
+        let inputs = sample_public_inputs();
+        let records = sample_records(&inputs);
+        let sorted = sort_batch_proofs(&records);
+        let (config, verifier_context) = dummy_config();
+        let block_context = BlockContext {
+            block_height: 5,
+            previous_state_root: [12u8; 32],
+            network_id: 9,
+        };
+
+        let outcome = run_batch_with_callbacks(
+            &block_context,
+            &sorted,
+            &config,
+            &verifier_context,
+            |_, _, _, _| Ok(dummy_prechecked_proof()),
+            |item, _| {
+                if item.original_index == 2 {
+                    Err(VerificationFailure::ErrFRIPathInvalid)
+                } else {
+                    Ok(())
+                }
+            },
+        );
+
+        assert_eq!(
+            outcome,
+            BatchVerificationOutcome::Reject {
+                failing_proof_index: 2,
+                error: VerificationFailure::ErrFRIPathInvalid,
+            }
+        );
+    }
+
+    #[test]
+    fn run_batch_accepts_when_no_failures() {
+        let inputs = sample_public_inputs();
+        let records = sample_records(&inputs);
+        let sorted = sort_batch_proofs(&records);
+        let (config, verifier_context) = dummy_config();
+        let block_context = BlockContext {
+            block_height: 9,
+            previous_state_root: [13u8; 32],
+            network_id: 3,
+        };
+
+        let outcome = run_batch_with_callbacks(
+            &block_context,
+            &sorted,
+            &config,
+            &verifier_context,
+            |_, _, _, _| Ok(dummy_prechecked_proof()),
+            |_, _| Ok(()),
+        );
+
+        assert_eq!(outcome, BatchVerificationOutcome::Accept);
+    }
 }
