@@ -4,8 +4,14 @@
 //! contracts that downstream back-ends must satisfy.  No arithmetic logic
 //! is provided here; consumers are expected to supply constant-time
 //! implementations that respect the documented invariants.
+//!
+//! # Security Notes
+//!
+//! * No `unsafe` code is used in this module.
+//! * Randomness must always be derived deterministically from the transcript;
+//!   operating-system entropy sources are intentionally avoided.
 
-use core::fmt;
+use core::{cmp::Ordering, fmt};
 
 /// Metadata describing the underlying field modulus.
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +74,108 @@ impl FieldElement {
     pub const ZERO: FieldElement = FieldElement(0);
     /// Multiplicative identity in canonical form.
     pub const ONE: FieldElement = FieldElement(1);
+
+    #[inline(always)]
+    const fn modulus() -> u64 {
+        Self::MODULUS.value
+    }
+
+    #[inline(always)]
+    fn reduce_once(value: u64) -> u64 {
+        let reduced = value.wrapping_sub(Self::modulus());
+        let underflow = (reduced > value) as u64;
+        let mask = underflow.wrapping_neg();
+        reduced.wrapping_add(Self::modulus() & mask)
+    }
+
+    #[inline(always)]
+    fn montgomery_reduce(t: u128) -> u64 {
+        let modulus = Self::modulus() as u128;
+        let m = (t as u64).wrapping_mul(Self::MONTGOMERY_INV) as u128;
+        let u = (t + m * modulus) >> 64;
+        let candidate = u as u64;
+        Self::reduce_once(candidate)
+    }
+
+    #[inline(always)]
+    fn montgomery_mul(a: u64, b: u64) -> u64 {
+        let product = (a as u128) * (b as u128);
+        Self::montgomery_reduce(product)
+    }
+
+    #[inline(always)]
+    fn add_internal(&self, rhs: &Self) -> Self {
+        let modulus = Self::modulus() as u128;
+        let sum = self.0 as u128 + rhs.0 as u128;
+        let mask = (sum >= modulus) as u128;
+        let result = sum - mask * modulus;
+        FieldElement(result as u64)
+    }
+
+    #[inline(always)]
+    fn sub_internal(&self, rhs: &Self) -> Self {
+        let (diff, borrow) = self.0.overflowing_sub(rhs.0);
+        let mask = (borrow as u64).wrapping_neg();
+        let result = diff.wrapping_add(Self::modulus() & mask);
+        FieldElement(result)
+    }
+
+    #[inline(always)]
+    fn neg_internal(&self) -> Self {
+        let tmp = Self::modulus().wrapping_sub(self.0);
+        let nz = (self.0 != 0) as u64;
+        let mask = nz.wrapping_neg();
+        FieldElement(tmp & mask)
+    }
+
+    #[inline(always)]
+    fn mul_internal(&self, rhs: &Self) -> Self {
+        let prod = Self::montgomery_mul(self.0, rhs.0);
+        let canonical = Self::montgomery_mul(prod, Self::R2);
+        FieldElement(canonical)
+    }
+
+    #[inline(always)]
+    fn square_internal(&self) -> Self {
+        let prod = Self::montgomery_mul(self.0, self.0);
+        let canonical = Self::montgomery_mul(prod, Self::R2);
+        FieldElement(canonical)
+    }
+
+    /// Raises the element to the provided exponent using square-and-multiply.
+    pub fn pow(&self, exponent: u64) -> Self {
+        let mut base = *self;
+        let mut acc = FieldElement::ONE;
+        for i in 0..64 {
+            let bit = (exponent >> i) & 1;
+            let mask = (bit as u64).wrapping_neg();
+            let candidate = acc.mul_internal(&base);
+            let acc_val = (acc.0 & !mask) | (candidate.0 & mask);
+            acc = FieldElement(acc_val);
+            base = base.square_internal();
+        }
+        acc
+    }
+
+    /// Converts uniformly distributed transcript bytes into a field element.
+    pub fn from_transcript_bytes(bytes: &[u8; 32]) -> Self {
+        let mut limbs = [0u64; 4];
+        for (dst, chunk) in limbs.iter_mut().zip(bytes.chunks_exact(8)) {
+            let mut buf = [0u8; 8];
+            buf.copy_from_slice(chunk);
+            *dst = u64::from_le_bytes(buf);
+        }
+
+        let mut acc = FieldElement::ZERO;
+        let mut factor = FieldElement::ONE;
+        let radix = FieldElement::from(Self::R);
+        for limb in limbs.iter() {
+            let term = FieldElement::from(*limb).mul_internal(&factor);
+            acc = acc.add_internal(&term);
+            factor = factor.mul_internal(&radix);
+        }
+        acc
+    }
 }
 
 /// Trait describing the high-level arithmetic contract for field elements.
@@ -114,4 +222,117 @@ pub trait ConstantTimeAssertions {
     fn assert_nonzero(&self);
     /// Ensures the element is a valid canonical representative (or panics/logs otherwise).
     fn assert_canonical(&self);
+}
+
+impl FieldElementOps for FieldElement {
+    fn add(&self, rhs: &Self) -> Self {
+        self.add_internal(rhs)
+    }
+
+    fn sub(&self, rhs: &Self) -> Self {
+        self.sub_internal(rhs)
+    }
+
+    fn neg(&self) -> Self {
+        self.neg_internal()
+    }
+
+    fn mul(&self, rhs: &Self) -> Self {
+        self.mul_internal(rhs)
+    }
+
+    fn square(&self) -> Self {
+        self.square_internal()
+    }
+
+    fn inv(&self) -> Option<Self> {
+        if self.0 == 0 {
+            None
+        } else {
+            Some(self.pow(Self::modulus() - 2))
+        }
+    }
+}
+
+impl MontgomeryConvertible for FieldElement {
+    fn to_montgomery(&self) -> Self {
+        FieldElement(Self::montgomery_mul(self.0, Self::R2))
+    }
+
+    fn from_montgomery(&self) -> Self {
+        FieldElement(Self::montgomery_mul(self.0, 1))
+    }
+}
+
+impl CanonicalSerialize for FieldElement {
+    type Bytes = [u8; 8];
+
+    fn to_bytes(&self) -> Self::Bytes {
+        self.assert_canonical();
+        self.0.to_le_bytes()
+    }
+
+    fn from_bytes(bytes: &Self::Bytes) -> Option<Self> {
+        let value = u64::from_le_bytes(*bytes);
+        if value < Self::modulus() {
+            Some(FieldElement(value))
+        } else {
+            None
+        }
+    }
+}
+
+impl ConstantTimeAssertions for FieldElement {
+    fn assert_lt_modulus(&self) {
+        if self.0 >= Self::modulus() {
+            panic!("field element not canonical");
+        }
+    }
+
+    fn assert_nonzero(&self) {
+        if self.0 == 0 {
+            panic!("field element is zero");
+        }
+    }
+
+    fn assert_canonical(&self) {
+        self.assert_lt_modulus();
+    }
+}
+
+impl From<u64> for FieldElement {
+    fn from(value: u64) -> Self {
+        FieldElement(FieldElement::reduce_once(value))
+    }
+}
+
+impl From<FieldElement> for u64 {
+    fn from(value: FieldElement) -> Self {
+        value.assert_canonical();
+        value.0
+    }
+}
+
+impl Ord for FieldElement {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl PartialOrd for FieldElement {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl FieldElement {
+    /// Returns `true` if the element is the additive identity.
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Returns `true` if the element is the multiplicative identity.
+    pub fn is_one(&self) -> bool {
+        self.0 == 1
+    }
 }
