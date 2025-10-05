@@ -13,6 +13,7 @@
 mod batch;
 pub mod config;
 mod folding;
+mod layer;
 mod proof;
 pub mod types;
 
@@ -22,6 +23,7 @@ pub use folding::{
     binary_fold, coset_shift_schedule, next_domain_size, parent_index, phi, FoldingLayer,
     FoldingLayout, LayerCommitment, BINARY_FOLD_ARITY,
 };
+pub(crate) use layer::FriLayer;
 pub use proof::{derive_query_plan_id, FriVerifier};
 pub use types::{
     FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
