@@ -19,9 +19,11 @@ mod vrf;
 pub use aggregation::AggregationAirProfile;
 pub use consensus::ConsensusAirProfile;
 pub use identity::IdentityAirProfile;
-pub use pruning::PruningAirProfile;
-pub use state::StateAirProfile;
-pub use transaction::TransactionAirProfile;
+pub use pruning::{
+    PruningAirProfile, PruningEntry, PruningOperation, PruningSelectorWindows, PruningWitness,
+};
+pub use state::{StateAirProfile, StateOperation, StateSelectorWindows, StateWitness};
+pub use transaction::{TransactionAirProfile, TransactionSelectorWindows, TransactionWitness};
 pub use uptime::UptimeAirProfile;
 pub use vrf::VrfAirProfile;
 

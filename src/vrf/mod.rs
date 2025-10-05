@@ -279,6 +279,19 @@ impl VrfTranscriptSpec {
     /// Challenge derivation rule referencing Phase 3.
     pub const CHALLENGE_RULE: &'static str =
         "Reuse Phase-3 deterministic challenges; no auxiliary RNG";
+
+    /// Validates that the transcript sections match the documented ordering.
+    pub fn validate_section_sequence(observed: &[&str]) -> Result<(), VrfVerificationFailure> {
+        if observed.len() < Self::SECTION_ORDER.len() {
+            return Err(VrfVerificationFailure::ErrVrfTranscriptOrder);
+        }
+        for (expected, actual) in Self::SECTION_ORDER.iter().zip(observed.iter()) {
+            if expected != actual {
+                return Err(VrfVerificationFailure::ErrVrfTranscriptOrder);
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Cutover policy enforcing the hard switch from EC-VRF to PQ-VRF.
@@ -364,6 +377,33 @@ impl VrfTestPlan {
         "Batch mixing PQ-VRF with other proof kinds respects ProofKind ordering",
         "Aggregation rejects on ErrVrfParamMismatch when ctx inconsistent",
     ];
+}
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn accept_complete_vrf_transcript_sections_ok() {
+        let observed = VrfTranscriptSpec::SECTION_ORDER.to_vec();
+        VrfTranscriptSpec::validate_section_sequence(&observed).expect("valid");
+    }
+
+    #[test]
+    fn reject_missing_vrf_transcript_sections() {
+        let observed =
+            &VrfTranscriptSpec::SECTION_ORDER[..VrfTranscriptSpec::SECTION_ORDER.len() - 1];
+        let err = VrfTranscriptSpec::validate_section_sequence(observed).unwrap_err();
+        assert_eq!(err, VrfVerificationFailure::ErrVrfTranscriptOrder);
+    }
+
+    #[test]
+    fn reject_reordered_vrf_transcript_sections() {
+        let mut observed = VrfTranscriptSpec::SECTION_ORDER.to_vec();
+        observed.swap(0, 1);
+        let err = VrfTranscriptSpec::validate_section_sequence(&observed).unwrap_err();
+        assert_eq!(err, VrfVerificationFailure::ErrVrfTranscriptOrder);
+    }
 }
 
 /// Alias for the normalized VRF output bytes.

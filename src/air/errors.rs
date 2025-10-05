@@ -34,16 +34,45 @@ pub enum AirErrorKind {
     CommitmentOrderingMismatch,
     /// Bilanz- oder Fee-Konsistenz der Transaktion verletzt (`sum_in - sum_out - fee != 0`).
     ErrTxBalance,
+    /// Range-Bedingungen fuer Betraege, Fees oder Nonce wurden verletzt.
+    ErrTxRange,
+    /// Multiset/Premutationsargument fuer Inputs/Outputs inkonsistent.
+    ErrTxPermMismatch,
+    /// Selektoren verletzen die dokumentierten Phasenregeln.
+    ErrTxSelector,
+    /// Poseidon-/Commitment-Bindung der Transaktion inkonsistent.
+    ErrTxHashBind,
+    /// Boundary-Bedingungen (Fee/Nonce/Commit-Roots) verletzt.
+    ErrTxBoundary,
     /// Nonce-Fortschreibung inkonsistent mit Public Inputs oder Selektoren.
     ErrTxNonce,
     /// Poseidon-Accumulator stimmt nicht mit gebundenem Digest ueberein.
     ErrTxAccumulator,
     /// Zustandsdelta passt nicht zum Diff-Commitment.
+    ErrStateBoundary,
     ErrStateDeltaMismatch,
+    /// Operationstag ausserhalb der erlaubten Menge.
+    ErrStateOpTag,
+    /// Key- oder Value-Format verletzt dokumentierte Range-Regeln.
+    ErrStateFormat,
+    /// Update-Operation fuehrt keinen Wertwechsel durch.
+    ErrStateUpdateTrivial,
     /// Permutationsargument fuer State-Scan nicht erfuellt.
     ErrStatePermutation,
+    /// Selektoren fuer Scan/Finalize verletzen Disjunktheit.
+    ErrStateSelector,
     /// Recovery-Anker oder Keep/Drop-Konsistenz verletzt.
-    ErrPruneAnchor,
+    ErrPruneBoundary,
+    /// Partition der alten Menge in Keep/Drop verletzt.
+    ErrPrunePartition,
+    /// Key- oder Value-Formate im Pruning-Trace verletzt.
+    ErrPruneFormat,
+    /// Policy-Flags (keep/drop) inkonsistent.
+    ErrPrunePolicy,
+    /// Multiset-Argument fuer Keep/Drop verletzt.
+    ErrPrunePermutation,
+    /// Selektorverletzung im Pruning-Trace.
+    ErrPruneSelector,
     /// Slot- oder Epoch-Kohärenz im Uptime-Trace verletzt.
     ErrUptimeSlot,
     /// Quorum- oder Committee-Bindung fehlerhaft.
