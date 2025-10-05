@@ -15,7 +15,7 @@ use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, Transcrip
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
-use rpp_stark::fri::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
+use rpp_stark::fri::types::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
 use rpp_stark::hash::merkle::{MerkleIndex, MerklePathElement};
 
 const ALPHA_VECTOR_LEN: usize = 4;

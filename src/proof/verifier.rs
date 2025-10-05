@@ -9,7 +9,8 @@ use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
 };
 use crate::field::FieldElement;
-use crate::fri::{FriError, FriSecurityLevel, FriVerifier};
+use crate::fri::types::{FriError, FriSecurityLevel};
+use crate::fri::FriVerifier;
 use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
@@ -370,11 +371,15 @@ fn map_security_level(profile: &crate::config::ProfileConfig) -> FriSecurityLeve
 fn map_fri_error(error: FriError) -> VerificationFailure {
     match error {
         FriError::EmptyCodeword => VerificationFailure::ErrFRILayerRootMismatch,
+        FriError::VersionMismatch { .. } => VerificationFailure::ErrFRILayerRootMismatch,
         FriError::QueryOutOfRange { .. } => VerificationFailure::ErrFRIQueryOutOfRange,
         FriError::PathInvalid { .. } => VerificationFailure::ErrFRIPathInvalid,
         FriError::LayerRootMismatch { .. } => VerificationFailure::ErrFRILayerRootMismatch,
         FriError::SecurityLevelMismatch => VerificationFailure::ErrFRILayerRootMismatch,
         FriError::QueryBudgetMismatch { .. } => VerificationFailure::ErrFRILayerRootMismatch,
+        FriError::FoldingConstraintViolated { .. } => VerificationFailure::ErrFRILayerRootMismatch,
+        FriError::OodsInvalid => VerificationFailure::ErrFRILayerRootMismatch,
+        FriError::Serialization(_) => VerificationFailure::ErrFRIPathInvalid,
         FriError::InvalidStructure(_) => VerificationFailure::ErrFRIPathInvalid,
     }
 }

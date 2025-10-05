@@ -10,7 +10,7 @@ use std::convert::TryInto;
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
 use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError};
 use crate::field::FieldElement;
-use crate::fri::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
+use crate::fri::types::{FriProof, FriQuery, FriQueryLayer, FriSecurityLevel};
 use crate::hash::merkle::{MerkleIndex, MerklePathElement};
 use crate::hash::Hasher;
 use crate::proof::public_inputs::{
@@ -728,7 +728,7 @@ mod tests {
         PROOF_VERSION_V1,
     };
     use crate::field::FieldElement;
-    use crate::fri::FriSecurityLevel;
+    use crate::fri::types::FriSecurityLevel;
     use crate::proof::prover::build_envelope as build_proof_envelope;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::utils::serialization::{DigestBytes, WitnessBlob};

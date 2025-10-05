@@ -11,13 +11,15 @@ mod batch;
 pub mod config;
 mod folding;
 mod proof;
+pub mod types;
 
 pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
 pub use folding::{quartic_fold, FoldingLayer, FoldingLayout, LayerCommitment, QUARTIC_FOLD};
-pub use proof::{
-    derive_query_plan_id, FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel,
-    FriTranscriptSeed, FriVerifier,
+pub use proof::{derive_query_plan_id, FriVerifier};
+pub use types::{
+    FriError, FriParamsView, FriProof, FriProofVersion, FriQuery, FriQueryLayer, FriSecurityLevel,
+    FriTranscriptSeed, SerKind,
 };
 
 use crate::field::FieldElement;
