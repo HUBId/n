@@ -17,23 +17,30 @@ impl PruningAirProfile {
     pub const TRACE_STEPS_MAX: usize = 1 << 21;
     /// Core-Register.
     pub const CORE_REGISTERS: &'static [&'static str] = &[
-        "acc_old",
-        "acc_new",
-        "acc_anchor",
+        "A_old",
+        "A_new",
+        "A_anchor",
+        "E_key",
+        "E_val",
         "keep_flag",
         "drop_flag",
-        "element_index",
     ];
-    /// Aux-Register fuer Zerlegungen.
+    /// Aux-Register fuer Zerlegungen und Grand-Product.
     pub const AUX_REGISTERS: &'static [&'static str] = &[
-        "segment_tag",
-        "range_helper",
-        "permutation_running",
-        "anchor_helper",
+        "key_limb_lo",
+        "key_limb_hi",
+        "value_limb_lo",
+        "value_limb_hi",
+        "policy_helper",
+        "grand_product_z",
     ];
     /// Selektoren.
-    pub const SELECTOR_REGISTERS: &'static [&'static str] =
-        &["is_first", "is_last", "phase_filter", "phase_anchor"];
+    pub const SELECTOR_REGISTERS: &'static [&'static str] = &[
+        "sigma_first",
+        "sigma_last",
+        "sigma_filter",
+        "sigma_finalize",
+    ];
     /// Public Inputs (LE).
     pub const PUBLIC_INPUTS: &'static [&'static str] = &[
         "OldPruneDigest[32]",
@@ -42,33 +49,51 @@ impl PruningAirProfile {
     ];
     /// Boundary-Regeln.
     pub const BOUNDARY_CONSTRAINTS: &'static [&'static str] = &[
-        "acc_old(0) = OldPruneDigest_arith",
-        "acc_new(T-1) = NewPruneDigest_arith",
-        "acc_anchor(T-1) = RecoveryAnchor_arith",
+        "sigma_first * (A_old - OldPruneDigest) = 0",
+        "sigma_first * (grand_product_z - 1) = 0",
+        "sigma_last * (A_old - OldPruneDigest) = 0",
+        "sigma_last * (A_new - NewPruneDigest) = 0",
+        "sigma_last * (A_anchor - RecoveryAnchor) = 0",
+        "sigma_last * (grand_product_z - 1) = 0",
     ];
     /// Transition-Phasen.
     pub const TRANSITION_PHASES: &'static [&'static str] = &[
-        "phase_filter: keep/drop Entscheidung, Multiset-Bindung",
-        "phase_anchor: Weitergabe gedroppter Elemente in acc_anchor",
+        "sigma_filter: Partition (keep/drop) und Akkumulator-Updates",
+        "grand_product: Multiset-Bindung old ↔ keep ∪ drop",
+        "sigma_finalize: Konstanz der Akkumulatoren und des Grand-Products",
     ];
     /// Lookup-/Permutation-Argumente.
     pub const LOOKUPS: &'static [&'static str] = &[
+        "range_key_format",
+        "range_value_format",
+        "policy_to_flags_deterministic",
         "permutation_old_equals_keep_union_drop",
-        "range_segment_format",
     ];
     /// OOD-Oeffnungen.
-    pub const OOD_OPENINGS: &'static [&'static str] =
-        &["acc_old", "acc_new", "acc_anchor", "composition_polynomial"];
+    pub const OOD_OPENINGS: &'static [&'static str] = &[
+        "A_old",
+        "A_new",
+        "A_anchor",
+        "grand_product_z",
+        "composition_polynomial",
+    ];
     /// Grad-Hinweis.
     pub const DEGREE_HINT: &'static str =
         "Lineare Filter-Regeln Grad <=2; Permutation Grad < LDE-Bound";
     /// Fehlermodi.
-    pub const FAILURE_MODES: &'static [&'static str] = &["ErrPruneAnchor"];
+    pub const FAILURE_MODES: &'static [&'static str] = &[
+        "ErrPruneBoundary",
+        "ErrPrunePartition",
+        "ErrPruneFormat",
+        "ErrPrunePolicy",
+        "ErrPrunePermutation",
+        "ErrPruneSelector",
+    ];
     /// Selektorformeln.
     pub const SELECTOR_FORMULAS: &'static [&'static str] = &[
-        "is_first(i) = 1 falls i=0",
-        "is_last(i) = 1 falls i=T-1",
-        "phase_filter(i) = 1 waehrend des Keep/Drop-Segments",
-        "phase_anchor(i) = 1 fuer Zeilen, die den Anchor aktualisieren",
+        "sigma_first(i) = 1 ⇔ i = 0",
+        "sigma_last(i) = 1 ⇔ i = T-1",
+        "sigma_filter(i) + sigma_finalize(i) = 1",
+        "sigma_filter(i) * sigma_finalize(i) = 0",
     ];
 }
