@@ -19,7 +19,8 @@
 //! folding schedule.
 
 use crate::field::FieldElement;
-use crate::fri::types::{FriError, FriQueryLayer};
+use crate::fri::proof::FriQueryLayerProof;
+use crate::fri::types::FriError;
 use crate::fri::{field_to_bytes, hash_internal, hash_leaf, BINARY_FOLD_ARITY};
 use crate::hash::merkle::{
     compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, EMPTY_DIGEST,
@@ -104,7 +105,7 @@ impl LayerTree {
 /// Verifies a query opening against the expected Merkle root.
 pub(crate) fn verify_query_opening(
     layer_index: usize,
-    opening: &FriQueryLayer,
+    opening: &FriQueryLayerProof,
     expected_root: &[u8; 32],
     position: usize,
     domain_size: usize,
@@ -181,13 +182,13 @@ impl FriLayer {
     }
 
     /// Opens the layer at `position`, returning the evaluation and its path.
-    pub(crate) fn open(&self, position: usize) -> Result<FriQueryLayer, FriError> {
+    pub(crate) fn open(&self, position: usize) -> Result<FriQueryLayerProof, FriError> {
         if position >= self.domain_size {
             return Err(FriError::QueryOutOfRange { position });
         }
 
         let value = self.evaluations[position];
         let path = self.tree.prove(position);
-        Ok(FriQueryLayer { value, path })
+        Ok(FriQueryLayerProof { value, path })
     }
 }

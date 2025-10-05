@@ -13,7 +13,7 @@ use crate::config::{
     ProverContext,
 };
 use crate::field::FieldElement;
-use crate::fri::types::{FriError, FriProof, FriSecurityLevel};
+use crate::fri::{FriError, FriProof, FriSecurityLevel};
 use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, map_public_to_config_kind, serialize_public_inputs,

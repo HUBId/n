@@ -8,7 +8,7 @@ use rpp_stark::config::{
     PROFILE_STD, PROFILE_THROUGHPUT_CONFIG,
 };
 use rpp_stark::field::FieldElement;
-use rpp_stark::fri::types::{FriProof, FriSecurityLevel};
+use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
@@ -150,15 +150,17 @@ fn build_sample_envelope(
         .map(|_| FieldElement::from(sample_u64(&mut reader)))
         .collect();
 
-    let fri_proof = FriProof {
-        security_level: profile_to_security_level(profile.id),
-        initial_domain_size: 16,
-        layer_roots: fri_layer_roots.clone(),
-        fold_challenges: Vec::new(),
+    let fold_challenges = vec![FieldElement::ZERO; fri_layer_roots.len()];
+    let fri_proof = FriProof::new(
+        profile_to_security_level(profile.id),
+        16,
+        fri_layer_roots.clone(),
+        fold_challenges,
         final_polynomial,
-        final_polynomial_digest: sample_digest(&mut reader),
-        queries: Vec::new(),
-    };
+        sample_digest(&mut reader),
+        Vec::new(),
+    )
+    .expect("sample fri proof");
 
     let mut body = ProofEnvelopeBody {
         core_root,
