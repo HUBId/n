@@ -1,0 +1,22 @@
+---
+source: tests/transcript_determinism.rs
+expression: "serde_json::json!({\n    \"trace_challenge\": u64::from(trace_challenge_a1), \"comp_challenge\":\n    u64::from(comp_challenge_a1), \"fri_folds\": fri_fold_scalars,\n    \"query_indices\": idxs1, \"proof_close_hex\": proof_close_hex,\n})"
+---
+{
+  "comp_challenge": 13114735442786134060,
+  "fri_folds": [
+    10460183637743574028,
+    16722506697855477607,
+    4812532910690204353,
+    6675039160206136737,
+    978179244964381337
+  ],
+  "proof_close_hex": "c341cbc8ec4b4eaa487afad4a18992db457a935788d0a5b29fdedac1f1ee5ddc",
+  "query_indices": [
+    645753,
+    2918761,
+    3045002,
+    14985
+  ],
+  "trace_challenge": 15037769056891080729
+}

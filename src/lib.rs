@@ -16,6 +16,7 @@ pub mod fri;
 pub mod hash;
 pub mod params;
 pub mod proof;
+pub mod transcript;
 pub mod utils;
 pub mod vrf;
 
