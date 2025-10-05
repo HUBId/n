@@ -14,6 +14,7 @@ pub mod fft;
 pub mod field;
 pub mod fri;
 pub mod hash;
+pub mod params;
 pub mod proof;
 pub mod utils;
 pub mod vrf;

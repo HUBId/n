@@ -1,0 +1,5 @@
+---
+source: tests/params_roundtrip.rs
+expression: "format!(\"{:02x?}\", hisec.params_hash())"
+---
+[81, 8a, 34, 34, e2, 6d, ce, 94, dd, b8, 13, a9, 5c, 79, 45, 21, 4f, ba, 13, 78, 80, 3f, 45, 00, 30, 25, 1f, 6a, 32, 9e, 46, 03]
