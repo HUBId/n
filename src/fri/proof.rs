@@ -5,9 +5,6 @@
 //! sampling rely on the pseudo-BLAKE3 primitives from [`crate::fri`], keeping the
 //! implementation self-contained and dependency free.
 
-use core::fmt;
-use std::collections::HashSet;
-
 use crate::field::FieldElement;
 use crate::fri::folding::{quartic_fold, QUARTIC_FOLD};
 use crate::fri::{
@@ -15,6 +12,7 @@ use crate::fri::{
 };
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::hash::merkle::{MerkleIndex, MerklePathElement, EMPTY_DIGEST};
+use core::fmt;
 
 /// Transcript seed used when instantiating the FRI prover and verifier.
 pub type FriTranscriptSeed = [u8; 32];
@@ -258,6 +256,11 @@ pub struct FriProof {
     pub queries: Vec<FriQuery>,
 }
 
+/// Maximum degree allowed for the residual polynomial.
+const CAP_DEGREE: usize = 256;
+/// Maximum number of leaf values that can be committed in the final layer.
+const CAP_SIZE: usize = 1024;
+
 impl FriProof {
     /// Generates a FRI proof from the provided LDE evaluations.
     pub fn prove(
@@ -269,19 +272,32 @@ impl FriProof {
             return Err(FriError::EmptyCodeword);
         }
 
+        struct LayerWitness {
+            values: Vec<FieldElement>,
+            tree: MerkleTree,
+        }
+
         let mut transcript = FriTranscript::new(seed);
-        let mut layers = Vec::new();
+        let mut witnesses: Vec<LayerWitness> = Vec::new();
         let mut current = evaluations.to_vec();
         let mut layer_roots = Vec::new();
+        let mut layer_index = 0usize;
 
-        while current.len() > 1024 {
+        while current.len() > 1 && (current.len() > CAP_DEGREE || current.len() > CAP_SIZE) {
             let tree = MerkleTree::new(&current);
             let root = tree.root();
-            transcript.absorb_layer(layer_roots.len(), &root);
-            let eta = transcript.draw_eta(layer_roots.len());
+            transcript.absorb_layer(layer_index, &root);
+            let eta = transcript.draw_eta(layer_index);
             layer_roots.push(root);
-            layers.push((current.clone(), tree));
-            current = quartic_fold(&current, eta);
+
+            let next = quartic_fold(&current, eta);
+            witnesses.push(LayerWitness {
+                values: current,
+                tree,
+            });
+
+            current = next;
+            layer_index += 1;
         }
 
         // Record the final layer (values only).
@@ -296,13 +312,13 @@ impl FriProof {
         let mut queries = Vec::with_capacity(query_positions.len());
         for &position in &query_positions {
             let mut index = position;
-            let mut layers_openings = Vec::with_capacity(layers.len());
-            for (_layer_idx, (layer_values, tree)) in layers.iter().enumerate() {
-                if index >= layer_values.len() {
+            let mut layers_openings = Vec::with_capacity(witnesses.len());
+            for witness in witnesses.iter() {
+                if index >= witness.values.len() {
                     return Err(FriError::QueryOutOfRange { position });
                 }
-                let value = layer_values[index];
-                let path = tree.prove(index);
+                let value = witness.values[index];
+                let path = witness.tree.prove(index);
                 layers_openings.push(FriQueryLayer { value, path });
                 index /= QUARTIC_FOLD;
             }
@@ -334,8 +350,8 @@ pub fn derive_query_plan_id(level: FriSecurityLevel) -> [u8; 32] {
     let mut payload = Vec::new();
     payload.extend_from_slice(b"FRI-PLAN/QUARTIC");
     payload.extend_from_slice(&(QUARTIC_FOLD as u32).to_le_bytes());
-    payload.extend_from_slice(&(256u32).to_le_bytes());
-    payload.extend_from_slice(&(1024u32).to_le_bytes());
+    payload.extend_from_slice(&(CAP_DEGREE as u32).to_le_bytes());
+    payload.extend_from_slice(&(CAP_SIZE as u32).to_le_bytes());
     payload.extend_from_slice(&(level.query_budget() as u32).to_le_bytes());
     payload.extend_from_slice(level.tag().as_bytes());
     payload.extend_from_slice(b"challenge-after-commit");
@@ -399,12 +415,12 @@ impl FriVerifier {
             if query.position != *expected_position {
                 return Err(FriError::InvalidStructure("query position mismatch"));
             }
+            if query.layers.len() != proof.layer_roots.len() {
+                return Err(FriError::InvalidStructure("layer count mismatch"));
+            }
             let mut index = *expected_position;
             for (layer_idx, layer) in query.layers.iter().enumerate() {
-                let root = proof
-                    .layer_roots
-                    .get(layer_idx)
-                    .ok_or(FriError::InvalidStructure("missing layer root"))?;
+                let root = &proof.layer_roots[layer_idx];
                 verify_path(layer.value, &layer.path, root, index, layer_idx)?;
                 index /= QUARTIC_FOLD;
             }
@@ -436,12 +452,14 @@ impl FriVerifier {
 fn derive_query_positions(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<usize> {
     assert!(domain_size > 0, "domain size must be positive");
     let mut xof = PseudoBlake3Xof::new(&seed);
-    let mut unique = Vec::with_capacity(count);
-    let mut seen = HashSet::new();
-    while unique.len() < count {
+    let target = count.min(domain_size);
+    let mut unique = Vec::with_capacity(target);
+    let mut seen = vec![false; domain_size];
+    while unique.len() < target {
         let word = xof.next_u64();
         let position = (word % (domain_size as u64)) as usize;
-        if seen.insert(position) {
+        if !seen[position] {
+            seen[position] = true;
             unique.push(position);
         }
     }
