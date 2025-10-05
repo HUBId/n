@@ -129,7 +129,7 @@ pub(crate) fn verify_query_opening(
 
 /// Encapsulates the state of a single FRI layer (values, commitment and domain metadata).
 #[derive(Debug, Clone)]
-pub(crate) struct FriLayer {
+pub struct FriLayer {
     index: usize,
     domain_size: usize,
     coset_shift: FieldElement,
@@ -139,11 +139,7 @@ pub(crate) struct FriLayer {
 
 impl FriLayer {
     /// Materialises a new layer by hashing the provided evaluations.
-    pub(crate) fn new(
-        index: usize,
-        coset_shift: FieldElement,
-        evaluations: Vec<FieldElement>,
-    ) -> Self {
+    pub fn new(index: usize, coset_shift: FieldElement, evaluations: Vec<FieldElement>) -> Self {
         let domain_size = evaluations.len();
         let tree = LayerTree::new(&evaluations);
         Self {
@@ -156,33 +152,33 @@ impl FriLayer {
     }
 
     /// Returns the index of the layer within the folding schedule.
-    pub(crate) fn index(&self) -> usize {
+    pub fn index(&self) -> usize {
         self.index
     }
 
     /// Size of the evaluation domain covered by the layer.
     #[allow(dead_code)]
-    pub(crate) fn domain_size(&self) -> usize {
+    pub fn domain_size(&self) -> usize {
         self.domain_size
     }
 
     /// Coset shift applied to the evaluations stored in the layer.
-    pub(crate) fn coset_shift(&self) -> FieldElement {
+    pub fn coset_shift(&self) -> FieldElement {
         self.coset_shift
     }
 
     /// Accessor returning the evaluations committed by the layer.
-    pub(crate) fn evaluations(&self) -> &[FieldElement] {
+    pub fn evaluations(&self) -> &[FieldElement] {
         &self.evaluations
     }
 
     /// Returns the Merkle root associated with the layer.
-    pub(crate) fn root(&self) -> [u8; 32] {
+    pub fn root(&self) -> [u8; 32] {
         self.tree.root()
     }
 
     /// Opens the layer at `position`, returning the evaluation and its path.
-    pub(crate) fn open(&self, position: usize) -> Result<FriQueryLayerProof, FriError> {
+    pub fn open(&self, position: usize) -> Result<FriQueryLayerProof, FriError> {
         if position >= self.domain_size {
             return Err(FriError::QueryOutOfRange { position });
         }

@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rpp_stark::params::builder::{BuiltinProfile, StarkParamsBuilder};
+use rpp_stark::params::{BuiltinProfile, StarkParamsBuilder};
 use rpp_stark::transcript::{Transcript, TranscriptContext, TranscriptLabel};
 use rpp_stark::utils::serialization::DigestBytes;
 
