@@ -80,3 +80,20 @@ label/data sequence reproduces the state digest and challenge stream bit for
 bit.  The query index stream uses a modulo reduction; the residual bias is
 negligible for domain sizes above 2<sup>16</sup> and is documented in the
 rustdoc comments.
+
+## AIR benchmarking
+
+Criterion benches covering the AIR layer live under [`benches`](benches).  The
+`air_benches` target measures transition evaluation and constraint composition
+throughput for the worked LFSR example across multiple trace lengths.  All
+inputs are derived from a fixed seed and deterministic parameter set, ensuring
+that repeated runs produce identical transcripts and commitments.
+
+Run the suite with:
+
+```
+cargo bench --bench air_benches
+```
+
+The command completes without accessing randomness or the network, making the
+results stable across invocations and hosts.
