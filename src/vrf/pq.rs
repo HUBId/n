@@ -306,6 +306,7 @@ fn compute_twiddles(root: u64, degree: usize) -> Vec<u64> {
 
 fn cooley_tukey_ntt(values: &mut [u64], twiddles: &[u64]) {
     let n = values.len();
+    debug_assert!(n.is_power_of_two());
     let log_n = n.trailing_zeros();
     for i in 0..n {
         let j = bit_reverse(i, log_n);
@@ -341,11 +342,17 @@ fn bit_reverse(mut value: usize, bits: u32) -> usize {
     reversed
 }
 
+#[inline(always)]
 fn mod_add(a: u64, b: u64) -> u64 {
-    let sum = (a as u128 + b as u128) % GOLDILOCKS_MODULUS as u128;
-    sum as u64
+    let (sum, carry) = a.overflowing_add(b);
+    if carry || sum >= GOLDILOCKS_MODULUS {
+        sum.wrapping_sub(GOLDILOCKS_MODULUS)
+    } else {
+        sum
+    }
 }
 
+#[inline(always)]
 fn mod_sub(a: u64, b: u64) -> u64 {
     let modulus = GOLDILOCKS_MODULUS;
     if a >= b {
@@ -355,6 +362,7 @@ fn mod_sub(a: u64, b: u64) -> u64 {
     }
 }
 
+#[inline(always)]
 fn mod_mul(a: u64, b: u64) -> u64 {
     let product = (a as u128 * b as u128) % GOLDILOCKS_MODULUS as u128;
     product as u64
@@ -453,5 +461,25 @@ mod tests {
         let serialized = serialize_polynomial(secret.coefficients());
         let deserialized = deserialize_polynomial(&serialized, params.degree).expect("roundtrip");
         assert_eq!(secret.coefficients(), deserialized.as_slice());
+    }
+
+    #[test]
+    fn transcript_edge_cases_distinguish_inputs() {
+        let params = RlweParameters::new(32).expect("params");
+        let secret = sample_secret(&params);
+
+        let empty_poly = derive_public_polynomial(&params, b"");
+        let zero_poly = derive_public_polynomial(&params, &[0]);
+        assert_ne!(
+            empty_poly, zero_poly,
+            "transcript salt failed to separate inputs"
+        );
+
+        let y_empty = evaluate_prf(&params, b"", &secret);
+        let y_zero = evaluate_prf(&params, &[0], &secret);
+        assert_ne!(
+            y_empty, y_zero,
+            "PRF outputs must reflect transcript distinctions"
+        );
     }
 }
