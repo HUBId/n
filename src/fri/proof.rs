@@ -6,7 +6,7 @@
 //! implementation self-contained and dependency free.
 
 use crate::field::FieldElement;
-use crate::fri::folding::{binary_fold, BINARY_FOLD_ARITY};
+use crate::fri::{binary_fold, next_domain_size, parent_index, BINARY_FOLD_ARITY};
 use crate::fri::types::{
     FriError, FriProof, FriQuery, FriQueryLayer, FriSecurityLevel, FriTranscriptSeed,
 };
@@ -226,7 +226,7 @@ impl FriProof {
                 let value = witness.values[index];
                 let path = witness.tree.prove(index);
                 layers_openings.push(FriQueryLayer { value, path });
-                index /= BINARY_FOLD_ARITY;
+                index = parent_index(index);
             }
 
             if index >= final_polynomial.len() {
@@ -336,8 +336,8 @@ impl FriVerifier {
                     layer_idx,
                     layer_domain_size,
                 )?;
-                index /= BINARY_FOLD_ARITY;
-                layer_domain_size = (layer_domain_size + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY;
+                index = parent_index(index);
+                layer_domain_size = next_domain_size(layer_domain_size);
             }
 
             if index >= proof.final_polynomial.len() {

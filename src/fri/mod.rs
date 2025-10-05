@@ -20,7 +20,7 @@ pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
 pub use folding::{
     binary_fold, coset_shift_schedule, FoldingLayer, FoldingLayout, LayerCommitment,
-    BINARY_FOLD_ARITY,
+    BINARY_FOLD_ARITY, next_domain_size, parent_index, phi,
 };
 pub use proof::{derive_query_plan_id, FriVerifier};
 pub use types::{
