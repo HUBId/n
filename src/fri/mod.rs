@@ -1,14 +1,88 @@
-//! Fully deterministic binary FRI implementation used by the prover and verifier.
-//! The folding helpers expose the canonical coset-shift schedule derived from
-//! [`StarkParams`](crate::params::StarkParams) so that integrators can mirror the
-//! prover's domain adjustments.
+//! Deterministic binary FRI subsystem shared by the [`fri_prove`] and
+//! [`fri_verify`] entry points.
 //!
-//! The implementation in this module intentionally favours readability and
-//! auditability over raw performance.  All hashing is performed using the
-//! deterministic pseudo-BLAKE3 helper implemented locally so that the crate can
-//! remain `no-std` friendly and avoid external dependencies.  The goal is to
-//! provide a reference implementation that matches the specification captured in
-//! the project documentation.
+//! # Layer definitions
+//!
+//! The [`FoldingLayout`] abstraction maps the evaluation domain into a sequence
+//! of [`FoldingLayer`] descriptors, one per Merkle commitment emitted during the
+//! folding cascade. Each layer records its logarithmic domain size, the
+//! [`LayerCommitment`] digest attached to the transcript, and the optional coset
+//! shift derived from [`StarkParams`](crate::params::StarkParams).
+//!
+//! | Layer index | Domain log₂ | Transcript label | Notes |
+//! |-------------|-------------|------------------|-------|
+//! | 0           | `log₂(n)`   | `"fri-layer"`    | Root commitment over the raw codeword |
+//! | 1..L-1      | decrements  | `"fri-layer"`    | Intermediate folds using the active coset shift |
+//! | L           | residual    | `"fri-layer"`    | Binding digest for the residual polynomial |
+//!
+//! # Folding formula
+//!
+//! Binary folding groups evaluations `(a, b)` and applies the canonical linear
+//! combination described in the specification:
+//!
+//! ```text
+//! gᵢ = a + β · (σ · b)
+//! ```
+//!
+//! where `β` is sampled via [`crate::transcript::TranscriptLabel::FriFoldChallenge`], `σ` is the
+//! coset shift supplied by [`coset_shift_schedule`], and arithmetic takes place
+//! over the Goldilocks field via [`fe_add`] and [`fe_mul`]. This formula mirrors
+//! the domain squaring performed by [`phi`].
+//!
+//! # Index and point mappings
+//!
+//! | Child index pair | [`parent_index`] output |
+//! |------------------|-------------------------|
+//! | `{0, 1}`         | `0`                     |
+//! | `{2, 3}`         | `1`                     |
+//! | `…`              | `⌊child / 2⌋`           |
+//!
+//! The multiplicative generator follows the same deterministic schedule. Each
+//! fold maps the coset representative `σᵢ` to `σᵢ₊₁ = φ(σᵢ) = σᵢ²`, ensuring the
+//! evaluation domain mirrors the quotienting performed by `parent_index`.
+//!
+//! # Transcript label inventory
+//!
+//! Commitments and challenges are absorbed using the explicit labels defined in
+//! [`crate::transcript::TranscriptLabel`]. The prover and verifier apply them in
+//! the following order: `FriRoot(i)` for each layer commitment,
+//! `FriFoldChallenge(i)` for the folding coefficient, `QueryCount` to bind the
+//! sampling budget, and `QueryIndexStream` to derive the deterministic query
+//! positions. This matches the sequencing enforced by [`fri_prove`] and
+//! [`fri_verify`].
+//!
+//! # DEEP/OODS overview
+//!
+//! When a DEEP out-of-domain sample is requested, the optional [`DeepOodsProof`]
+//! payload binds the evaluation point and its composition evaluations. The
+//! verifier replays the same transcript sequence before checking the
+//! [`FriProof::deep_oods`] field, keeping the proof structure deterministic and
+//! versioned via [`FriProofVersion::CURRENT`].
+//!
+//! # Serialization and determinism
+//!
+//! Canonical encoding of digests, field elements, and witness material relies on
+//! the shared helpers from [`crate::utils::serialization`]. The resulting byte
+//! streams are stable across runs, enabling deterministic replays and explicit
+//! versioning through [`SerKind`] and [`FriProofVersion`]. Integrators should
+//! treat these contracts as part of the compatibility surface.
+//!
+//! ```rust,no_run
+//! # #![forbid(unsafe_code)]
+//! use rpp_stark::fri::{fri_prove, fri_verify, FriError};
+//! use rpp_stark::params::StarkParams;
+//! use rpp_stark::transcript::{Felt, Transcript};
+//!
+//! fn prove_then_verify(
+//!     mut transcript: Transcript,
+//!     params: StarkParams,
+//!     evaluations: Vec<Felt>,
+//! ) -> Result<(), FriError> {
+//!     let proof = fri_prove(&evaluations, &params, &mut transcript)?;
+//!     fri_verify(&proof, &params, &mut transcript)?;
+//!     Ok(())
+//! }
+//! ```
 
 mod batch;
 pub mod config;
