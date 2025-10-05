@@ -13,8 +13,9 @@ use crate::config::{
 use crate::field::FieldElement;
 use crate::fri::{FriError, FriSecurityLevel, FriVerifier};
 use crate::proof::envelope::{
-    compute_commitment_digest, map_public_to_config_kind, serialize_public_inputs,
-    OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader, PROOF_VERSION,
+    compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
+    serialize_public_inputs, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody,
+    ProofEnvelopeHeader, PROOF_VERSION,
 };
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
@@ -40,13 +41,8 @@ pub fn verify_proof_bytes(
         return Err(VerificationFailure::ErrParamDigestMismatch);
     }
 
-    let envelope = match ProofEnvelope::from_bytes(proof_bytes.as_slice()) {
-        Ok(env) => env,
-        Err(crate::proof::envelope::EnvelopeError::IntegrityDigestMismatch) => {
-            return Err(VerificationFailure::ErrIntegrityDigestMismatch)
-        }
-        Err(_) => return Err(VerificationFailure::ErrEnvelopeMalformed),
-    };
+    let envelope = ProofEnvelope::from_bytes(proof_bytes.as_slice())
+        .map_err(|_| VerificationFailure::ErrEnvelopeMalformed)?;
     validate_header(
         &envelope.header,
         declared_kind,
@@ -99,6 +95,12 @@ fn validate_body(
     public_inputs: &PublicInputs<'_>,
     context: &VerifierContext,
 ) -> Result<(), VerificationFailure> {
+    let payload = body.serialize_payload();
+    let expected_body_length = payload.len() as u32 + 32;
+    if header.body_length != expected_body_length {
+        return Err(VerificationFailure::ErrEnvelopeMalformed);
+    }
+
     let commitment_digest =
         compute_commitment_digest(&body.core_root, &body.aux_root, &body.fri_layer_roots);
     if header.commitment_digest.bytes != commitment_digest {
@@ -190,6 +192,16 @@ fn validate_body(
             .unwrap_or(FieldElement::ZERO)
     })
     .map_err(map_fri_error)?;
+
+    let header_bytes = header.serialize(body);
+    if header.header_length != header_bytes.len() as u32 {
+        return Err(VerificationFailure::ErrEnvelopeMalformed);
+    }
+
+    let integrity_digest = compute_integrity_digest(&header_bytes, &payload);
+    if body.integrity_digest.bytes != integrity_digest {
+        return Err(VerificationFailure::ErrIntegrityDigestMismatch);
+    }
 
     if proof_size_exceeds_limit(header, body, context) {
         return Err(VerificationFailure::ErrProofTooLarge);
