@@ -92,7 +92,7 @@ impl FieldElement {
     fn montgomery_reduce(t: u128) -> u64 {
         let modulus = Self::modulus() as u128;
         let m = (t as u64).wrapping_mul(Self::MONTGOMERY_INV) as u128;
-        let u = (t + m * modulus) >> 64;
+        let u = t.wrapping_add(m.wrapping_mul(modulus)) >> 64;
         let candidate = u as u64;
         Self::reduce_once(candidate)
     }
@@ -130,16 +130,16 @@ impl FieldElement {
 
     #[inline(always)]
     fn mul_internal(&self, rhs: &Self) -> Self {
-        let prod = Self::montgomery_mul(self.0, rhs.0);
-        let canonical = Self::montgomery_mul(prod, Self::R2);
-        FieldElement(canonical)
+        let modulus = Self::modulus() as u128;
+        let product = (self.0 as u128 * rhs.0 as u128) % modulus;
+        FieldElement(product as u64)
     }
 
     #[inline(always)]
     fn square_internal(&self) -> Self {
-        let prod = Self::montgomery_mul(self.0, self.0);
-        let canonical = Self::montgomery_mul(prod, Self::R2);
-        FieldElement(canonical)
+        let modulus = Self::modulus() as u128;
+        let product = (self.0 as u128 * self.0 as u128) % modulus;
+        FieldElement(product as u64)
     }
 
     /// Raises the element to the provided exponent using square-and-multiply.
@@ -211,7 +211,24 @@ pub trait CanonicalSerialize: Sized {
     fn to_bytes(&self) -> Self::Bytes;
 
     /// Attempts to deserialize from canonical little-endian bytes.
-    fn from_bytes(bytes: &Self::Bytes) -> Option<Self>;
+    fn from_bytes(bytes: &Self::Bytes) -> Result<Self, FieldDeserializeError>;
+}
+
+/// Errors that can occur while deserializing field elements from canonical bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldDeserializeError {
+    /// The provided bytes encode a value outside of the canonical field range.
+    FieldDeserializeNonCanonical,
+}
+
+impl fmt::Display for FieldDeserializeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldDeserializeError::FieldDeserializeNonCanonical => {
+                f.write_str("field element deserialization failed: non-canonical input")
+            }
+        }
+    }
 }
 
 /// Trait collecting constant-time auditing assertions required by higher layers.
@@ -272,12 +289,12 @@ impl CanonicalSerialize for FieldElement {
         self.0.to_le_bytes()
     }
 
-    fn from_bytes(bytes: &Self::Bytes) -> Option<Self> {
+    fn from_bytes(bytes: &Self::Bytes) -> Result<Self, FieldDeserializeError> {
         let value = u64::from_le_bytes(*bytes);
         if value < Self::modulus() {
-            Some(FieldElement(value))
+            Ok(FieldElement(value))
         } else {
-            None
+            Err(FieldDeserializeError::FieldDeserializeNonCanonical)
         }
     }
 }
