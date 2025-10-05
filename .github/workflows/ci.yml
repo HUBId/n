@@ -18,3 +18,12 @@ jobs:
         run: cargo build --locked
       - name: Cargo test
         run: cargo test -p rpp-stark -- --nocapture
+      - name: Generate profile reports
+        env:
+          ENABLE_PROFILE_THR: "1"
+        run: cargo run --bin profile_reports -- --output reports --include-throughput
+      - name: Upload profile reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: profile-reports
+          path: reports
