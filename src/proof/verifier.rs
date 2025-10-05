@@ -34,6 +34,32 @@ pub fn verify_proof_bytes(
     config: &ProofSystemConfig,
     context: &VerifierContext,
 ) -> Result<(), VerificationFailure> {
+    let prechecked = precheck_proof_bytes(
+        declared_kind,
+        public_inputs,
+        proof_bytes,
+        config,
+        context,
+        None,
+    )?;
+    execute_fri_stage(&prechecked)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PrecheckedProof {
+    pub(crate) envelope: ProofEnvelope,
+    pub(crate) fri_seed: [u8; 32],
+    pub(crate) security_level: FriSecurityLevel,
+}
+
+pub(crate) fn precheck_proof_bytes(
+    declared_kind: ConfigProofKind,
+    public_inputs: &PublicInputs<'_>,
+    proof_bytes: &ProofBytes,
+    config: &ProofSystemConfig,
+    context: &VerifierContext,
+    block_context: Option<&TranscriptBlockContext>,
+) -> Result<PrecheckedProof, VerificationFailure> {
     if config.proof_version.0 != PROOF_VERSION {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
@@ -50,7 +76,38 @@ pub fn verify_proof_bytes(
         config,
         context,
     )?;
-    validate_body(&envelope.body, &envelope.header, public_inputs, context)
+    let prechecked = precheck_body(
+        &envelope.body,
+        &envelope.header,
+        public_inputs,
+        context,
+        block_context,
+    )?;
+
+    Ok(PrecheckedProof {
+        envelope,
+        fri_seed: prechecked.fri_seed,
+        security_level: prechecked.security_level,
+    })
+}
+
+pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerificationFailure> {
+    FriVerifier::verify(
+        &proof.envelope.body.fri_proof,
+        proof.security_level,
+        proof.fri_seed,
+        |index| {
+            proof
+                .envelope
+                .body
+                .fri_proof
+                .final_polynomial
+                .get(index)
+                .copied()
+                .unwrap_or(FieldElement::ZERO)
+        },
+    )
+    .map_err(map_fri_error)
 }
 
 fn validate_header(
@@ -89,12 +146,18 @@ fn validate_header(
     Ok(())
 }
 
-fn validate_body(
+struct PrecheckedBody {
+    fri_seed: [u8; 32],
+    security_level: FriSecurityLevel,
+}
+
+fn precheck_body(
     body: &ProofEnvelopeBody,
     header: &ProofEnvelopeHeader,
     public_inputs: &PublicInputs<'_>,
     context: &VerifierContext,
-) -> Result<(), VerificationFailure> {
+    block_context: Option<&TranscriptBlockContext>,
+) -> Result<PrecheckedBody, VerificationFailure> {
     let payload = body.serialize_payload();
     let expected_body_length = payload.len() as u32 + 32;
     if header.body_length != expected_body_length {
@@ -144,7 +207,7 @@ fn validate_body(
         .absorb_air_spec_id(air_spec_id)
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     transcript
-        .absorb_block_context(None::<TranscriptBlockContext>)
+        .absorb_block_context(block_context.cloned())
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
 
     let mut challenges = transcript
@@ -184,15 +247,6 @@ fn validate_body(
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
-    FriVerifier::verify(&body.fri_proof, security_level, fri_seed, |index| {
-        body.fri_proof
-            .final_polynomial
-            .get(index)
-            .copied()
-            .unwrap_or(FieldElement::ZERO)
-    })
-    .map_err(map_fri_error)?;
-
     let header_bytes = header.serialize(body);
     if header.header_length != header_bytes.len() as u32 {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
@@ -207,7 +261,10 @@ fn validate_body(
         return Err(VerificationFailure::ErrProofTooLarge);
     }
 
-    Ok(())
+    Ok(PrecheckedBody {
+        fri_seed,
+        security_level,
+    })
 }
 
 fn verify_ood_openings(
