@@ -305,6 +305,63 @@ pub struct Radix2Fft {
     domain: Radix2Domain<FieldElement>,
 }
 
+/// Returns the size of a radix-2 evaluation domain.
+pub(super) fn radix2_domain_size(log2_size: usize) -> usize {
+    1usize << log2_size
+}
+
+/// Returns the number of butterflies executed per stage.
+pub(super) fn radix2_stage_butterflies(log2_size: usize) -> usize {
+    radix2_domain_size(log2_size) / 2
+}
+
+/// Applies the canonical bit-reversal permutation to `values` in-place.
+pub(super) fn apply_bit_reversal(values: &mut [FieldElement], log2_size: usize) {
+    let size = values.len();
+    let tile = RADIX2_FFT_BUTTERFLIES_PER_TILE;
+    for chunk_start in (0..size).step_by(tile) {
+        let chunk_end = (chunk_start + tile).min(size);
+        for index in chunk_start..chunk_end {
+            let reversed = reverse_bits(index, log2_size);
+            if index < reversed {
+                values.swap(index, reversed);
+            }
+        }
+    }
+}
+
+/// Executes all radix-2 stages using the provided twiddle table.
+pub(super) fn execute_cooley_tukey_stages(
+    values: &mut [FieldElement],
+    log2_size: usize,
+    twiddles: &[FieldElement],
+) {
+    let size = radix2_domain_size(log2_size);
+    let total_butterflies = radix2_stage_butterflies(log2_size);
+    for stage in 0..log2_size {
+        let m = 1usize << (stage + 1);
+        let half_m = m / 2;
+        let twiddle_stride = size / m;
+        let mut processed = 0;
+        while processed < total_butterflies {
+            let chunk_end = (processed + RADIX2_FFT_BUTTERFLIES_PER_TILE).min(total_butterflies);
+            for butterfly in processed..chunk_end {
+                let block = butterfly / half_m;
+                let j = butterfly % half_m;
+                let k = block * m;
+                let twiddle_index = j * twiddle_stride;
+                let twiddle = twiddles[twiddle_index];
+                let u = values[k + j];
+                let v = values[k + j + half_m];
+                let t = montgomery_mul(&twiddle, &v);
+                values[k + j] = u.add(&t);
+                values[k + j + half_m] = u.sub(&t);
+            }
+            processed = chunk_end;
+        }
+    }
+}
+
 impl Radix2Fft {
     /// Creates a plan for the provided domain size and element ordering.
     pub fn new(log2_size: usize, ordering: Radix2Ordering) -> Self {
@@ -325,26 +382,8 @@ impl Radix2Fft {
         Self::new(log2_size, Radix2Ordering::BitReversed)
     }
 
-    fn domain_size(&self) -> usize {
-        1usize << self.domain.log2_size
-    }
-
-    fn stage_butterflies(&self) -> usize {
-        self.domain_size() / 2
-    }
-
     fn bit_reverse(values: &mut [FieldElement], log2_size: usize) {
-        let size = values.len();
-        let tile = RADIX2_FFT_BUTTERFLIES_PER_TILE;
-        for chunk_start in (0..size).step_by(tile) {
-            let chunk_end = (chunk_start + tile).min(size);
-            for index in chunk_start..chunk_end {
-                let reversed = reverse_bits(index, log2_size);
-                if index < reversed {
-                    values.swap(index, reversed);
-                }
-            }
-        }
+        apply_bit_reversal(values, log2_size);
     }
 }
 
@@ -371,7 +410,7 @@ impl Fft<FieldElement> for Radix2Fft {
     }
 
     fn forward(&self, values: &mut [FieldElement]) {
-        let size = self.domain_size();
+        let size = radix2_domain_size(self.domain.log2_size);
         assert_eq!(
             values.len(),
             size,
@@ -384,30 +423,7 @@ impl Fft<FieldElement> for Radix2Fft {
         }
 
         let forward_twiddles = self.domain.generators.forward;
-        for stage in 0..self.domain.log2_size {
-            let m = 1usize << (stage + 1);
-            let half_m = m / 2;
-            let twiddle_stride = size / m;
-            let total_butterflies = self.stage_butterflies();
-            let mut processed = 0;
-            while processed < total_butterflies {
-                let chunk_end =
-                    (processed + RADIX2_FFT_BUTTERFLIES_PER_TILE).min(total_butterflies);
-                for butterfly in processed..chunk_end {
-                    let block = butterfly / half_m;
-                    let j = butterfly % half_m;
-                    let k = block * m;
-                    let twiddle_index = j * twiddle_stride;
-                    let twiddle = forward_twiddles[twiddle_index];
-                    let u = values[k + j];
-                    let v = values[k + j + half_m];
-                    let t = montgomery_mul(&twiddle, &v);
-                    values[k + j] = u.add(&t);
-                    values[k + j + half_m] = u.sub(&t);
-                }
-                processed = chunk_end;
-            }
-        }
+        execute_cooley_tukey_stages(values, self.domain.log2_size, forward_twiddles);
     }
 }
 
