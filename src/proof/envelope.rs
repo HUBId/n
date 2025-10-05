@@ -103,6 +103,19 @@ impl ProofEnvelope {
                 actual: expected_header_length,
             });
         }
+        if header_bytes_consumed as u32 != header_length {
+            return Err(EnvelopeError::HeaderLengthMismatch {
+                declared: header_length,
+                actual: header_bytes_consumed as u32,
+            });
+        }
+
+        if body_length < DigestBytes::default().bytes.len() as u32 {
+            return Err(EnvelopeError::BodyLengthMismatch {
+                declared: body_length,
+                actual: body_length,
+            });
+        }
 
         let body_bytes = cursor.read_vec(body_length as usize)?;
         if cursor.remaining() != 0 {
@@ -111,7 +124,14 @@ impl ProofEnvelope {
             ));
         }
 
-        if body_bytes.len() < 32 {
+        if body_bytes.len() != body_length as usize {
+            return Err(EnvelopeError::BodyLengthMismatch {
+                declared: body_length,
+                actual: body_bytes.len() as u32,
+            });
+        }
+
+        if body_bytes.len() < DigestBytes::default().bytes.len() {
             return Err(EnvelopeError::BodyLengthMismatch {
                 declared: body_length,
                 actual: body_bytes.len() as u32,
@@ -120,11 +140,6 @@ impl ProofEnvelope {
 
         let (payload, integrity_bytes) = body_bytes.split_at(body_bytes.len() - 32);
         let integrity_digest: [u8; 32] = integrity_bytes.try_into().unwrap();
-        let header_prefix = &bytes[..header_bytes_consumed];
-        let expected_integrity = compute_integrity_digest(header_prefix, payload);
-        if expected_integrity != integrity_digest {
-            return Err(EnvelopeError::IntegrityDigestMismatch);
-        }
 
         let mut payload_cursor = Cursor::new(payload);
         let core_root = payload_cursor.read_digest()?;
