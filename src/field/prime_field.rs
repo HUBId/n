@@ -148,7 +148,7 @@ impl FieldElement {
         let mut acc = FieldElement::ONE;
         for i in 0..64 {
             let bit = (exponent >> i) & 1;
-            let mask = (bit as u64).wrapping_neg();
+            let mask = bit.wrapping_neg();
             let candidate = acc.mul_internal(&base);
             let acc_val = (acc.0 & !mask) | (candidate.0 & mask);
             acc = FieldElement(acc_val);

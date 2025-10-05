@@ -35,7 +35,7 @@ use super::StarkParams;
 ///
 /// The layout intentionally avoids padding and ensures that byte-for-byte
 /// equality implies identical parameter sets.
-
+///
 /// Serialisation error kind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SerKind {

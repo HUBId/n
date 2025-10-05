@@ -128,7 +128,7 @@ pub fn fri_verify(
 
         let mut index = *expected_position;
         let mut domain_size = proof.initial_domain_size;
-        for layer_index in 0..num_layers {
+        for (layer_index, coset_shift) in coset_shifts.iter().take(num_layers).enumerate() {
             let opening = &query.layers[layer_index];
             let root = &proof.layer_roots[layer_index];
             verify_query_opening(layer_index, opening, root, index, domain_size)?;
@@ -146,7 +146,6 @@ pub fn fri_verify(
             }
 
             let beta = proof.fold_challenges[layer_index];
-            let coset_shift = coset_shifts[layer_index];
             let parent_value = if layer_index + 1 < num_layers {
                 query.layers[layer_index + 1].value
             } else {
@@ -157,7 +156,7 @@ pub fn fri_verify(
             match child_position {
                 0 => {
                     let diff = fe_sub(parent_value, opening.value);
-                    let beta_shift = fe_mul(beta, coset_shift);
+                    let beta_shift = fe_mul(beta, *coset_shift);
                     if beta_shift == FieldElement::ZERO {
                         if diff != FieldElement::ZERO {
                             return Err(FriError::FoldingConstraintViolated { layer: layer_index });
@@ -179,7 +178,7 @@ pub fn fri_verify(
                     }
                 }
                 1 => {
-                    let beta_shift = fe_mul(beta, coset_shift);
+                    let beta_shift = fe_mul(beta, *coset_shift);
                     let scaled = fe_mul(beta_shift, opening.value);
                     let left_value = fe_sub(parent_value, scaled);
                     if sibling_digest == EMPTY_DIGEST {

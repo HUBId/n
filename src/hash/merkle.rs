@@ -318,7 +318,7 @@ mod tests {
 
     #[test]
     fn build_path_verify_roundtrip_ok() {
-        let payloads = vec![
+        let payloads = [
             encode_leaf(&[1, 2, 3]),
             encode_leaf(&[4, 5, 6, 7]),
             encode_leaf(&[]),
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn verify_fails_on_wrong_sibling_order() {
-        let payloads = vec![
+        let payloads = [
             encode_leaf(&[1, 2, 3, 4]),
             encode_leaf(&[5, 6, 7, 8]),
             encode_leaf(&[9, 10, 11, 12]),
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn verify_fails_on_bad_index_byte() {
-        let payloads = vec![encode_leaf(&[42]), encode_leaf(&[43])];
+        let payloads = [encode_leaf(&[42]), encode_leaf(&[43])];
         let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
         let mut path = tree.open(0).expect("path");
         path[0].index = MerkleIndex(2);
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn verify_fails_on_bad_padding() {
         let leaf = encode_leaf(&[42]);
-        let path = vec![MerklePathElement {
+        let path = [MerklePathElement {
             index: MerkleIndex(0),
             siblings: [[0xFF; DIGEST_SIZE]],
         }];
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn right_padding_with_empty_constant_ok() {
         assert_eq!(EMPTY_DIGEST, hash(b"RPP-MERKLE-EMPTY\0").into_bytes());
-        let payloads = vec![
+        let payloads = [
             encode_leaf(&[1]),
             encode_leaf(&[2]),
             encode_leaf(&[3]),

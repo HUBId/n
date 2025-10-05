@@ -12,29 +12,17 @@ use super::pseudo_blake3;
 use super::types::{FriError, FriSecurityLevel, FriTranscriptSeed};
 
 /// Seed shared across the batch, typically derived from a transcript challenge.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BatchSeed {
     /// Raw bytes sourced from the Fiat-Shamir transcript.
     pub bytes: [u8; 32],
 }
 
-impl Default for BatchSeed {
-    fn default() -> Self {
-        Self { bytes: [0u8; 32] }
-    }
-}
-
 /// Aggregated digest binding all batched openings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct BatchDigest {
     /// Canonical digest over the ordered batch openings.
     pub bytes: [u8; 32],
-}
-
-impl Default for BatchDigest {
-    fn default() -> Self {
-        Self { bytes: [0u8; 32] }
-    }
 }
 
 /// Describes a query position inside a batched verification request.
@@ -47,7 +35,7 @@ pub struct BatchQueryPosition {
 }
 
 /// Declarative container describing the inputs to a batched FRI verification.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FriBatch {
     /// Proofs participating in the batch.
     pub proofs: Vec<FriProof>,
@@ -57,17 +45,6 @@ pub struct FriBatch {
     pub query_positions: Vec<BatchQueryPosition>,
     /// Digest aggregating all openings in the order imposed by the transcript.
     pub aggregate_digest: BatchDigest,
-}
-
-impl Default for FriBatch {
-    fn default() -> Self {
-        Self {
-            proofs: Vec::new(),
-            joint_seed: BatchSeed::default(),
-            query_positions: Vec::new(),
-            aggregate_digest: BatchDigest::default(),
-        }
-    }
 }
 
 impl FriBatch {

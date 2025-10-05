@@ -2,12 +2,14 @@ use insta::assert_snapshot;
 use proptest::prelude::*;
 use rpp_stark::field::prime_field::FieldElementOps;
 use rpp_stark::field::FieldElement;
-use rpp_stark::fri::{DeepOodsProof, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
 use rpp_stark::fri::types::FriError;
+use rpp_stark::fri::{DeepOodsProof, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
 use rpp_stark::hash::{pseudo_blake3, FiatShamirChallengeRules, PseudoBlake3Xof};
 
 fn sample_evaluations() -> Vec<FieldElement> {
-    (0..512).map(|i| FieldElement::from((i as u64) + 1)).collect()
+    (0..512)
+        .map(|i| FieldElement::from((i as u64) + 1))
+        .collect()
 }
 
 fn sample_seed() -> FriTranscriptSeed {
@@ -30,12 +32,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 fn attach_deep_payload(base: &FriProof) -> FriProof {
     let deep = DeepOodsProof {
         point: FieldElement::from(123u64),
-        evaluations: base
-            .final_polynomial
-            .iter()
-            .take(8)
-            .cloned()
-            .collect(),
+        evaluations: base.final_polynomial.iter().take(8).cloned().collect(),
     };
 
     FriProof::with_deep_oods(
@@ -207,7 +204,9 @@ fn tampered_layer_root_is_rejected() {
     )
     .expect_err("tampering should be detected");
 
-    assert!(matches!(err, FriError::InvalidStructure(message) if message == "fold challenge mismatch"));
+    assert!(
+        matches!(err, FriError::InvalidStructure(message) if message == "fold challenge mismatch")
+    );
 }
 
 #[test]
@@ -229,7 +228,9 @@ fn tampered_fold_challenge_is_rejected() {
     )
     .expect_err("tampering should be detected");
 
-    assert!(matches!(err, FriError::InvalidStructure(message) if message == "fold challenge mismatch"));
+    assert!(
+        matches!(err, FriError::InvalidStructure(message) if message == "fold challenge mismatch")
+    );
 }
 
 proptest! {

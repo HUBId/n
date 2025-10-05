@@ -6,9 +6,9 @@ use rpp_stark::air::composition::{
 use rpp_stark::air::example::{LfsrAir, LfsrPublicInputs};
 use rpp_stark::air::traits::{Air, TraceBuilder};
 use rpp_stark::air::types::TraceRole;
+use rpp_stark::fft::lde::{LowDegreeExtender, PROFILE_X8};
 use rpp_stark::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use rpp_stark::field::FieldElement;
-use rpp_stark::fft::lde::{LowDegreeExtender, PROFILE_X8};
 use rpp_stark::fri::{fri_prove, fri_verify, FriError, FriProof};
 use rpp_stark::hash::merkle::DIGEST_SIZE;
 use rpp_stark::merkle::{DeterministicMerkleHasher, Digest, Leaf, MerkleCommit, MerkleTree};
@@ -76,7 +76,9 @@ fn fri_pipeline_rejects_alpha_tampering() {
 
     let err = fri_verify(&tampered, &fixture.params, &mut verifier_transcript)
         .expect_err("tampered alpha must be rejected");
-    assert!(matches!(err, FriError::InvalidStructure(reason) if reason == "fold challenge mismatch"));
+    assert!(
+        matches!(err, FriError::InvalidStructure(reason) if reason == "fold challenge mismatch")
+    );
 }
 
 #[test]
@@ -144,7 +146,9 @@ fn fri_pipeline_rejects_trace_root_tampering() {
 
     let err = fri_verify(&fixture.proof, &fixture.params, &mut transcript)
         .expect_err("tampered trace root must be rejected");
-    assert!(matches!(err, FriError::InvalidStructure(reason) if reason == "fold challenge mismatch"));
+    assert!(
+        matches!(err, FriError::InvalidStructure(reason) if reason == "fold challenge mismatch")
+    );
 }
 
 fn build_fixture() -> LfsrFriFixture {
@@ -174,12 +178,11 @@ fn build_fixture() -> LfsrFriFixture {
     let extended_trace = extender.extend_trace(&trace_column);
 
     let trace_leaves = pack_leaves(&extended_trace, params.merkle().leaf_width as usize);
-    let (trace_root, _trace_aux) =
-        <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::commit(
-            &params,
-            trace_leaves.into_iter(),
-        )
-        .expect("trace commitment");
+    let (trace_root, _trace_aux) = <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::commit(
+        &params,
+        trace_leaves.into_iter(),
+    )
+    .expect("trace commitment");
 
     let domain_size = 1usize << params.fri().domain_log2 as usize;
     let evaluations = transition_evaluations(&trace_column, domain_size);
@@ -201,10 +204,7 @@ fn build_fixture() -> LfsrFriFixture {
         )
         .expect("absorb public inputs");
     transcript
-        .absorb_digest(
-            TranscriptLabel::TraceRoot,
-            &digest_from_merkle(&trace_root),
-        )
+        .absorb_digest(TranscriptLabel::TraceRoot, &digest_from_merkle(&trace_root))
         .expect("absorb trace root");
     let trace_challenge = transcript
         .challenge_field(TranscriptLabel::TraceChallengeA)
@@ -276,7 +276,11 @@ fn transition_evaluations(trace_column: &[FieldElement], domain_size: usize) -> 
 
 fn pack_leaves(values: &[FieldElement], leaf_width: usize) -> Vec<Leaf> {
     assert!(leaf_width > 0, "leaf width must be positive");
-    assert_eq!(values.len() % leaf_width, 0, "evaluations must align with leaf width");
+    assert_eq!(
+        values.len() % leaf_width,
+        0,
+        "evaluations must align with leaf width"
+    );
     values
         .chunks(leaf_width)
         .map(|chunk| {

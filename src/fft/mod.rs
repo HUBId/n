@@ -366,7 +366,6 @@ impl Radix2Fft {
     /// Creates a plan for the provided domain size and element ordering.
     pub fn new(log2_size: usize, ordering: Radix2Ordering) -> Self {
         assert!(RADIX2_FFT_BUTTERFLIES_PER_TILE.is_power_of_two());
-        assert!(RADIX2_FFT_BUTTERFLIES_PER_TILE > 0);
         Self {
             domain: Radix2Domain::new(log2_size, ordering),
         }
