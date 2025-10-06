@@ -1,20 +1,42 @@
-//! Proof generation and verification subsystem.
+//! # Proof module overview
 //!
-//! This module hierarchy documents the contracts for the complete
-//! proof lifecycle without providing executable logic. Every struct or enum
-//! captures layout, ordering or identifier information required to integrate
-//! with the `rpp-stark` ecosystem.
+//! ```text
+//! proof
+//! ├── types      — canonical data models such as [`types::Proof`]
+//! ├── ser        — serialization helpers binding the stable byte layout
+//! ├── envelope   — deterministic encoding/decoding for [`types::Proof`]
+//! └── verifier   — verification contracts mirroring the specification
+//! ```
+//!
+//! ## Versioning policy
+//!
+//! The [`types::Proof`] container records the canonical proof version and
+//! layout declared by the specification. Minor revisions may extend telemetry or
+//! auxiliary metadata, but the header ordering and byte tags remain stable for
+//! a full major release. Any incompatible change to [`types::Proof`] must bump
+//! the crate's major version and update the documented constants exported by the
+//! `types` module.
+//!
+//! ## Compatibility guarantees
+//!
+//! Proof builders and verifiers are expected to treat the structure described by
+//! [`types::Proof`] as authoritative. New fields are appended in a
+//! backward-compatible manner and always guarded by explicit length prefixes.
+//! Consumers can therefore safely decode envelopes emitted by older minor
+//! releases while rejecting payloads that advertise an unsupported `version`.
 
-pub mod aggregation;
-pub mod api;
 pub mod envelope;
-pub mod errors;
-pub mod prover;
-pub mod public_inputs;
-pub mod transcript;
+pub mod ser;
 pub mod types;
 pub mod verifier;
 
-pub use aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
-pub use errors::VerificationFailure;
+pub(crate) mod aggregation;
+pub(crate) mod api;
+pub(crate) mod errors;
+pub mod prover;
+pub mod public_inputs;
+pub mod transcript;
+
 pub use public_inputs::ProofKind;
+pub use types::{Openings, Proof, Telemetry, VerifyError, VerifyReport};
+pub use verifier::verify_proof_bytes as verify;

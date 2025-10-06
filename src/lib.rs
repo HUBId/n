@@ -22,9 +22,10 @@ pub mod utils;
 pub mod vrf;
 
 use config::{ProofSystemConfig, ProverContext, VerifierContext};
-use proof::aggregation::BatchVerificationOutcome;
+use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome};
+use proof::errors::VerificationFailure;
 use proof::public_inputs::PublicInputs;
-use proof::{BatchProofRecord, ProofKind};
+use proof::ProofKind;
 use utils::serialization::{ProofBytes, WitnessBlob};
 
 pub use air::example::{
@@ -62,7 +63,7 @@ pub enum VerificationVerdict {
     /// Proof accepted after all checks.
     Accept,
     /// Proof rejected with a documented failure class.
-    Reject(proof::VerificationFailure),
+    Reject(VerificationFailure),
 }
 
 /// Generates a proof for the specified [`ProofKind`].

@@ -15,10 +15,11 @@ use crate::config::{
 use crate::field::FieldElement;
 use crate::fri::{FriError, FriProof, FriSecurityLevel};
 use crate::hash::Hasher;
-use crate::proof::envelope::{
-    compute_commitment_digest, map_public_to_config_kind, serialize_public_inputs,
-};
 use crate::proof::public_inputs::PublicInputs;
+use crate::proof::ser::{
+    compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
+    serialize_public_inputs,
+};
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
     FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
@@ -169,8 +170,7 @@ pub fn build_envelope(
     proof.telemetry.body_length = (body_payload.len() + 32) as u32;
     proof.telemetry.header_length = header_bytes.len() as u32;
 
-    let integrity_digest =
-        crate::proof::envelope::compute_integrity_digest(&header_bytes, &body_payload);
+    let integrity_digest = compute_integrity_digest(&header_bytes, &body_payload);
     proof.telemetry.integrity_digest = DigestBytes {
         bytes: integrity_digest,
     };

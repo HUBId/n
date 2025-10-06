@@ -10,7 +10,7 @@ use rpp_stark::config::{
 use rpp_stark::field::FieldElement;
 use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
-use rpp_stark::proof::envelope::{
+use rpp_stark::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
