@@ -134,11 +134,15 @@ impl MerkleProofBundle {
     /// consistent.
     pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
         if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.core_root {
-            return Err(VerifyError::FriLayerRootMismatch);
+            return Err(VerifyError::MerkleVerifyFailed {
+                section: MerkleSection::FriRoots,
+            });
         }
 
         if self.fri_layer_roots != fri_proof.layer_roots {
-            return Err(VerifyError::FriLayerRootMismatch);
+            return Err(VerifyError::MerkleVerifyFailed {
+                section: MerkleSection::FriRoots,
+            });
         }
 
         Ok(())
@@ -170,15 +174,69 @@ pub struct Telemetry {
 pub struct VerifyReport {
     /// Fully decoded proof container.
     pub proof: Proof,
+    /// Flag indicating whether parameter hashing checks succeeded.
+    #[serde(default)]
+    pub params_ok: bool,
+    /// Flag indicating whether public input binding checks succeeded.
+    #[serde(default)]
+    pub public_ok: bool,
+    /// Flag indicating whether Merkle commitment checks succeeded.
+    #[serde(default)]
+    pub merkle_ok: bool,
+    /// Flag indicating whether the FRI verifier accepted the proof.
+    #[serde(default)]
+    pub fri_ok: bool,
+    /// Flag indicating whether composition polynomial openings matched expectations.
+    #[serde(default)]
+    pub composition_ok: bool,
+    /// Total serialized byte length observed during verification.
+    #[serde(default)]
+    pub total_bytes: u64,
     /// Optional verification error captured during decoding or checks.
     pub error: Option<VerifyError>,
 }
 
 /// Errors surfaced while decoding or validating a proof envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MerkleSection {
+    /// Commitment digest derived from advertised roots mismatched expectations.
+    CommitmentDigest,
+    /// FRI layer roots emitted by the prover did not line up with the Merkle bundle.
+    FriRoots,
+    /// Authentication path validation failed while replaying FRI queries.
+    FriPath,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FriVerifyIssue {
+    /// The verifier derived more queries than the envelope advertised or allowed.
+    QueryOutOfRange,
+    /// Authentication path validation failed for one of the FRI queries.
+    PathInvalid,
+    /// Layer roots or folding invariants failed inside the FRI verifier.
+    LayerMismatch,
+    /// Security level recorded in the proof did not match the verifier profile.
+    SecurityLevelMismatch,
+    /// The envelope declared more layers than the verifier or spec permits.
+    LayerBudgetExceeded,
+    /// The codeword reconstructed during FRI validation was empty or malformed.
+    EmptyCodeword,
+    /// The FRI proof encoded an unexpected version identifier.
+    VersionMismatch,
+    /// The advertised query budget disagreed with the verifier profile.
+    QueryBudgetMismatch,
+    /// Folding invariants or related constraints were violated.
+    FoldingConstraint,
+    /// The prover emitted inconsistent out-of-domain samples.
+    OodsInvalid,
+    /// The verifier rejected the FRI proof for another reason.
+    Generic,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerifyError {
     /// The proof version encoded in the header is not supported.
-    UnsupportedVersion(u16),
+    VersionMismatch { expected: u16, actual: u16 },
     /// The proof kind byte does not match the canonical ordering.
     UnknownProofKind(u8),
     /// Declared header length does not match the observed byte count.
@@ -194,29 +252,25 @@ pub enum VerifyError {
     /// Encountered a non-canonical field element while decoding.
     NonCanonicalFieldElement,
     /// Parameter digest did not match the expected configuration digest.
-    ParamDigestMismatch,
+    ParamsHashMismatch,
     /// Public inputs failed decoding or did not match the expected layout.
     PublicInputMismatch,
     /// Transcript phases were emitted out of order or with missing tags.
     TranscriptOrder,
     /// Out-of-domain openings were malformed or contained inconsistent values.
     OutOfDomainInvalid,
-    /// Merkle layer root did not match the recomputed value.
-    FriLayerRootMismatch,
-    /// Merkle authentication path invalid (sibling ordering wrong or hash mismatch).
-    FriPathInvalid,
-    /// Query position derived from transcript exceeded the domain bounds.
-    FriQueryOutOfRange,
+    /// Merkle verification failed for a specific section.
+    MerkleVerifyFailed { section: MerkleSection },
+    /// FRI verification rejected the envelope.
+    FriVerifyFailed { issue: FriVerifyIssue },
     /// Composition polynomial exceeded declared degree bounds.
     DegreeBoundExceeded,
     /// Proof exceeded the configured maximum proof size.
     ProofTooLarge,
     /// Proof declared openings but none were provided in the payload.
     EmptyOpenings,
-    /// Query indices were not strictly increasing once deduplicated.
-    IndicesNotSorted,
-    /// Commitment digest recomputed by the verifier disagreed with the header.
-    CommitmentDigestMismatch,
+    /// Query indices were not strictly increasing or contained duplicates.
+    IndicesDuplicate,
     /// Aggregated digest did not match the recomputed digest during batching.
     AggregationDigestMismatch,
     /// Malformed serialization encountered while decoding a proof section.

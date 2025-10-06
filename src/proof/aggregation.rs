@@ -12,6 +12,8 @@ use crate::utils::serialization::ProofBytes;
 
 use super::public_inputs::PublicInputs;
 use super::types::VerifyError;
+#[cfg(test)]
+use super::types::MerkleSection;
 use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
 
 /// Domain prefix used when deriving aggregation seeds.
@@ -427,7 +429,7 @@ mod tests {
             &verifier_context,
             |item, _, _, _| {
                 if item.original_index == 1 {
-                    Err(VerifyError::ParamDigestMismatch)
+                    Err(VerifyError::ParamsHashMismatch)
                 } else {
                     Ok(dummy_prechecked_proof())
                 }
@@ -439,7 +441,7 @@ mod tests {
             outcome,
             BatchVerificationOutcome::Reject {
                 failing_proof_index: 1,
-                error: VerifyError::ParamDigestMismatch,
+                error: VerifyError::ParamsHashMismatch,
             }
         );
     }
@@ -464,7 +466,9 @@ mod tests {
             |_, _, _, _| Ok(dummy_prechecked_proof()),
             |item, _| {
                 if item.original_index == 2 {
-                    Err(VerifyError::FriPathInvalid)
+                    Err(VerifyError::MerkleVerifyFailed {
+                        section: MerkleSection::FriPath,
+                    })
                 } else {
                     Ok(())
                 }
@@ -475,7 +479,9 @@ mod tests {
             outcome,
             BatchVerificationOutcome::Reject {
                 failing_proof_index: 2,
-                error: VerifyError::FriPathInvalid,
+                error: VerifyError::MerkleVerifyFailed {
+                    section: MerkleSection::FriPath,
+                },
             }
         );
     }

@@ -272,7 +272,10 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         .read_u16(SerKind::Proof, "version")
         .map_err(map_ser_error)?;
     if version != PROOF_VERSION {
-        return Err(VerifyError::UnsupportedVersion(version));
+        return Err(VerifyError::VersionMismatch {
+            expected: PROOF_VERSION,
+            actual: version,
+        });
     }
 
     let param_digest = ParamDigest(DigestBytes {

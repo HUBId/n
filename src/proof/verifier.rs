@@ -19,12 +19,21 @@ use crate::proof::ser::{
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
-    OutOfDomainOpening, Proof, VerifyError, VerifyReport, PROOF_ALPHA_VECTOR_LEN,
-    PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT, PROOF_MIN_OOD_POINTS,
+    FriVerifyIssue, MerkleSection, OutOfDomainOpening, Proof, VerifyError, VerifyReport,
+    PROOF_ALPHA_VECTOR_LEN, PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT, PROOF_MIN_OOD_POINTS,
     PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
     PROOF_VERSION,
 };
 use crate::utils::serialization::ProofBytes;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct VerificationStages {
+    params_ok: bool,
+    public_ok: bool,
+    merkle_ok: bool,
+    fri_ok: bool,
+    composition_ok: bool,
+}
 
 /// Verifies a serialized proof against the provided configuration and context.
 pub fn verify_proof_bytes(
@@ -35,30 +44,40 @@ pub fn verify_proof_bytes(
     context: &VerifierContext,
 ) -> Result<VerifyReport, VerifyError> {
     if (config.proof_version.0 as u16) != PROOF_VERSION {
-        return Err(VerifyError::UnsupportedVersion(
-            config.proof_version.0 as u16,
-        ));
+        return Err(VerifyError::VersionMismatch {
+            expected: PROOF_VERSION,
+            actual: config.proof_version.0 as u16,
+        });
     }
     if config.param_digest != context.param_digest {
-        return Err(VerifyError::ParamDigestMismatch);
+        return Err(VerifyError::ParamsHashMismatch);
     }
 
     let proof = Proof::from_bytes(proof_bytes.as_slice())?;
-    match precheck_decoded_proof(proof, declared_kind, public_inputs, config, context, None) {
+    let total_bytes = proof_bytes.as_slice().len() as u64;
+    let mut stages = VerificationStages::default();
+    match precheck_decoded_proof(
+        proof,
+        declared_kind,
+        public_inputs,
+        config,
+        context,
+        None,
+        &mut stages,
+    ) {
         Ok(prechecked) => match execute_fri_stage(&prechecked) {
-            Ok(()) => Ok(VerifyReport {
-                proof: prechecked.proof,
-                error: None,
-            }),
-            Err(error) => Ok(VerifyReport {
-                proof: prechecked.proof,
-                error: Some(error),
-            }),
+            Ok(()) => {
+                stages.fri_ok = true;
+                Ok(build_report(prechecked.proof, stages, total_bytes, None))
+            }
+            Err(error) => Ok(build_report(
+                prechecked.proof,
+                stages,
+                total_bytes,
+                Some(error),
+            )),
         },
-        Err((proof, error)) => Ok(VerifyReport {
-            proof,
-            error: Some(error),
-        }),
+        Err((proof, error)) => Ok(build_report(proof, stages, total_bytes, Some(error))),
     }
 }
 
@@ -76,11 +95,19 @@ fn precheck_decoded_proof(
     config: &ProofSystemConfig,
     context: &VerifierContext,
     block_context: Option<&TranscriptBlockContext>,
+    stages: &mut VerificationStages,
 ) -> Result<PrecheckedProof, (Proof, VerifyError)> {
-    if let Err(error) = validate_header(&proof, declared_kind, public_inputs, config, context) {
+    if let Err(error) = validate_header(
+        &proof,
+        declared_kind,
+        public_inputs,
+        config,
+        context,
+        stages,
+    ) {
         return Err((proof, error));
     }
-    match precheck_body(&proof, public_inputs, context, block_context) {
+    match precheck_body(&proof, public_inputs, context, block_context, stages) {
         Ok(prechecked) => Ok(PrecheckedProof {
             proof,
             fri_seed: prechecked.fri_seed,
@@ -99,14 +126,16 @@ pub(crate) fn precheck_proof_bytes(
     block_context: Option<&TranscriptBlockContext>,
 ) -> Result<PrecheckedProof, VerifyError> {
     if (config.proof_version.0 as u16) != PROOF_VERSION {
-        return Err(VerifyError::UnsupportedVersion(
-            config.proof_version.0 as u16,
-        ));
+        return Err(VerifyError::VersionMismatch {
+            expected: PROOF_VERSION,
+            actual: config.proof_version.0 as u16,
+        });
     }
     if config.param_digest != context.param_digest {
-        return Err(VerifyError::ParamDigestMismatch);
+        return Err(VerifyError::ParamsHashMismatch);
     }
     let proof = Proof::from_bytes(proof_bytes.as_slice())?;
+    let mut stages = VerificationStages::default();
     precheck_decoded_proof(
         proof,
         declared_kind,
@@ -114,6 +143,7 @@ pub(crate) fn precheck_proof_bytes(
         config,
         context,
         block_context,
+        &mut stages,
     )
     .map_err(|(_, err)| err)
 }
@@ -142,9 +172,13 @@ fn validate_header(
     public_inputs: &PublicInputs<'_>,
     config: &ProofSystemConfig,
     context: &VerifierContext,
+    stages: &mut VerificationStages,
 ) -> Result<(), VerifyError> {
     if proof.version != PROOF_VERSION {
-        return Err(VerifyError::UnsupportedVersion(proof.version));
+        return Err(VerifyError::VersionMismatch {
+            expected: PROOF_VERSION,
+            actual: proof.version,
+        });
     }
 
     let expected_kind = map_public_to_config_kind(public_inputs.kind());
@@ -153,21 +187,24 @@ fn validate_header(
     }
 
     if proof.param_digest != config.param_digest {
-        return Err(VerifyError::ParamDigestMismatch);
+        return Err(VerifyError::ParamsHashMismatch);
     }
     if proof.param_digest != context.param_digest {
-        return Err(VerifyError::ParamDigestMismatch);
+        return Err(VerifyError::ParamsHashMismatch);
     }
 
     let expected_public_inputs = serialize_public_inputs(public_inputs);
     if proof.public_inputs != expected_public_inputs {
         return Err(VerifyError::PublicInputMismatch);
     }
+    stages.public_ok = true;
 
     let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, proof.kind);
     if proof.air_spec_id != expected_air_spec {
         return Err(VerifyError::UnknownProofKind(encode_proof_kind(proof.kind)));
     }
+
+    stages.params_ok = true;
 
     Ok(())
 }
@@ -182,6 +219,7 @@ fn precheck_body(
     public_inputs: &PublicInputs<'_>,
     context: &VerifierContext,
     block_context: Option<&TranscriptBlockContext>,
+    stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
     let payload = proof.serialize_payload();
     let expected_body_length = payload.len() as u32 + 32;
@@ -198,7 +236,9 @@ fn precheck_body(
         &proof.merkle.fri_layer_roots,
     );
     if proof.commitment_digest.bytes != commitment_digest {
-        return Err(VerifyError::CommitmentDigestMismatch);
+        return Err(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::CommitmentDigest,
+        });
     }
 
     if proof
@@ -209,12 +249,18 @@ fn precheck_body(
         .unwrap_or([0u8; 32])
         != proof.merkle.core_root
     {
-        return Err(VerifyError::FriLayerRootMismatch);
+        return Err(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriRoots,
+        });
     }
 
     if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
-        return Err(VerifyError::FriLayerRootMismatch);
+        return Err(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriRoots,
+        });
     }
+
+    stages.merkle_ok = true;
 
     let transcript_kind = proof.kind;
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
@@ -255,6 +301,7 @@ fn precheck_body(
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     verify_ood_openings(&proof.openings.out_of_domain, &ood_points, &alpha_vector)?;
+    stages.composition_ok = true;
 
     let fri_seed = challenges
         .draw_fri_seed()
@@ -270,7 +317,9 @@ fn precheck_body(
 
     let security_level = map_security_level(&context.profile);
     if proof.fri_proof.security_level != security_level {
-        return Err(VerifyError::FriLayerRootMismatch);
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::SecurityLevelMismatch,
+        });
     }
     if proof.telemetry.fri_parameters.fold != 2
         || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
@@ -317,19 +366,27 @@ fn enforce_resource_limits(
     proof: &Proof,
 ) -> Result<(), VerifyError> {
     if proof.fri_proof.layer_roots.len() > context.limits.max_layers as usize {
-        return Err(VerifyError::FriLayerRootMismatch);
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::LayerBudgetExceeded,
+        });
     }
 
     if proof.fri_proof.layer_roots.len() > PROOF_MAX_FRI_LAYERS {
-        return Err(VerifyError::FriLayerRootMismatch);
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::LayerBudgetExceeded,
+        });
     }
 
     if proof.fri_proof.queries.len() > context.limits.max_queries as usize {
-        return Err(VerifyError::FriQueryOutOfRange);
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::QueryOutOfRange,
+        });
     }
 
     if proof.fri_proof.queries.len() > PROOF_MAX_QUERY_COUNT {
-        return Err(VerifyError::FriQueryOutOfRange);
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::QueryOutOfRange,
+        });
     }
 
     enforce_trace_limits(proof_kind, public_inputs, context)
@@ -413,19 +470,59 @@ fn map_security_level(profile: &crate::config::ProfileConfig) -> FriSecurityLeve
     }
 }
 
+fn build_report(
+    proof: Proof,
+    stages: VerificationStages,
+    total_bytes: u64,
+    error: Option<VerifyError>,
+) -> VerifyReport {
+    VerifyReport {
+        proof,
+        params_ok: stages.params_ok,
+        public_ok: stages.public_ok,
+        merkle_ok: stages.merkle_ok,
+        fri_ok: stages.fri_ok,
+        composition_ok: stages.composition_ok,
+        total_bytes,
+        error,
+    }
+}
+
 fn map_fri_error(error: FriError) -> VerifyError {
     match error {
-        FriError::EmptyCodeword => VerifyError::FriLayerRootMismatch,
-        FriError::VersionMismatch { .. } => VerifyError::FriLayerRootMismatch,
-        FriError::QueryOutOfRange { .. } => VerifyError::FriQueryOutOfRange,
-        FriError::PathInvalid { .. } => VerifyError::FriPathInvalid,
-        FriError::LayerRootMismatch { .. } => VerifyError::FriLayerRootMismatch,
-        FriError::SecurityLevelMismatch => VerifyError::FriLayerRootMismatch,
-        FriError::QueryBudgetMismatch { .. } => VerifyError::FriLayerRootMismatch,
-        FriError::FoldingConstraintViolated { .. } => VerifyError::FriLayerRootMismatch,
-        FriError::OodsInvalid => VerifyError::FriLayerRootMismatch,
-        FriError::Serialization(_) => VerifyError::FriPathInvalid,
-        FriError::InvalidStructure(_) => VerifyError::FriPathInvalid,
+        FriError::EmptyCodeword => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::EmptyCodeword,
+        },
+        FriError::VersionMismatch { .. } => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::VersionMismatch,
+        },
+        FriError::QueryOutOfRange { .. } => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::QueryOutOfRange,
+        },
+        FriError::PathInvalid { .. } => VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriPath,
+        },
+        FriError::LayerRootMismatch { .. } => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::LayerMismatch,
+        },
+        FriError::SecurityLevelMismatch => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::SecurityLevelMismatch,
+        },
+        FriError::QueryBudgetMismatch { .. } => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::QueryBudgetMismatch,
+        },
+        FriError::FoldingConstraintViolated { .. } => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::FoldingConstraint,
+        },
+        FriError::OodsInvalid => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::OodsInvalid,
+        },
+        FriError::Serialization(_) => VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriPath,
+        },
+        FriError::InvalidStructure(_) => VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriPath,
+        },
     }
 }
 
