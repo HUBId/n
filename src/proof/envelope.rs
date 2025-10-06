@@ -17,7 +17,7 @@ use crate::proof::types::{Openings, OutOfDomainOpening, Proof, VerifyError};
 impl Proof {
     /// Serialises the proof into a byte vector using the canonical layout.
     pub fn to_bytes(&self) -> Vec<u8> {
-        serialize_proof(self)
+        serialize_proof(self).expect("proof serialization should succeed for well-formed envelopes")
     }
 
     /// Parses an envelope from a byte slice, validating all length prefixes and

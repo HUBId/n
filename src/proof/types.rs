@@ -75,6 +75,25 @@ pub struct Proof {
     pub telemetry: Telemetry,
 }
 
+/// Serialization failure domains for proof encoding/decoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SerKind {
+    /// Top-level proof framing.
+    Proof,
+    /// Merkle commitment bundle section.
+    TraceCommitment,
+    /// Optional composition commitment digest.
+    CompositionCommitment,
+    /// Embedded FRI proof payload.
+    Fri,
+    /// Out-of-domain openings section.
+    Openings,
+    /// Telemetry frame storing auxiliary metadata.
+    Telemetry,
+    /// Serialized public-input body.
+    PublicInputs,
+}
+
 /// Merkle commitment bundle covering core, auxiliary and FRI layer roots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleProofBundle {
@@ -156,6 +175,8 @@ pub enum VerifyError {
     CommitmentDigestMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.
     AggregationDigestMismatch,
+    /// Malformed serialization encountered while decoding a proof section.
+    Serialization(SerKind),
 }
 
 /// Mirror of the FRI parameters stored inside the proof body.
