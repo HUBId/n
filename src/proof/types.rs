@@ -105,6 +105,46 @@ pub struct MerkleProofBundle {
     pub fri_layer_roots: Vec<[u8; 32]>,
 }
 
+impl MerkleProofBundle {
+    /// Constructs a bundle from the provided roots without additional checks.
+    pub fn new(core_root: [u8; 32], aux_root: [u8; 32], fri_layer_roots: Vec<[u8; 32]>) -> Self {
+        Self {
+            core_root,
+            aux_root,
+            fri_layer_roots,
+        }
+    }
+
+    /// Assembles a bundle and validates that the provided FRI proof advertises
+    /// compatible layer roots. The first FRI root must match the declared core
+    /// root and the layer ordering must be identical.
+    pub fn from_fri_proof(
+        core_root: [u8; 32],
+        aux_root: [u8; 32],
+        fri_proof: &crate::fri::FriProof,
+    ) -> Result<Self, VerifyError> {
+        let bundle = Self::new(core_root, aux_root, fri_proof.layer_roots.clone());
+        bundle.ensure_consistency(fri_proof)?;
+        Ok(bundle)
+    }
+
+    /// Ensures that the bundle roots match the ones advertised by the FRI
+    /// proof. Callers may use this helper when the bundle is constructed from
+    /// individual roots to verify that the redundant data is internally
+    /// consistent.
+    pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
+        if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.core_root {
+            return Err(VerifyError::FriLayerRootMismatch);
+        }
+
+        if self.fri_layer_roots != fri_proof.layer_roots {
+            return Err(VerifyError::FriLayerRootMismatch);
+        }
+
+        Ok(())
+    }
+}
+
 /// Out-of-domain opening container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Openings {
@@ -171,6 +211,10 @@ pub enum VerifyError {
     DegreeBoundExceeded,
     /// Proof exceeded the configured maximum proof size.
     ProofTooLarge,
+    /// Proof declared openings but none were provided in the payload.
+    EmptyOpenings,
+    /// Query indices were not strictly increasing once deduplicated.
+    IndicesNotSorted,
     /// Commitment digest recomputed by the verifier disagreed with the header.
     CommitmentDigestMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.
