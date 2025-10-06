@@ -6,12 +6,12 @@ expected to satisfy the following behavioural contracts once wired in:
 ## Deterministic Proving
 - `generate_proof` must be deterministic for a fixed combination of
   `ProofKind`, public inputs, witness blob and `ProverContext`.
-- VRF commitments embedded inside the `ProofEnvelope` must be derived solely
-  from prover-side state; no verifier challenge is allowed during the
+- VRF commitments embedded inside the `proof::types::Proof` payload must be
+  derived solely from prover-side state; no verifier challenge is allowed during the
   generation phase.
 
 ## Envelope and Size Checks
-- Every produced `ProofEnvelope` must respect `MAX_PROOF_SIZE_BYTES` including
+- Every produced `proof::types::Proof` must respect `MAX_PROOF_SIZE_BYTES` including
   metadata and body payload.
 - Header lengths must match the serialized payload lengths documented in
   `public_inputs.rs` and the integrity digest must bind both segments.
