@@ -9,8 +9,8 @@ use crate::config::{ProofSystemConfig, ProverContext, VerifierContext};
 use crate::utils::serialization::{ProofBytes, WitnessBlob};
 
 use super::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
-use super::errors::VerificationFailure;
 use super::public_inputs::{ProofKind, PublicInputs};
+use super::types::{VerifyError, VerifyReport};
 
 /// Documentation container describing the full lifecycle of a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +69,7 @@ impl VerifyProofContract {
 
     /// Output produced by the function.
     pub const OUTPUT: &'static str =
-        "verdict: Accept | Reject(VerificationFailure) wrapped in VerificationVerdict";
+        "verdict: Accept | Reject(VerifyError) wrapped in VerificationVerdict";
 
     /// Determinism requirements for the function.
     pub const DETERMINISM: &'static [&'static str] = &[
@@ -122,7 +122,7 @@ pub fn generate_proof(
     _witness: WitnessBlob<'_>,
     _config: &ProofSystemConfig,
     _prover_context: &ProverContext,
-) -> Result<ProofBytes, VerificationFailure> {
+) -> Result<ProofBytes, VerifyError> {
     unimplemented!("interface declaration only")
 }
 
@@ -133,7 +133,7 @@ pub fn verify_proof(
     _proof_bytes: &ProofBytes,
     _config: &ProofSystemConfig,
     _verifier_context: &VerifierContext,
-) -> Result<(), VerificationFailure> {
+) -> Result<VerifyReport, VerifyError> {
     unimplemented!("interface declaration only")
 }
 
@@ -143,6 +143,6 @@ pub fn batch_verify(
     _proofs: &[BatchProofRecord<'_>],
     _config: &ProofSystemConfig,
     _verifier_context: &VerifierContext,
-) -> Result<BatchVerificationOutcome, VerificationFailure> {
+) -> Result<BatchVerificationOutcome, VerifyError> {
     unimplemented!("interface declaration only")
 }

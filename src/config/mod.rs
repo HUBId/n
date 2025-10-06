@@ -740,8 +740,8 @@ proof-kind order invariants and prover/verifier cross-checks must be covered.";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proof::errors::VerificationFailure;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+    use crate::proof::types::VerifyError;
     use crate::proof::verifier::precheck_proof_bytes;
     use crate::utils::serialization::{DigestBytes, ProofBytes};
 
@@ -809,9 +809,6 @@ mod tests {
             None,
         );
 
-        assert!(matches!(
-            result,
-            Err(VerificationFailure::ErrParamDigestMismatch)
-        ));
+        assert!(matches!(result, Err(VerifyError::ParamDigestMismatch)));
     }
 }

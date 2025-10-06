@@ -27,7 +27,7 @@ use crate::proof::types::{
 };
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
-use super::errors::VerificationFailure;
+use super::types::VerifyError;
 
 /// Errors surfaced while building a proof envelope.
 #[derive(Debug)]
@@ -258,24 +258,24 @@ fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: us
 
 /// Helper converting prover errors into verification failures when the prover
 /// surface is reused by integration tests.
-impl From<ProverError> for VerificationFailure {
+impl From<ProverError> for VerifyError {
     fn from(error: ProverError) -> Self {
         match error {
-            ProverError::UnsupportedProofVersion(_) => VerificationFailure::ErrEnvelopeMalformed,
-            ProverError::ParamDigestMismatch => VerificationFailure::ErrParamDigestMismatch,
-            ProverError::MalformedWitness(_) => VerificationFailure::ErrEnvelopeMalformed,
-            ProverError::Transcript(_) => VerificationFailure::ErrTranscriptOrder,
+            ProverError::UnsupportedProofVersion(version) => {
+                VerifyError::UnsupportedVersion(version)
+            }
+            ProverError::ParamDigestMismatch => VerifyError::ParamDigestMismatch,
+            ProverError::MalformedWitness(_) => {
+                VerifyError::UnexpectedEndOfBuffer("malformed_witness".to_string())
+            }
+            ProverError::Transcript(_) => VerifyError::TranscriptOrder,
             ProverError::Fri(FriError::LayerRootMismatch { .. }) => {
-                VerificationFailure::ErrFRILayerRootMismatch
+                VerifyError::FriLayerRootMismatch
             }
-            ProverError::Fri(FriError::PathInvalid { .. }) => {
-                VerificationFailure::ErrFRIPathInvalid
-            }
-            ProverError::Fri(FriError::QueryOutOfRange { .. }) => {
-                VerificationFailure::ErrFRIQueryOutOfRange
-            }
-            ProverError::Fri(_) => VerificationFailure::ErrFRILayerRootMismatch,
-            ProverError::ProofTooLarge { .. } => VerificationFailure::ErrProofTooLarge,
+            ProverError::Fri(FriError::PathInvalid { .. }) => VerifyError::FriPathInvalid,
+            ProverError::Fri(FriError::QueryOutOfRange { .. }) => VerifyError::FriQueryOutOfRange,
+            ProverError::Fri(_) => VerifyError::FriLayerRootMismatch,
+            ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
         }
     }
 }
