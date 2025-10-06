@@ -24,8 +24,9 @@ pub mod vrf;
 use config::{ProofSystemConfig, ProverContext, VerifierContext};
 use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome};
 use proof::public_inputs::PublicInputs;
-use proof::types::VerifyError;
 use proof::ProofKind;
+
+pub use proof::types::{Proof, Telemetry, VerifyError, VerifyReport, PROOF_VERSION};
 use utils::serialization::{ProofBytes, WitnessBlob};
 
 pub use air::example::{
@@ -74,8 +75,8 @@ pub enum VerificationVerdict {
 /// 2. Ingest the phase-2 public input layout using [`PublicInputs`].
 /// 3. Absorb the witness container and execute the pipeline described in
 ///    [`proof::prover::PipelineSpec`].
-/// 4. Assemble the envelope defined in [`proof::envelope::ProofEnvelopeSpec`]
-///    and emit the serialized bytes.
+/// 4. Assemble the [`proof::types::Proof`] container and serialise it using the
+///    canonical helpers exposed by [`proof::ser`].
 ///
 /// No implementation logic is provided here; integrators must supply the
 /// execution engine while preserving the documented order of operations.
@@ -123,7 +124,7 @@ pub fn batch_verify(
     Err(StarkError::NotImplemented("batch_verify contract only"))
 }
 
-/// Convenience helper returning the canonical proof envelope layout.
+/// Convenience helper describing the canonical proof envelope layout.
 pub fn proof_envelope_spec() -> &'static str {
-    "See proof::envelope for the canonical layout implementation."
+    "See proof::types::Proof and proof::ser for the canonical layout implementation."
 }
