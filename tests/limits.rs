@@ -11,8 +11,8 @@ use rpp_stark::proof::envelope::{
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    FriParametersMirror, FriVerifyIssue, MerkleProofBundle, Openings, OutOfDomainOpening, Proof,
+    Telemetry, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
@@ -59,7 +59,12 @@ fn fri_layer_overflow_is_rejected() {
     )
     .expect("verify report");
 
-    assert_eq!(report.error, Some(VerifyError::FriLayerRootMismatch));
+    assert_eq!(
+        report.error,
+        Some(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::LayerBudgetExceeded,
+        })
+    );
 }
 
 #[test]
@@ -80,7 +85,12 @@ fn fri_query_budget_limit_is_enforced() {
     )
     .expect("verify report");
 
-    assert_eq!(report.error, Some(VerifyError::FriQueryOutOfRange));
+    assert_eq!(
+        report.error,
+        Some(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::QueryOutOfRange,
+        })
+    );
 }
 
 #[test]

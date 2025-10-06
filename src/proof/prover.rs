@@ -27,7 +27,7 @@ use crate::proof::types::{
 };
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
-use super::types::VerifyError;
+use super::types::{FriVerifyIssue, MerkleSection, VerifyError};
 
 /// Errors surfaced while building a proof envelope.
 #[derive(Debug)]
@@ -261,20 +261,27 @@ fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: us
 impl From<ProverError> for VerifyError {
     fn from(error: ProverError) -> Self {
         match error {
-            ProverError::UnsupportedProofVersion(version) => {
-                VerifyError::UnsupportedVersion(version)
-            }
-            ProverError::ParamDigestMismatch => VerifyError::ParamDigestMismatch,
+            ProverError::UnsupportedProofVersion(version) => VerifyError::VersionMismatch {
+                expected: PROOF_VERSION,
+                actual: version,
+            },
+            ProverError::ParamDigestMismatch => VerifyError::ParamsHashMismatch,
             ProverError::MalformedWitness(_) => {
                 VerifyError::UnexpectedEndOfBuffer("malformed_witness".to_string())
             }
             ProverError::Transcript(_) => VerifyError::TranscriptOrder,
-            ProverError::Fri(FriError::LayerRootMismatch { .. }) => {
-                VerifyError::FriLayerRootMismatch
-            }
-            ProverError::Fri(FriError::PathInvalid { .. }) => VerifyError::FriPathInvalid,
-            ProverError::Fri(FriError::QueryOutOfRange { .. }) => VerifyError::FriQueryOutOfRange,
-            ProverError::Fri(_) => VerifyError::FriLayerRootMismatch,
+            ProverError::Fri(FriError::LayerRootMismatch { .. }) => VerifyError::FriVerifyFailed {
+                issue: FriVerifyIssue::LayerMismatch,
+            },
+            ProverError::Fri(FriError::PathInvalid { .. }) => VerifyError::MerkleVerifyFailed {
+                section: MerkleSection::FriPath,
+            },
+            ProverError::Fri(FriError::QueryOutOfRange { .. }) => VerifyError::FriVerifyFailed {
+                issue: FriVerifyIssue::QueryOutOfRange,
+            },
+            ProverError::Fri(_) => VerifyError::FriVerifyFailed {
+                issue: FriVerifyIssue::Generic,
+            },
             ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
         }
     }

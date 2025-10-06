@@ -809,6 +809,6 @@ mod tests {
             None,
         );
 
-        assert!(matches!(result, Err(VerifyError::ParamDigestMismatch)));
+        assert!(matches!(result, Err(VerifyError::ParamsHashMismatch)));
     }
 }

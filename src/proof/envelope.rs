@@ -16,7 +16,8 @@ use crate::proof::ser::{
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
 use crate::proof::types::{
-    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, SerKind, Telemetry, VerifyError,
+    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, SerKind, Telemetry,
+    VerifyError,
 };
 use crate::{
     config::{AirSpecId, ParamDigest, ProofKind},
@@ -133,7 +134,10 @@ impl ProofBuilder {
             .header
             .ok_or(VerifyError::Serialization(SerKind::Proof))?;
         if header.version != self.params.version {
-            return Err(VerifyError::UnsupportedVersion(header.version));
+            return Err(VerifyError::VersionMismatch {
+                expected: self.params.version,
+                actual: header.version,
+            });
         }
 
         let commitment_digest = self
@@ -162,7 +166,9 @@ impl ProofBuilder {
         let expected_commitment =
             compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
         if commitment_digest.bytes != expected_commitment {
-            return Err(VerifyError::CommitmentDigestMismatch);
+            return Err(VerifyError::MerkleVerifyFailed {
+                section: MerkleSection::CommitmentDigest,
+            });
         }
 
         let public_digest = compute_public_digest(&header.public_inputs);
@@ -213,7 +219,7 @@ fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {
     for query in &fri_proof.queries {
         if let Some(prev) = previous {
             if query.position <= prev {
-                return Err(VerifyError::IndicesNotSorted);
+                return Err(VerifyError::IndicesDuplicate);
             }
         }
         previous = Some(query.position);
@@ -479,7 +485,7 @@ mod tests {
             .with_telemetry(telemetry)
             .build();
 
-        assert!(matches!(result, Err(VerifyError::IndicesNotSorted)));
+        assert!(matches!(result, Err(VerifyError::IndicesDuplicate)));
     }
 
     #[test]

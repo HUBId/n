@@ -96,7 +96,7 @@ pub fn generate_proof(
 /// The verification logic MUST execute the steps described in
 /// [`proof::verifier::SingleVerifySpec`]. The `config` and `verifier_context`
 /// parameters must match the ones used by the prover; otherwise
-/// [`proof::types::VerifyError::ParamDigestMismatch`] is expected.
+/// [`proof::types::VerifyError::ParamsHashMismatch`] is expected.
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,
