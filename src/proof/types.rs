@@ -115,7 +115,7 @@ pub struct VerifyReport {
     pub error: Option<VerifyError>,
 }
 
-/// Errors surfaced while decoding or encoding a proof envelope.
+/// Errors surfaced while decoding or validating a proof envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerifyError {
     /// The proof version encoded in the header is not supported.
@@ -134,6 +134,28 @@ pub enum VerifyError {
     InvalidFriSection(String),
     /// Encountered a non-canonical field element while decoding.
     NonCanonicalFieldElement,
+    /// Parameter digest did not match the expected configuration digest.
+    ParamDigestMismatch,
+    /// Public inputs failed decoding or did not match the expected layout.
+    PublicInputMismatch,
+    /// Transcript phases were emitted out of order or with missing tags.
+    TranscriptOrder,
+    /// Out-of-domain openings were malformed or contained inconsistent values.
+    OutOfDomainInvalid,
+    /// Merkle layer root did not match the recomputed value.
+    FriLayerRootMismatch,
+    /// Merkle authentication path invalid (sibling ordering wrong or hash mismatch).
+    FriPathInvalid,
+    /// Query position derived from transcript exceeded the domain bounds.
+    FriQueryOutOfRange,
+    /// Composition polynomial exceeded declared degree bounds.
+    DegreeBoundExceeded,
+    /// Proof exceeded the configured maximum proof size.
+    ProofTooLarge,
+    /// Commitment digest recomputed by the verifier disagreed with the header.
+    CommitmentDigestMismatch,
+    /// Aggregated digest did not match the recomputed digest during batching.
+    AggregationDigestMismatch,
 }
 
 /// Mirror of the FRI parameters stored inside the proof body.

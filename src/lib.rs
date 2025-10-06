@@ -23,8 +23,8 @@ pub mod vrf;
 
 use config::{ProofSystemConfig, ProverContext, VerifierContext};
 use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome};
-use proof::errors::VerificationFailure;
 use proof::public_inputs::PublicInputs;
+use proof::types::VerifyError;
 use proof::ProofKind;
 use utils::serialization::{ProofBytes, WitnessBlob};
 
@@ -63,7 +63,7 @@ pub enum VerificationVerdict {
     /// Proof accepted after all checks.
     Accept,
     /// Proof rejected with a documented failure class.
-    Reject(VerificationFailure),
+    Reject(VerifyError),
 }
 
 /// Generates a proof for the specified [`ProofKind`].
@@ -95,7 +95,7 @@ pub fn generate_proof(
 /// The verification logic MUST execute the steps described in
 /// [`proof::verifier::SingleVerifySpec`]. The `config` and `verifier_context`
 /// parameters must match the ones used by the prover; otherwise
-/// [`proof::VerificationFailure::ErrParamDigestMismatch`] is expected.
+/// [`proof::types::VerifyError::ParamDigestMismatch`] is expected.
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,
@@ -112,7 +112,7 @@ pub fn verify_proof(
 /// Implementations must follow the aggregation rules documented in
 /// [`proof::aggregation::BatchVerificationSpec`]. The returned outcome records
 /// whether all proofs were accepted and, in case of failures, which
-/// [`proof::VerificationFailure`] triggered the rejection.
+/// [`proof::types::VerifyError`] triggered the rejection.
 pub fn batch_verify(
     block_context: &proof::aggregation::BlockContext,
     proofs: &[BatchProofRecord<'_>],

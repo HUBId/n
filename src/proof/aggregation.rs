@@ -10,8 +10,8 @@ use crate::proof::ser::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::transcript::TranscriptBlockContext;
 use crate::utils::serialization::ProofBytes;
 
-use super::errors::VerificationFailure;
 use super::public_inputs::PublicInputs;
+use super::types::VerifyError;
 use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
 
 /// Domain prefix used when deriving aggregation seeds.
@@ -49,7 +49,7 @@ pub enum BatchVerificationOutcome {
         /// Index of the failing proof in the input slice.
         failing_proof_index: usize,
         /// Documented failure class.
-        error: VerificationFailure,
+        error: VerifyError,
     },
 }
 
@@ -127,8 +127,8 @@ where
         &ProofSystemConfig,
         &VerifierContext,
         Option<&TranscriptBlockContext>,
-    ) -> Result<PrecheckedProof, VerificationFailure>,
-    FriExec: FnMut(&SortedProof<'a>, &PrecheckedProof) -> Result<(), VerificationFailure>,
+    ) -> Result<PrecheckedProof, VerifyError>,
+    FriExec: FnMut(&SortedProof<'a>, &PrecheckedProof) -> Result<(), VerifyError>,
 {
     let transcript_block_context = to_transcript_block_context(block_context);
     let block_seed = derive_block_seed(block_context, sorted);
@@ -427,7 +427,7 @@ mod tests {
             &verifier_context,
             |item, _, _, _| {
                 if item.original_index == 1 {
-                    Err(VerificationFailure::ErrParamDigestMismatch)
+                    Err(VerifyError::ParamDigestMismatch)
                 } else {
                     Ok(dummy_prechecked_proof())
                 }
@@ -439,7 +439,7 @@ mod tests {
             outcome,
             BatchVerificationOutcome::Reject {
                 failing_proof_index: 1,
-                error: VerificationFailure::ErrParamDigestMismatch,
+                error: VerifyError::ParamDigestMismatch,
             }
         );
     }
@@ -464,7 +464,7 @@ mod tests {
             |_, _, _, _| Ok(dummy_prechecked_proof()),
             |item, _| {
                 if item.original_index == 2 {
-                    Err(VerificationFailure::ErrFRIPathInvalid)
+                    Err(VerifyError::FriPathInvalid)
                 } else {
                     Ok(())
                 }
@@ -475,7 +475,7 @@ mod tests {
             outcome,
             BatchVerificationOutcome::Reject {
                 failing_proof_index: 2,
-                error: VerificationFailure::ErrFRIPathInvalid,
+                error: VerifyError::FriPathInvalid,
             }
         );
     }

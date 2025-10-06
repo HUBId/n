@@ -8,12 +8,11 @@ use rpp_stark::hash::Hasher;
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
-use rpp_stark::proof::errors::VerificationFailure;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
     FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
@@ -30,16 +29,16 @@ fn proof_size_limit_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let err = verify_proof_bytes(
+    let report = verify_proof_bytes(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
         &config,
         &context,
     )
-    .unwrap_err();
+    .expect("verify report");
 
-    assert_eq!(err, VerificationFailure::ErrProofTooLarge);
+    assert_eq!(report.error, Some(VerifyError::ProofTooLarge));
 }
 
 #[test]
@@ -51,16 +50,16 @@ fn fri_layer_overflow_is_rejected() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 3, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let err = verify_proof_bytes(
+    let report = verify_proof_bytes(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
         &config,
         &context,
     )
-    .unwrap_err();
+    .expect("verify report");
 
-    assert_eq!(err, VerificationFailure::ErrFRILayerRootMismatch);
+    assert_eq!(report.error, Some(VerifyError::FriLayerRootMismatch));
 }
 
 #[test]
@@ -72,16 +71,16 @@ fn fri_query_budget_limit_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 3, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let err = verify_proof_bytes(
+    let report = verify_proof_bytes(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
         &config,
         &context,
     )
-    .unwrap_err();
+    .expect("verify report");
 
-    assert_eq!(err, VerificationFailure::ErrFRIQueryOutOfRange);
+    assert_eq!(report.error, Some(VerifyError::FriQueryOutOfRange));
 }
 
 #[test]
@@ -108,16 +107,16 @@ fn trace_degree_bound_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let err = verify_proof_bytes(
+    let report = verify_proof_bytes(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
         &config,
         &context,
     )
-    .unwrap_err();
+    .expect("verify report");
 
-    assert_eq!(err, VerificationFailure::ErrDegreeBoundExceeded);
+    assert_eq!(report.error, Some(VerifyError::DegreeBoundExceeded));
 }
 
 struct OwnedExecutionInputs {

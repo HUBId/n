@@ -40,6 +40,12 @@ pub struct DigestBytes {
     pub bytes: [u8; 32],
 }
 
+impl Default for DigestBytes {
+    fn default() -> Self {
+        Self { bytes: [0u8; 32] }
+    }
+}
+
 /// Wrapper around field element encodings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldElementBytes {
