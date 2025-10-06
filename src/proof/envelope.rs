@@ -1,10 +1,13 @@
 //! Proof envelope implementation and serialization helpers.
 //!
-//! This module intentionally keeps the implementation surface minimal by
-//! delegating the heavy lifting to [`crate::proof::ser`].  The thin wrappers
-//! exposed here exist purely for ergonomic access on [`crate::proof::types::Proof`]
-//! and related structures.
+//! The builder defined in this module is responsible for assembling a
+//! specification-compliant [`Proof`](crate::proof::types::Proof).  It enforces
+//! structural invariants before emitting the proof and relies on the canonical
+//! serialization helpers from [`crate::proof::ser`] to derive the telemetry and
+//! size metrics.
 
+use crate::hash::Hasher;
+use crate::params::ProofParams;
 pub use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
@@ -12,7 +15,211 @@ use crate::proof::ser::{
     deserialize_out_of_domain_opening, deserialize_proof, serialize_out_of_domain_opening,
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
-use crate::proof::types::{Openings, OutOfDomainOpening, Proof, VerifyError};
+use crate::proof::types::{
+    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, SerKind, Telemetry, VerifyError,
+};
+use crate::{
+    config::{AirSpecId, ParamDigest, ProofKind},
+    fri::FriProof,
+    utils::serialization::DigestBytes,
+};
+
+/// Result emitted by [`ProofBuilder::build`].
+#[derive(Debug, Clone)]
+pub struct BuiltProof {
+    /// Fully validated proof envelope ready for serialization.
+    pub proof: Proof,
+    /// Digest over the serialized public-input payload.
+    pub public_digest: [u8; 32],
+    /// Total byte length of the canonical header + payload + integrity digest.
+    pub bytes_total: usize,
+}
+
+impl BuiltProof {
+    /// Consumes the container and returns the inner [`Proof`].
+    pub fn into_proof(self) -> Proof {
+        self.proof
+    }
+}
+
+#[derive(Debug, Clone)]
+struct HeaderFields {
+    version: u16,
+    kind: ProofKind,
+    param_digest: ParamDigest,
+    air_spec_id: AirSpecId,
+    public_inputs: Vec<u8>,
+}
+
+/// Builder used to assemble and validate proof envelopes.
+#[derive(Debug, Clone)]
+pub struct ProofBuilder {
+    params: ProofParams,
+    header: Option<HeaderFields>,
+    commitment_digest: Option<DigestBytes>,
+    merkle: Option<MerkleProofBundle>,
+    openings: Option<Openings>,
+    fri_proof: Option<FriProof>,
+    telemetry: Option<Telemetry>,
+}
+
+impl ProofBuilder {
+    /// Creates a builder scoped to the provided proof-parameter subset.
+    pub fn new(params: ProofParams) -> Self {
+        Self {
+            params,
+            header: None,
+            commitment_digest: None,
+            merkle: None,
+            openings: None,
+            fri_proof: None,
+            telemetry: None,
+        }
+    }
+
+    /// Injects the header fields for the envelope.
+    pub fn with_header(
+        mut self,
+        version: u16,
+        kind: ProofKind,
+        param_digest: ParamDigest,
+        air_spec_id: AirSpecId,
+        public_inputs: Vec<u8>,
+    ) -> Self {
+        self.header = Some(HeaderFields {
+            version,
+            kind,
+            param_digest,
+            air_spec_id,
+            public_inputs,
+        });
+        self
+    }
+
+    /// Provides the commitment digest covering all Merkle roots.
+    pub fn with_commitment_digest(mut self, digest: DigestBytes) -> Self {
+        self.commitment_digest = Some(digest);
+        self
+    }
+
+    /// Sets the Merkle bundle for the envelope body.
+    pub fn with_merkle_bundle(mut self, merkle: MerkleProofBundle) -> Self {
+        self.merkle = Some(merkle);
+        self
+    }
+
+    /// Sets the out-of-domain openings section.
+    pub fn with_openings(mut self, openings: Openings) -> Self {
+        self.openings = Some(openings);
+        self
+    }
+
+    /// Attaches the FRI proof payload for the envelope.
+    pub fn with_fri_proof(mut self, fri_proof: FriProof) -> Self {
+        self.fri_proof = Some(fri_proof);
+        self
+    }
+
+    /// Sets the telemetry frame associated with the proof.
+    pub fn with_telemetry(mut self, telemetry: Telemetry) -> Self {
+        self.telemetry = Some(telemetry);
+        self
+    }
+
+    /// Builds and validates the proof envelope, returning the assembled proof
+    /// together with the derived digests and size metadata.
+    pub fn build(self) -> Result<BuiltProof, VerifyError> {
+        let header = self
+            .header
+            .ok_or(VerifyError::Serialization(SerKind::Proof))?;
+        if header.version != self.params.version {
+            return Err(VerifyError::UnsupportedVersion(header.version));
+        }
+
+        let commitment_digest = self
+            .commitment_digest
+            .ok_or(VerifyError::Serialization(SerKind::Proof))?;
+        let merkle = self
+            .merkle
+            .ok_or(VerifyError::Serialization(SerKind::TraceCommitment))?;
+        let openings = self
+            .openings
+            .ok_or(VerifyError::Serialization(SerKind::Openings))?;
+        let fri_proof = self
+            .fri_proof
+            .ok_or(VerifyError::Serialization(SerKind::Fri))?;
+        let telemetry = self
+            .telemetry
+            .ok_or(VerifyError::Serialization(SerKind::Telemetry))?;
+
+        if openings.out_of_domain.is_empty() {
+            return Err(VerifyError::EmptyOpenings);
+        }
+
+        ensure_sorted_indices(&fri_proof)?;
+        merkle.ensure_consistency(&fri_proof)?;
+
+        let expected_commitment =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        if commitment_digest.bytes != expected_commitment {
+            return Err(VerifyError::CommitmentDigestMismatch);
+        }
+
+        let public_digest = compute_public_digest(&header.public_inputs);
+
+        let mut proof = Proof {
+            version: header.version,
+            kind: header.kind,
+            param_digest: header.param_digest,
+            air_spec_id: header.air_spec_id,
+            public_inputs: header.public_inputs,
+            commitment_digest,
+            merkle,
+            openings,
+            fri_proof,
+            telemetry,
+        };
+
+        let payload = serialize_proof_payload(&proof);
+        let header_bytes = serialize_proof_header(&proof, &payload);
+
+        proof.telemetry.header_length = header_bytes.len() as u32;
+        proof.telemetry.body_length = (payload.len() + 32) as u32;
+        let integrity = compute_integrity_digest(&header_bytes, &payload);
+        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+
+        let bytes_total = header_bytes.len() + payload.len() + 32;
+        let limit_bytes = (self.params.max_size_kb as usize) * 1024;
+        if bytes_total > limit_bytes {
+            return Err(VerifyError::ProofTooLarge);
+        }
+
+        Ok(BuiltProof {
+            proof,
+            public_digest,
+            bytes_total,
+        })
+    }
+}
+
+fn compute_public_digest(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Hasher::new();
+    hasher.update(bytes);
+    *hasher.finalize().as_bytes()
+}
+
+fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {
+    let mut previous: Option<usize> = None;
+    for query in &fri_proof.queries {
+        if let Some(prev) = previous {
+            if query.position <= prev {
+                return Err(VerifyError::IndicesNotSorted);
+            }
+        }
+        previous = Some(query.position);
+    }
+    Ok(())
+}
 
 impl Proof {
     /// Serialises the proof into a byte vector using the canonical layout.
@@ -65,9 +272,12 @@ mod tests {
         PROOF_VERSION_V1,
     };
     use crate::field::FieldElement;
-    use crate::fri::{FriProof, FriSecurityLevel};
+    use crate::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
+    use crate::hash::merkle::{MerkleIndex, MerklePathElement, DIGEST_SIZE};
+    use crate::params::ProofParams;
     use crate::proof::prover::build_envelope as build_proof_envelope;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+    use crate::proof::types::FriParametersMirror;
     use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
     fn sample_fri_proof() -> FriProof {
@@ -77,13 +287,14 @@ mod tests {
         FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("fri proof")
     }
 
-    fn build_sample_proof() -> Proof {
-        let fri_proof = sample_fri_proof();
-        let fri_layer_roots = fri_proof.layer_roots.clone();
-        let core_root = fri_layer_roots.first().copied().unwrap_or([0u8; 32]);
-        let aux_root = [1u8; 32];
-        let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
+    fn builder_params() -> ProofParams {
+        ProofParams {
+            version: crate::proof::types::PROOF_VERSION,
+            max_size_kb: 2048,
+        }
+    }
 
+    fn sample_public_inputs() -> Vec<u8> {
         let header = ExecutionHeaderV1 {
             version: PublicInputVersion::V1,
             program_digest: DigestBytes { bytes: [2u8; 32] },
@@ -92,57 +303,99 @@ mod tests {
         };
         let body_bytes: Vec<u8> = Vec::new();
         let public_inputs = PublicInputs::Execution {
-            header: header.clone(),
+            header,
             body: &body_bytes,
         };
-        let public_input_bytes = crate::proof::ser::serialize_public_inputs(&public_inputs);
+        crate::proof::ser::serialize_public_inputs(&public_inputs)
+    }
 
-        let merkle = crate::proof::types::MerkleProofBundle {
-            core_root,
-            aux_root,
-            fri_layer_roots,
-        };
-        let openings = Openings {
+    fn sample_openings() -> Openings {
+        Openings {
             out_of_domain: vec![OutOfDomainOpening {
                 point: [3u8; 32],
                 core_values: vec![[4u8; 32]],
                 aux_values: Vec::new(),
                 composition_value: [5u8; 32],
             }],
-        };
-        let mut proof = Proof {
-            version: crate::proof::types::PROOF_VERSION,
-            kind: ProofKind::Tx,
-            param_digest: ParamDigest(DigestBytes { bytes: [6u8; 32] }),
-            air_spec_id: crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
-            public_inputs: public_input_bytes,
-            commitment_digest: DigestBytes {
+        }
+    }
+
+    fn sample_telemetry(query_budget: u16, cap_size: u32) -> Telemetry {
+        Telemetry {
+            header_length: 0,
+            body_length: 0,
+            fri_parameters: FriParametersMirror {
+                fold: 2,
+                cap_degree: 0,
+                cap_size,
+                query_budget,
+            },
+            integrity_digest: DigestBytes::default(),
+        }
+    }
+
+    fn fri_proof_with_positions(positions: &[usize]) -> FriProof {
+        let layer_roots = vec![[11u8; 32]];
+        let fold_challenges = vec![FieldElement::ZERO];
+        let final_polynomial = vec![FieldElement::ZERO];
+        let queries = positions
+            .iter()
+            .map(|&position| FriQueryProof {
+                position,
+                layers: vec![FriQueryLayerProof {
+                    value: FieldElement::ZERO,
+                    path: vec![MerklePathElement {
+                        index: MerkleIndex(0),
+                        siblings: [[12u8; DIGEST_SIZE]; 1],
+                    }],
+                }],
+                final_value: FieldElement::ZERO,
+            })
+            .collect();
+
+        FriProof::new(
+            FriSecurityLevel::Standard,
+            4,
+            layer_roots,
+            fold_challenges,
+            final_polynomial,
+            [13u8; 32],
+            queries,
+        )
+        .expect("synthetic fri proof")
+    }
+
+    fn build_sample_proof() -> Proof {
+        let fri_proof = sample_fri_proof();
+        let core_root = fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]);
+        let aux_root = [1u8; 32];
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, aux_root, &fri_proof)
+            .expect("merkle consistency");
+        let commitment_digest =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        let telemetry = sample_telemetry(
+            fri_proof.security_level.query_budget() as u16,
+            fri_proof.final_polynomial.len() as u32,
+        );
+
+        ProofBuilder::new(builder_params())
+            .with_header(
+                crate::proof::types::PROOF_VERSION,
+                ProofKind::Tx,
+                ParamDigest(DigestBytes { bytes: [6u8; 32] }),
+                crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
+                sample_public_inputs(),
+            )
+            .with_commitment_digest(DigestBytes {
                 bytes: commitment_digest,
-            },
-            merkle,
-            openings,
-            fri_proof,
-            telemetry: crate::proof::types::Telemetry {
-                header_length: 0,
-                body_length: 0,
-                fri_parameters: crate::proof::types::FriParametersMirror {
-                    fold: 2,
-                    cap_degree: 0,
-                    cap_size: 0,
-                    query_budget: 0,
-                },
-                integrity_digest: DigestBytes::default(),
-            },
-        };
-
-        let payload = proof.serialize_payload();
-        let header_bytes = proof.serialize_header(&payload);
-        let integrity = compute_integrity_digest(&header_bytes, &payload);
-        proof.telemetry.header_length = header_bytes.len() as u32;
-        proof.telemetry.body_length = (payload.len() + 32) as u32;
-        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
-
-        proof
+            })
+            .with_merkle_bundle(merkle)
+            .with_openings(sample_openings())
+            .with_fri_proof(fri_proof)
+            .with_telemetry(telemetry)
+            .build()
+            .expect("build sample proof")
+            .proof
     }
 
     #[test]
@@ -169,6 +422,99 @@ mod tests {
 
         let encoded = serialize_public_inputs(&inputs);
         assert!(!encoded.is_empty());
+    }
+
+    #[test]
+    fn builder_rejects_empty_openings() {
+        let fri_proof = fri_proof_with_positions(&[0]);
+        let core_root = fri_proof.layer_roots.first().copied().unwrap();
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, [22u8; 32], &fri_proof)
+            .expect("consistent merkle roots");
+        let commitment =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        let telemetry = sample_telemetry(1, 1);
+
+        let result = ProofBuilder::new(builder_params())
+            .with_header(
+                crate::proof::types::PROOF_VERSION,
+                ProofKind::Tx,
+                ParamDigest(DigestBytes { bytes: [1u8; 32] }),
+                crate::config::AirSpecId(DigestBytes { bytes: [2u8; 32] }),
+                sample_public_inputs(),
+            )
+            .with_commitment_digest(DigestBytes { bytes: commitment })
+            .with_merkle_bundle(merkle)
+            .with_openings(Openings {
+                out_of_domain: Vec::new(),
+            })
+            .with_fri_proof(fri_proof)
+            .with_telemetry(telemetry)
+            .build();
+
+        assert!(matches!(result, Err(VerifyError::EmptyOpenings)));
+    }
+
+    #[test]
+    fn builder_rejects_unsorted_indices() {
+        let fri_proof = fri_proof_with_positions(&[1, 0]);
+        let core_root = fri_proof.layer_roots.first().copied().unwrap();
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, [32u8; 32], &fri_proof)
+            .expect("consistent merkle roots");
+        let commitment =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        let telemetry = sample_telemetry(1, 1);
+
+        let result = ProofBuilder::new(builder_params())
+            .with_header(
+                crate::proof::types::PROOF_VERSION,
+                ProofKind::Tx,
+                ParamDigest(DigestBytes { bytes: [3u8; 32] }),
+                crate::config::AirSpecId(DigestBytes { bytes: [4u8; 32] }),
+                sample_public_inputs(),
+            )
+            .with_commitment_digest(DigestBytes { bytes: commitment })
+            .with_merkle_bundle(merkle)
+            .with_openings(sample_openings())
+            .with_fri_proof(fri_proof)
+            .with_telemetry(telemetry)
+            .build();
+
+        assert!(matches!(result, Err(VerifyError::IndicesNotSorted)));
+    }
+
+    #[test]
+    fn builder_rejects_large_proofs() {
+        let fri_proof = sample_fri_proof();
+        let core_root = fri_proof.layer_roots.first().copied().unwrap();
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, [0u8; 32], &fri_proof)
+            .expect("consistent merkle roots");
+        let commitment =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        let telemetry = sample_telemetry(
+            fri_proof.security_level.query_budget() as u16,
+            fri_proof.final_polynomial.len() as u32,
+        );
+
+        let params = ProofParams {
+            version: crate::proof::types::PROOF_VERSION,
+            max_size_kb: 1,
+        };
+        let result = ProofBuilder::new(params)
+            .with_header(
+                crate::proof::types::PROOF_VERSION,
+                ProofKind::Tx,
+                ParamDigest(DigestBytes { bytes: [8u8; 32] }),
+                crate::config::AirSpecId(DigestBytes { bytes: [9u8; 32] }),
+                sample_public_inputs(),
+            )
+            .with_commitment_digest(DigestBytes { bytes: commitment })
+            .with_merkle_bundle(merkle)
+            .with_openings(sample_openings())
+            .with_fri_proof(fri_proof)
+            .with_telemetry(telemetry)
+            .build();
+
+        assert!(matches!(result, Err(VerifyError::ProofTooLarge)));
     }
 
     #[test]
