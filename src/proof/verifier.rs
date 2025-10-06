@@ -12,11 +12,11 @@ use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
 use crate::fri::FriVerifier;
 use crate::hash::Hasher;
-use crate::proof::envelope::{
+use crate::proof::public_inputs::PublicInputs;
+use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
     serialize_public_inputs,
 };
-use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
     OutOfDomainOpening, Proof, PROOF_ALPHA_VECTOR_LEN, PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT,

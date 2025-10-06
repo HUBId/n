@@ -5,8 +5,8 @@
 
 use crate::config::{ProofSystemConfig, VerifierContext};
 use crate::hash::Hasher;
-use crate::proof::envelope::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::public_inputs::ProofKind;
+use crate::proof::ser::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::transcript::TranscriptBlockContext;
 use crate::utils::serialization::ProofBytes;
 
