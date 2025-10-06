@@ -27,6 +27,7 @@ use proof::public_inputs::PublicInputs;
 use proof::ProofKind;
 
 pub use proof::types::{Proof, Telemetry, VerifyError, VerifyReport, PROOF_VERSION};
+pub use proof::verify;
 use utils::serialization::{ProofBytes, WitnessBlob};
 
 pub use air::example::{

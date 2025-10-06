@@ -11,7 +11,7 @@ use rpp_stark::proof::envelope::{
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
-    FriParametersMirror, FriVerifyIssue, MerkleProofBundle, Openings, OutOfDomainOpening, Proof,
+    FriTelemetry, FriVerifyIssue, MerkleProofBundle, Openings, OutOfDomainOpening, Proof,
     Telemetry, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
@@ -237,27 +237,27 @@ fn build_envelope(
         build_ood_openings(context, proof_kind, &public_inputs, &core_root, &aux_root);
 
     let merkle = MerkleProofBundle {
-        core_root,
-        aux_root,
-        fri_layer_roots,
+        trace_cap: core_root,
+        composition_cap: aux_root,
+        fri_layers: fri_layer_roots,
     };
 
     let telemetry = Telemetry {
-        header_length: 0,
-        body_length: 0,
-        fri_parameters: FriParametersMirror {
+        header_bytes: 0,
+        body_bytes: 0,
+        fri: FriTelemetry {
             fold: 2,
             cap_degree: context.profile.fri_depth_range.max as u16,
             cap_size: final_poly_len as u32,
             query_budget: security_level.query_budget() as u16,
         },
-        integrity_digest: DigestBytes::default(),
+        integrity_hash: DigestBytes::default(),
     };
 
     let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: proof_kind,
-        param_digest: config.param_digest.clone(),
+        proof_version: PROOF_VERSION,
+        proof_kind,
+        params_hash: config.param_digest.clone().0.bytes,
         air_spec_id: air_spec_id.clone(),
         public_inputs: public_inputs_bytes.clone(),
         commitment_digest: DigestBytes {
@@ -265,7 +265,7 @@ fn build_envelope(
         },
         merkle,
         openings: Openings {
-            out_of_domain: ood_openings,
+            trace: ood_openings,
         },
         fri_proof,
         telemetry,
@@ -273,10 +273,10 @@ fn build_envelope(
 
     let payload = proof.serialize_payload();
     let header_bytes = proof.serialize_header(&payload);
-    proof.telemetry.body_length = (payload.len() + 32) as u32;
-    proof.telemetry.header_length = header_bytes.len() as u32;
+    proof.telemetry.body_bytes = (payload.len() + 32) as u32;
+    proof.telemetry.header_bytes = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    proof.telemetry.integrity_hash = DigestBytes { bytes: integrity };
 
     ProofBytes::new(proof.to_bytes())
 }

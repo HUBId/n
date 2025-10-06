@@ -1,4 +1,4 @@
-use crate::config::{AirSpecId, ParamDigest, ProofKind};
+use crate::config::{AirSpecId, ProofKind};
 use crate::fri::FriProof;
 use crate::utils::serialization::DigestBytes;
 use serde::{Deserialize, Serialize};
@@ -53,12 +53,12 @@ pub const PROOF_TELEMETRY_MAX_QUERY_BUDGET: u16 = 128;
 pub struct Proof {
     /// Declared proof version (currently `1`).
     #[serde(with = "proof_version_codec")]
-    pub version: u16,
+    pub proof_version: u16,
     /// Canonical proof kind stored in the envelope header.
     #[serde(with = "proof_kind_codec")]
-    pub kind: ProofKind,
+    pub proof_kind: ProofKind,
     /// Parameter digest binding configuration knobs.
-    pub param_digest: ParamDigest,
+    pub params_hash: [u8; 32],
     /// AIR specification identifier for the proof kind.
     pub air_spec_id: AirSpecId,
     /// Canonical public input encoding.
@@ -97,21 +97,21 @@ pub enum SerKind {
 /// Merkle commitment bundle covering core, auxiliary and FRI layer roots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleProofBundle {
-    /// Core commitment root.
-    pub core_root: [u8; 32],
-    /// Auxiliary commitment root (zero if absent).
-    pub aux_root: [u8; 32],
+    /// Trace commitment root.
+    pub trace_cap: [u8; 32],
+    /// Composition commitment root (zero if absent).
+    pub composition_cap: [u8; 32],
     /// FRI layer roots emitted during the prover pipeline.
-    pub fri_layer_roots: Vec<[u8; 32]>,
+    pub fri_layers: Vec<[u8; 32]>,
 }
 
 impl MerkleProofBundle {
     /// Constructs a bundle from the provided roots without additional checks.
-    pub fn new(core_root: [u8; 32], aux_root: [u8; 32], fri_layer_roots: Vec<[u8; 32]>) -> Self {
+    pub fn new(trace_cap: [u8; 32], composition_cap: [u8; 32], fri_layers: Vec<[u8; 32]>) -> Self {
         Self {
-            core_root,
-            aux_root,
-            fri_layer_roots,
+            trace_cap,
+            composition_cap,
+            fri_layers,
         }
     }
 
@@ -119,11 +119,11 @@ impl MerkleProofBundle {
     /// compatible layer roots. The first FRI root must match the declared core
     /// root and the layer ordering must be identical.
     pub fn from_fri_proof(
-        core_root: [u8; 32],
-        aux_root: [u8; 32],
+        trace_cap: [u8; 32],
+        composition_cap: [u8; 32],
         fri_proof: &crate::fri::FriProof,
     ) -> Result<Self, VerifyError> {
-        let bundle = Self::new(core_root, aux_root, fri_proof.layer_roots.clone());
+        let bundle = Self::new(trace_cap, composition_cap, fri_proof.layer_roots.clone());
         bundle.ensure_consistency(fri_proof)?;
         Ok(bundle)
     }
@@ -133,13 +133,13 @@ impl MerkleProofBundle {
     /// individual roots to verify that the redundant data is internally
     /// consistent.
     pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
-        if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.core_root {
+        if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.trace_cap {
             return Err(VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriRoots,
             });
         }
 
-        if self.fri_layer_roots != fri_proof.layer_roots {
+        if self.fri_layers != fri_proof.layer_roots {
             return Err(VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriRoots,
             });
@@ -153,20 +153,20 @@ impl MerkleProofBundle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Openings {
     /// Individual out-of-domain openings.
-    pub out_of_domain: Vec<OutOfDomainOpening>,
+    pub trace: Vec<OutOfDomainOpening>,
 }
 
 /// Telemetry frame exposing declared lengths and FRI parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Telemetry {
     /// Declared header length (used for sanity checks).
-    pub header_length: u32,
+    pub header_bytes: u32,
     /// Declared body length (includes integrity digest).
-    pub body_length: u32,
+    pub body_bytes: u32,
     /// Optional mirror of the FRI parameters encoded in the proof body.
-    pub fri_parameters: FriParametersMirror,
+    pub fri: FriTelemetry,
     /// Integrity digest covering the header bytes and body payload.
-    pub integrity_digest: DigestBytes,
+    pub integrity_hash: DigestBytes,
 }
 
 /// Structured verification report pairing a decoded proof with the outcome.
@@ -279,7 +279,7 @@ pub enum VerifyError {
 
 /// Mirror of the FRI parameters stored inside the proof body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FriParametersMirror {
+pub struct FriTelemetry {
     /// Folding factor (fixed to two in the current implementation).
     pub fold: u8,
     /// Degree of the cap polynomial.
@@ -290,7 +290,7 @@ pub struct FriParametersMirror {
     pub query_budget: u16,
 }
 
-impl Default for FriParametersMirror {
+impl Default for FriTelemetry {
     fn default() -> Self {
         Self {
             fold: 2,

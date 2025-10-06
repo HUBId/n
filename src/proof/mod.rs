@@ -3,27 +3,14 @@
 //! ```text
 //! proof
 //! ├── types      — canonical data models such as [`types::Proof`]
-//! ├── ser        — serialization helpers binding the stable byte layout
-//! ├── envelope   — deterministic encoding/decoding for [`types::Proof`]
-//! └── verifier   — verification contracts mirroring the specification
+//! ├── ser        — serialization helpers exposing public function signatures
+//! ├── envelope   — envelope builder scaffolding around [`types::Proof`]
+//! └── verifier   — verification contracts exporting [`verifier::verify`]
 //! ```
 //!
-//! ## Versioning policy
-//!
-//! The [`types::Proof`] container records the canonical proof version and
-//! layout declared by the specification. Minor revisions may extend telemetry or
-//! auxiliary metadata, but the header ordering and byte tags remain stable for
-//! a full major release. Any incompatible change to [`types::Proof`] must bump
-//! the crate's major version and update the documented constants exported by the
-//! `types` module.
-//!
-//! ## Compatibility guarantees
-//!
-//! Proof builders and verifiers are expected to treat the structure described by
-//! [`types::Proof`] as authoritative. New fields are appended in a
-//! backward-compatible manner and always guarded by explicit length prefixes.
-//! Consumers can therefore safely decode envelopes emitted by older minor
-//! releases while rejecting payloads that advertise an unsupported `version`.
+//! The module currently provides type definitions and API shells that mirror the
+//! specification. Implementations intentionally use `todo!()` so downstream
+//! consumers can plug in real logic without altering the public surface.
 
 pub mod envelope;
 pub mod ser;
@@ -37,5 +24,8 @@ pub mod public_inputs;
 pub mod transcript;
 
 pub use public_inputs::ProofKind;
-pub use types::{Openings, Proof, Telemetry, VerifyError, VerifyReport};
-pub use verifier::verify_proof_bytes as verify;
+pub use types::{
+    FriTelemetry, MerkleProofBundle, Openings, Proof, Telemetry, VerifyError, VerifyReport,
+    PROOF_VERSION,
+};
+pub use verifier::verify;

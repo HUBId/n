@@ -11,9 +11,9 @@ use crate::proof::transcript::TranscriptBlockContext;
 use crate::utils::serialization::ProofBytes;
 
 use super::public_inputs::PublicInputs;
-use super::types::VerifyError;
 #[cfg(test)]
 use super::types::MerkleSection;
+use super::types::VerifyError;
 use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
 
 /// Domain prefix used when deriving aggregation seeds.
@@ -260,7 +260,7 @@ mod tests {
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     };
     use crate::proof::types::{
-        FriParametersMirror, MerkleProofBundle, Openings, Proof, Telemetry, PROOF_VERSION,
+        FriTelemetry, MerkleProofBundle, Openings, Proof, Telemetry, PROOF_VERSION,
     };
     use crate::proof::verifier::PrecheckedProof;
     use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
@@ -349,20 +349,18 @@ mod tests {
     fn dummy_prechecked_proof() -> PrecheckedProof {
         PrecheckedProof {
             proof: Proof {
-                version: PROOF_VERSION,
-                kind: crate::config::ProofKind::Tx,
-                param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
+                proof_version: PROOF_VERSION,
+                proof_kind: crate::config::ProofKind::Tx,
+                params_hash: ParamDigest(DigestBytes { bytes: [7u8; 32] }).0.bytes,
                 air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
                 public_inputs: Vec::new(),
                 commitment_digest: DigestBytes { bytes: [8u8; 32] },
                 merkle: MerkleProofBundle {
-                    core_root: [0u8; 32],
-                    aux_root: [0u8; 32],
-                    fri_layer_roots: Vec::new(),
+                    trace_cap: [0u8; 32],
+                    composition_cap: [0u8; 32],
+                    fri_layers: Vec::new(),
                 },
-                openings: Openings {
-                    out_of_domain: Vec::new(),
-                },
+                openings: Openings { trace: Vec::new() },
                 fri_proof: crate::fri::FriProof::new(
                     crate::fri::FriSecurityLevel::Standard,
                     1,
@@ -374,10 +372,10 @@ mod tests {
                 )
                 .expect("empty fri proof"),
                 telemetry: Telemetry {
-                    header_length: 0,
-                    body_length: 0,
-                    fri_parameters: FriParametersMirror::default(),
-                    integrity_digest: DigestBytes { bytes: [9u8; 32] },
+                    header_bytes: 0,
+                    body_bytes: 0,
+                    fri: crate::proof::types::FriTelemetry::default(),
+                    integrity_hash: DigestBytes { bytes: [9u8; 32] },
                 },
             },
             fri_seed: [10u8; 32],

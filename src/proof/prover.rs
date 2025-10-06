@@ -22,7 +22,7 @@ use crate::proof::ser::{
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    FriTelemetry, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
     PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
@@ -128,7 +128,7 @@ pub fn build_envelope(
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
-    let fri_parameters = FriParametersMirror {
+    let fri_parameters = FriTelemetry {
         fold: 2,
         cap_degree: context.profile.fri_depth_range.max as u16,
         cap_size: fri_proof.final_polynomial.len() as u32,
@@ -136,22 +136,22 @@ pub fn build_envelope(
     };
 
     let merkle = MerkleProofBundle {
-        core_root,
-        aux_root,
-        fri_layer_roots,
+        trace_cap: core_root,
+        composition_cap: aux_root,
+        fri_layers: fri_layer_roots,
     };
 
     let telemetry = Telemetry {
-        header_length: 0,
-        body_length: 0,
-        fri_parameters,
-        integrity_digest: DigestBytes::default(),
+        header_bytes: 0,
+        body_bytes: 0,
+        fri: fri_parameters,
+        integrity_hash: DigestBytes::default(),
     };
 
     let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: proof_kind,
-        param_digest: context.param_digest.clone(),
+        proof_version: PROOF_VERSION,
+        proof_kind,
+        params_hash: context.param_digest.clone().0.bytes,
         air_spec_id,
         public_inputs: public_inputs_bytes,
         commitment_digest: DigestBytes {
@@ -159,7 +159,7 @@ pub fn build_envelope(
         },
         merkle,
         openings: Openings {
-            out_of_domain: ood_openings,
+            trace: ood_openings,
         },
         fri_proof,
         telemetry,
@@ -167,11 +167,11 @@ pub fn build_envelope(
 
     let body_payload = proof.serialize_payload();
     let header_bytes = proof.serialize_header(&body_payload);
-    proof.telemetry.body_length = (body_payload.len() + 32) as u32;
-    proof.telemetry.header_length = header_bytes.len() as u32;
+    proof.telemetry.body_bytes = (body_payload.len() + 32) as u32;
+    proof.telemetry.header_bytes = header_bytes.len() as u32;
 
     let integrity_digest = compute_integrity_digest(&header_bytes, &body_payload);
-    proof.telemetry.integrity_digest = DigestBytes {
+    proof.telemetry.integrity_hash = DigestBytes {
         bytes: integrity_digest,
     };
 

@@ -15,8 +15,7 @@ use rpp_stark::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_VERSION,
+    FriTelemetry, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, PROOF_VERSION,
 };
 use rpp_stark::utils::serialization::DigestBytes;
 
@@ -168,27 +167,27 @@ fn build_sample_proof(
     let public_inputs = sample_public_inputs(profile, run_label);
 
     let merkle = MerkleProofBundle {
-        core_root,
-        aux_root,
-        fri_layer_roots: fri_layer_roots.clone(),
+        trace_cap: core_root,
+        composition_cap: aux_root,
+        fri_layers: fri_layer_roots.clone(),
     };
 
     let telemetry = Telemetry {
-        header_length: 0,
-        body_length: 0,
-        fri_parameters: FriParametersMirror {
+        header_bytes: 0,
+        body_bytes: 0,
+        fri: FriTelemetry {
             fold: 2,
             cap_degree: profile.limits.max_layers as u16,
             cap_size: profile.limits.max_queries as u32,
             query_budget: profile.fri_queries,
         },
-        integrity_digest: DigestBytes { bytes: [0u8; 32] },
+        integrity_hash: DigestBytes { bytes: [0u8; 32] },
     };
 
     let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: ProofKind::Tx,
-        param_digest: param_digest.clone(),
+        proof_version: PROOF_VERSION,
+        proof_kind: ProofKind::Tx,
+        params_hash: param_digest.clone().0.bytes,
         air_spec_id: profile.air_spec_ids.get(ProofKind::Tx).clone(),
         public_inputs,
         commitment_digest: DigestBytes {
@@ -196,7 +195,7 @@ fn build_sample_proof(
         },
         merkle,
         openings: Openings {
-            out_of_domain: ood_openings,
+            trace: ood_openings,
         },
         fri_proof,
         telemetry,
@@ -204,10 +203,10 @@ fn build_sample_proof(
 
     let payload = proof.serialize_payload();
     let header_bytes = proof.serialize_header(&payload);
-    proof.telemetry.body_length = (payload.len() + 32) as u32;
-    proof.telemetry.header_length = header_bytes.len() as u32;
+    proof.telemetry.body_bytes = (payload.len() + 32) as u32;
+    proof.telemetry.header_bytes = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    proof.telemetry.integrity_hash = DigestBytes { bytes: integrity };
 
     proof
 }
