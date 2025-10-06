@@ -22,14 +22,11 @@ use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
     FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_VERSION,
+    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
 use super::errors::VerificationFailure;
-
-const ALPHA_VECTOR_LEN: usize = 4;
-const MIN_OOD_POINTS: usize = 2;
 
 /// Errors surfaced while building a proof envelope.
 #[derive(Debug)]
@@ -109,8 +106,8 @@ pub fn build_envelope(
     transcript.absorb_block_context(None::<TranscriptBlockContext>)?;
 
     let mut challenges = transcript.finalize()?;
-    let alpha_vector = challenges.draw_alpha_vector(ALPHA_VECTOR_LEN)?;
-    let ood_points = challenges.draw_ood_points(MIN_OOD_POINTS)?;
+    let alpha_vector = challenges.draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)?;
+    let ood_points = challenges.draw_ood_points(PROOF_MIN_OOD_POINTS)?;
     let _ood_seed = challenges.draw_ood_seed()?;
 
     let fri_seed = challenges.draw_fri_seed()?;
