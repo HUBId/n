@@ -110,25 +110,39 @@ mod tests {
                 composition_value: [5u8; 32],
             }],
         };
-        let telemetry = crate::proof::types::Telemetry {
-            header_length: 0,
-            body_length: 0,
-            fri_parameters: crate::proof::types::FriParametersMirror::default(),
-            integrity_digest: DigestBytes::default(),
-        };
-
-        Proof {
-            version: PROOF_VERSION_V1 as u16,
+        let mut proof = Proof {
+            version: crate::proof::types::PROOF_VERSION,
             kind: ProofKind::Tx,
             param_digest: ParamDigest(DigestBytes { bytes: [6u8; 32] }),
             air_spec_id: crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
             public_inputs: public_input_bytes,
-            commitment_digest,
+            commitment_digest: DigestBytes {
+                bytes: commitment_digest,
+            },
             merkle,
             openings,
             fri_proof,
-            telemetry,
-        }
+            telemetry: crate::proof::types::Telemetry {
+                header_length: 0,
+                body_length: 0,
+                fri_parameters: crate::proof::types::FriParametersMirror {
+                    fold: 2,
+                    cap_degree: 0,
+                    cap_size: 0,
+                    query_budget: 0,
+                },
+                integrity_digest: DigestBytes::default(),
+            },
+        };
+
+        let payload = proof.serialize_payload();
+        let header_bytes = proof.serialize_header(&payload);
+        let integrity = compute_integrity_digest(&header_bytes, &payload);
+        proof.telemetry.header_length = header_bytes.len() as u32;
+        proof.telemetry.body_length = (payload.len() + 32) as u32;
+        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+
+        proof
     }
 
     #[test]
@@ -159,31 +173,47 @@ mod tests {
 
     #[test]
     fn envelope_spec_documentation() {
+        let param_digest = compute_param_digest(&PROFILE_STANDARD_CONFIG, &COMMON_IDENTIFIERS);
         let config = ProofSystemConfig {
-            proof_version: crate::config::ProofVersion(PROOF_VERSION_V1),
-            param_digest: compute_param_digest(&PROFILE_STANDARD_CONFIG),
-            thread_pool: ThreadPoolProfile::default(),
-            chunking: ChunkingPolicy::Single,
+            proof_version: PROOF_VERSION_V1,
+            profile: PROFILE_STANDARD_CONFIG.clone(),
+            param_digest: param_digest.clone(),
         };
         let context = build_prover_context(
-            &COMMON_IDENTIFIERS,
             &PROFILE_STANDARD_CONFIG,
-            WitnessBlob { bytes: &[] },
+            &COMMON_IDENTIFIERS,
+            &param_digest,
+            ThreadPoolProfile::SingleThread,
+            ChunkingPolicy {
+                min_chunk_items: 1,
+                max_chunk_items: 1,
+                stride: 1,
+            },
         );
 
+        let public_inputs = PublicInputs::Execution {
+            header: ExecutionHeaderV1 {
+                version: PublicInputVersion::V1,
+                program_digest: DigestBytes { bytes: [10u8; 32] },
+                trace_length: 1024,
+                trace_width: 16,
+            },
+            body: &[],
+        };
+        let witness_bytes = {
+            let mut bytes = Vec::new();
+            bytes.extend_from_slice(&(1u32).to_le_bytes());
+            bytes.extend_from_slice(&(1u64).to_le_bytes());
+            bytes
+        };
+
         let envelope = build_proof_envelope(
+            &public_inputs,
+            WitnessBlob {
+                bytes: &witness_bytes,
+            },
             &config,
             &context,
-            ProofKind::Tx,
-            PublicInputs::Execution {
-                header: ExecutionHeaderV1 {
-                    version: PublicInputVersion::V1,
-                    program_digest: DigestBytes { bytes: [10u8; 32] },
-                    trace_length: 1024,
-                    trace_width: 16,
-                },
-                body: &[],
-            },
         );
 
         assert!(envelope.is_ok());
