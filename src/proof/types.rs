@@ -269,8 +269,12 @@ pub enum VerifyError {
     ProofTooLarge,
     /// Proof declared openings but none were provided in the payload.
     EmptyOpenings,
-    /// Query indices were not strictly increasing or contained duplicates.
-    IndicesDuplicate,
+    /// Query indices were not sorted in ascending order.
+    IndicesNotSorted,
+    /// Query indices contained a duplicate entry.
+    IndicesDuplicate { index: usize },
+    /// Query indices disagreed with the locally derived set.
+    IndicesMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.
     AggregationDigestMismatch,
     /// Malformed serialization encountered while decoding a proof section.

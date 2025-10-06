@@ -218,8 +218,13 @@ fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {
     let mut previous: Option<usize> = None;
     for query in &fri_proof.queries {
         if let Some(prev) = previous {
-            if query.position <= prev {
-                return Err(VerifyError::IndicesDuplicate);
+            if query.position < prev {
+                return Err(VerifyError::IndicesNotSorted);
+            }
+            if query.position == prev {
+                return Err(VerifyError::IndicesDuplicate {
+                    index: query.position,
+                });
             }
         }
         previous = Some(query.position);
@@ -485,7 +490,38 @@ mod tests {
             .with_telemetry(telemetry)
             .build();
 
-        assert!(matches!(result, Err(VerifyError::IndicesDuplicate)));
+        assert!(matches!(result, Err(VerifyError::IndicesNotSorted)));
+    }
+
+    #[test]
+    fn builder_rejects_duplicate_indices() {
+        let fri_proof = fri_proof_with_positions(&[1, 1]);
+        let core_root = fri_proof.layer_roots.first().copied().unwrap();
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, [64u8; 32], &fri_proof)
+            .expect("consistent merkle roots");
+        let commitment =
+            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
+        let telemetry = sample_telemetry(1, 1);
+
+        let result = ProofBuilder::new(builder_params())
+            .with_header(
+                crate::proof::types::PROOF_VERSION,
+                ProofKind::Tx,
+                ParamDigest(DigestBytes { bytes: [5u8; 32] }),
+                crate::config::AirSpecId(DigestBytes { bytes: [6u8; 32] }),
+                sample_public_inputs(),
+            )
+            .with_commitment_digest(DigestBytes { bytes: commitment })
+            .with_merkle_bundle(merkle)
+            .with_openings(sample_openings())
+            .with_fri_proof(fri_proof)
+            .with_telemetry(telemetry)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(VerifyError::IndicesDuplicate { index }) if index == 1
+        ));
     }
 
     #[test]

@@ -11,9 +11,9 @@ use crate::proof::transcript::TranscriptBlockContext;
 use crate::utils::serialization::ProofBytes;
 
 use super::public_inputs::PublicInputs;
-use super::types::VerifyError;
 #[cfg(test)]
 use super::types::MerkleSection;
+use super::types::VerifyError;
 use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
 
 /// Domain prefix used when deriving aggregation seeds.
