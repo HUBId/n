@@ -7,11 +7,14 @@
 
 use std::convert::TryInto;
 
-use crate::config::{AirSpecId, ParamDigest, ProofKind};
+use crate::config::{AirSpecId, ParamDigest};
+#[cfg(test)]
 use crate::fri::FriProof;
+pub use crate::proof::ser::{
+    compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
+};
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, decode_proof_kind, deserialize_fri_proof,
-    encode_proof_kind, serialize_fri_proof,
+    decode_proof_kind, deserialize_fri_proof, encode_proof_kind, serialize_fri_proof,
 };
 use crate::proof::types::{
     FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,

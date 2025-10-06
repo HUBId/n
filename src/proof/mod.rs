@@ -32,11 +32,12 @@ pub mod verifier;
 
 pub(crate) mod aggregation;
 pub(crate) mod api;
-pub(crate) mod errors;
+pub mod errors;
 pub mod prover;
 pub mod public_inputs;
 pub mod transcript;
 
+pub use errors::VerificationFailure;
 pub use public_inputs::ProofKind;
 pub use types::{Openings, Proof, Telemetry, VerifyError, VerifyReport};
 pub use verifier::verify_proof_bytes as verify;
