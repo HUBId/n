@@ -12,10 +12,12 @@ use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
-    FriParametersMirror, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader,
-    PROOF_VERSION,
 };
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+use rpp_stark::proof::types::{
+    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    PROOF_VERSION,
+};
 use rpp_stark::utils::serialization::DigestBytes;
 
 #[derive(Clone)]
@@ -116,17 +118,17 @@ fn sample_hash(
     param_digest: &rpp_stark::config::ParamDigest,
     run_label: &str,
 ) -> (String, usize) {
-    let envelope = build_sample_envelope(profile, param_digest, run_label);
-    let bytes = envelope.to_bytes();
+    let proof = build_sample_proof(profile, param_digest, run_label);
+    let bytes = proof.to_bytes();
     let digest = hash(&bytes);
     (format!("{}", digest.to_hex()), bytes.len())
 }
 
-fn build_sample_envelope(
+fn build_sample_proof(
     profile: &ProfileConfig,
     param_digest: &rpp_stark::config::ParamDigest,
     run_label: &str,
-) -> ProofEnvelope {
+) -> Proof {
     let mut reader = sample_reader(profile.id, run_label);
 
     let mut core_root = [0u8; 32];
@@ -162,12 +164,18 @@ fn build_sample_envelope(
     )
     .expect("sample fri proof");
 
-    let mut body = ProofEnvelopeBody {
+    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
+    let public_inputs = sample_public_inputs(profile, run_label);
+
+    let merkle = MerkleProofBundle {
         core_root,
         aux_root,
         fri_layer_roots: fri_layer_roots.clone(),
-        ood_openings,
-        fri_proof,
+    };
+
+    let telemetry = Telemetry {
+        header_length: 0,
+        body_length: 0,
         fri_parameters: FriParametersMirror {
             fold: 2,
             cap_degree: profile.limits.max_layers as u16,
@@ -177,31 +185,31 @@ fn build_sample_envelope(
         integrity_digest: DigestBytes { bytes: [0u8; 32] },
     };
 
-    let commitment_digest =
-        compute_commitment_digest(&body.core_root, &body.aux_root, &body.fri_layer_roots);
-    let public_inputs = sample_public_inputs(profile, run_label);
-    let payload = encode_body(&body);
-    let body_length = (payload.len() + 32) as u32;
-    let header_length = (2 + 32 + 32 + 4 + public_inputs.len() + 32 + 4 + 4) as u32;
-
-    let header = ProofEnvelopeHeader {
-        proof_version: PROOF_VERSION,
-        proof_kind: ProofKind::Tx,
+    let mut proof = Proof {
+        version: PROOF_VERSION,
+        kind: ProofKind::Tx,
         param_digest: param_digest.clone(),
         air_spec_id: profile.air_spec_ids.get(ProofKind::Tx).clone(),
         public_inputs,
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
-        header_length,
-        body_length,
+        merkle,
+        openings: Openings {
+            out_of_domain: ood_openings,
+        },
+        fri_proof,
+        telemetry,
     };
 
-    let header_bytes = encode_header(&header, &payload);
+    let payload = proof.serialize_payload();
+    let header_bytes = proof.serialize_header(&payload);
+    proof.telemetry.body_length = (payload.len() + 32) as u32;
+    proof.telemetry.header_length = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    body.integrity_digest = DigestBytes { bytes: integrity };
+    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
 
-    ProofEnvelope { header, body }
+    proof
 }
 
 fn sample_public_inputs(profile: &ProfileConfig, run_label: &str) -> Vec<u8> {
@@ -326,127 +334,6 @@ fn render_size_report(reports: &[ProfileReport]) -> String {
 \n| Profile | Sample proof bytes | Max proof size (bytes) | Headroom |\n| --- | --- | --- | --- |\n{}",
         rows
     )
-}
-
-fn encode_header(header: &ProofEnvelopeHeader, body_payload: &[u8]) -> Vec<u8> {
-    debug_assert_eq!(
-        header.body_length as usize,
-        body_payload.len() + 32,
-        "body length must include integrity digest"
-    );
-    let expected_header_length = 2 + 32 + 32 + 4 + header.public_inputs.len() + 32 + 4 + 4;
-    debug_assert_eq!(
-        header.header_length as usize, expected_header_length,
-        "header length must match canonical layout"
-    );
-
-    let mut buffer = Vec::with_capacity(header.header_length as usize);
-    buffer.push(header.proof_version);
-    buffer.push(encode_proof_kind(header.proof_kind));
-    buffer.extend_from_slice(&header.param_digest.0.bytes);
-    buffer.extend_from_slice(header.air_spec_id.as_bytes());
-    buffer.extend_from_slice(&(header.public_inputs.len() as u32).to_le_bytes());
-    buffer.extend_from_slice(&header.public_inputs);
-    buffer.extend_from_slice(&header.commitment_digest.bytes);
-    buffer.extend_from_slice(&header.header_length.to_le_bytes());
-    buffer.extend_from_slice(&header.body_length.to_le_bytes());
-    buffer
-}
-
-fn encode_body(body: &ProofEnvelopeBody) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(&body.core_root);
-    buffer.extend_from_slice(&body.aux_root);
-    buffer.extend_from_slice(&(body.fri_layer_roots.len() as u32).to_le_bytes());
-    for root in &body.fri_layer_roots {
-        buffer.extend_from_slice(root);
-    }
-
-    buffer.extend_from_slice(&(body.ood_openings.len() as u32).to_le_bytes());
-    for opening in &body.ood_openings {
-        let encoded = encode_out_of_domain(opening);
-        buffer.extend_from_slice(&(encoded.len() as u32).to_le_bytes());
-        buffer.extend_from_slice(&encoded);
-    }
-
-    let fri_bytes = encode_fri_proof(&body.fri_proof);
-    buffer.extend_from_slice(&(fri_bytes.len() as u32).to_le_bytes());
-    buffer.extend_from_slice(&fri_bytes);
-
-    buffer.push(body.fri_parameters.fold);
-    buffer.extend_from_slice(&body.fri_parameters.cap_degree.to_le_bytes());
-    buffer.extend_from_slice(&body.fri_parameters.cap_size.to_le_bytes());
-    buffer.extend_from_slice(&body.fri_parameters.query_budget.to_le_bytes());
-    buffer
-}
-
-fn encode_out_of_domain(opening: &OutOfDomainOpening) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(&opening.point);
-    buffer.extend_from_slice(&(opening.core_values.len() as u32).to_le_bytes());
-    for value in &opening.core_values {
-        buffer.extend_from_slice(value);
-    }
-    buffer.extend_from_slice(&(opening.aux_values.len() as u32).to_le_bytes());
-    for value in &opening.aux_values {
-        buffer.extend_from_slice(value);
-    }
-    buffer.extend_from_slice(&opening.composition_value);
-    buffer
-}
-
-fn encode_fri_proof(proof: &FriProof) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    buffer.push(match proof.security_level {
-        FriSecurityLevel::Standard => 0,
-        FriSecurityLevel::HiSec => 1,
-        FriSecurityLevel::Throughput => 2,
-    });
-    buffer.extend_from_slice(&(proof.initial_domain_size as u32).to_le_bytes());
-    buffer.extend_from_slice(&(proof.layer_roots.len() as u32).to_le_bytes());
-    for root in &proof.layer_roots {
-        buffer.extend_from_slice(root);
-    }
-    buffer.extend_from_slice(&(proof.final_polynomial.len() as u32).to_le_bytes());
-    for value in &proof.final_polynomial {
-        buffer.extend_from_slice(&field_element_to_bytes(*value));
-    }
-    buffer.extend_from_slice(&proof.final_polynomial_digest);
-    buffer.extend_from_slice(&(proof.queries.len() as u32).to_le_bytes());
-    for query in &proof.queries {
-        buffer.extend_from_slice(&(query.position as u64).to_le_bytes());
-        buffer.extend_from_slice(&(query.layers.len() as u32).to_le_bytes());
-        for layer in &query.layers {
-            buffer.extend_from_slice(&field_element_to_bytes(layer.value));
-            buffer.extend_from_slice(&(layer.path.len() as u32).to_le_bytes());
-            for element in &layer.path {
-                buffer.push(element.index.0);
-                for sibling in &element.siblings {
-                    buffer.extend_from_slice(sibling);
-                }
-            }
-        }
-        buffer.extend_from_slice(&field_element_to_bytes(query.final_value));
-    }
-    buffer
-}
-
-fn encode_proof_kind(kind: ProofKind) -> u8 {
-    match kind {
-        ProofKind::Tx => 0,
-        ProofKind::State => 1,
-        ProofKind::Pruning => 2,
-        ProofKind::Uptime => 3,
-        ProofKind::Consensus => 4,
-        ProofKind::Identity => 5,
-        ProofKind::Aggregation => 6,
-        ProofKind::VRF => 7,
-    }
-}
-
-fn field_element_to_bytes(value: FieldElement) -> [u8; 8] {
-    let canonical: u64 = value.into();
-    canonical.to_le_bytes()
 }
 
 fn write_file(path: &PathBuf, contents: &str) {

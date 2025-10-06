@@ -12,6 +12,7 @@ pub mod errors;
 pub mod prover;
 pub mod public_inputs;
 pub mod transcript;
+pub mod types;
 pub mod verifier;
 
 pub use aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};

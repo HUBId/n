@@ -10,6 +10,7 @@
 
 use crate::hash::Hasher;
 use crate::utils::serialization::DigestBytes;
+use serde::{Deserialize, Serialize};
 
 /// Fixed domain separator used when hashing the parameter layout into the
 /// [`ParamDigest`]. The tag is ASCII encoded and **must** be prepended to the
@@ -23,7 +24,7 @@ pub const PARAM_DIGEST_DOMAIN_TAG: &[u8; 13] = b"RPP-PARAMS-V1";
 pub const PI_DIGEST_DOMAIN_TAG: &[u8; 9] = b"RPP-PI-V1";
 
 /// Identifier describing a configuration profile.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProfileId(pub u8);
 
 impl ProfileId {
@@ -46,7 +47,7 @@ pub const PROFILE_HISEC: ProfileId = ProfileId(2);
 pub const PROFILE_THROUGHPUT: ProfileId = ProfileId(3);
 
 /// Identifier describing the base field of the AIR.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldId(pub u8);
 
 impl FieldId {
@@ -60,7 +61,7 @@ impl FieldId {
 pub const FIELD_ID_GOLDILOCKS_64: FieldId = FieldId(1);
 
 /// Identifier describing a Poseidon parameter set.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PoseidonParamId(pub DigestBytes);
 
 impl PoseidonParamId {
@@ -77,7 +78,7 @@ impl PoseidonParamId {
 }
 
 /// Identifier describing the Merkle commitment scheme.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleSchemeId(pub DigestBytes);
 
 impl MerkleSchemeId {
@@ -94,7 +95,7 @@ impl MerkleSchemeId {
 }
 
 /// Identifier describing the Fiat-Shamir transcript version.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TranscriptVersionId(pub DigestBytes);
 
 impl TranscriptVersionId {
@@ -111,7 +112,7 @@ impl TranscriptVersionId {
 }
 
 /// Identifier describing the canonical FRI folding plan.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FriPlanId(pub DigestBytes);
 
 impl FriPlanId {
@@ -128,7 +129,7 @@ impl FriPlanId {
 }
 
 /// Identifier describing the AIR specification bound to a proof kind.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AirSpecId(pub DigestBytes);
 
 impl AirSpecId {
@@ -145,7 +146,7 @@ impl AirSpecId {
 }
 
 /// Identifier describing the version of the proof envelope/layout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProofVersion(pub u8);
 
 impl ProofVersion {
@@ -323,7 +324,7 @@ pub struct ProfileConfig {
 ///   17. `reserved:u16` (currently zero)
 /// * Hash the resulting byte string with BLAKE3.
 /// * The 32-byte output is stored in this wrapper.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamDigest(pub DigestBytes);
 
 /// Digest binding a single proof's public inputs for deterministic batching.
@@ -333,7 +334,7 @@ pub struct ParamDigest(pub DigestBytes);
 pub struct PiDigest(pub DigestBytes);
 
 /// Common identifiers shared across all profiles.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommonIdentifiers {
     pub field_id: FieldId,
     pub merkle_scheme_id: MerkleSchemeId,

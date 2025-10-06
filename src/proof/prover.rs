@@ -17,11 +17,13 @@ use crate::fri::{FriError, FriProof, FriSecurityLevel};
 use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, map_public_to_config_kind, serialize_public_inputs,
-    FriParametersMirror, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader,
-    PROOF_VERSION,
 };
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
+use crate::proof::types::{
+    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    PROOF_VERSION,
+};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
 use super::errors::VerificationFailure;
@@ -33,7 +35,7 @@ const MIN_OOD_POINTS: usize = 2;
 #[derive(Debug)]
 pub enum ProverError {
     /// The proof system configuration declared an unsupported version.
-    UnsupportedProofVersion(u8),
+    UnsupportedProofVersion(u16),
     /// Parameter digest mismatch between configuration and prover context.
     ParamDigestMismatch,
     /// Witness blob failed to parse into field elements.
@@ -58,15 +60,16 @@ impl From<FriError> for ProverError {
     }
 }
 
-/// Builds a [`ProofEnvelope`] from public inputs and witness data.
+/// Builds a [`Proof`] from public inputs and witness data.
 pub fn build_envelope(
     public_inputs: &PublicInputs<'_>,
     witness: WitnessBlob<'_>,
     config: &ProofSystemConfig,
     context: &ProverContext,
-) -> Result<ProofEnvelope, ProverError> {
-    if config.proof_version.0 != PROOF_VERSION {
-        return Err(ProverError::UnsupportedProofVersion(config.proof_version.0));
+) -> Result<Proof, ProverError> {
+    let declared_version = config.proof_version.0 as u16;
+    if declared_version != PROOF_VERSION {
+        return Err(ProverError::UnsupportedProofVersion(declared_version));
     }
 
     if config.param_digest != context.param_digest {
@@ -134,37 +137,44 @@ pub fn build_envelope(
         query_budget: security_level.query_budget() as u16,
     };
 
-    let mut body = ProofEnvelopeBody {
+    let merkle = MerkleProofBundle {
         core_root,
         aux_root,
         fri_layer_roots,
-        ood_openings,
-        fri_proof,
+    };
+
+    let telemetry = Telemetry {
+        header_length: 0,
+        body_length: 0,
         fri_parameters,
         integrity_digest: DigestBytes::default(),
     };
 
-    let body_payload = body.serialize_payload();
-    let body_length = (body_payload.len() + 32) as u32;
-    let header_length = (2 + 32 + 32 + 4 + public_inputs_bytes.len() + 32 + 4 + 4) as u32;
-
-    let header = ProofEnvelopeHeader {
-        proof_version: PROOF_VERSION,
-        proof_kind,
+    let mut proof = Proof {
+        version: PROOF_VERSION,
+        kind: proof_kind,
         param_digest: context.param_digest.clone(),
         air_spec_id,
         public_inputs: public_inputs_bytes,
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
-        header_length,
-        body_length,
+        merkle,
+        openings: Openings {
+            out_of_domain: ood_openings,
+        },
+        fri_proof,
+        telemetry,
     };
 
-    let header_bytes = header.serialize(&body);
+    let body_payload = proof.serialize_payload();
+    let header_bytes = proof.serialize_header(&body_payload);
+    proof.telemetry.body_length = (body_payload.len() + 32) as u32;
+    proof.telemetry.header_length = header_bytes.len() as u32;
+
     let integrity_digest =
         crate::proof::envelope::compute_integrity_digest(&header_bytes, &body_payload);
-    body.integrity_digest = DigestBytes {
+    proof.telemetry.integrity_digest = DigestBytes {
         bytes: integrity_digest,
     };
 
@@ -176,7 +186,7 @@ pub fn build_envelope(
         });
     }
 
-    Ok(ProofEnvelope { header, body })
+    Ok(proof)
 }
 
 fn parse_witness(witness: WitnessBlob<'_>) -> Result<Vec<FieldElement>, ProverError> {

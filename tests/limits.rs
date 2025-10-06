@@ -6,12 +6,15 @@ use rpp_stark::config::{
 use rpp_stark::field::FieldElement;
 use rpp_stark::hash::Hasher;
 use rpp_stark::proof::envelope::{
-    compute_commitment_digest, serialize_public_inputs, FriParametersMirror, OutOfDomainOpening,
-    ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader, PROOF_VERSION,
+    compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::errors::VerificationFailure;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
+use rpp_stark::proof::types::{
+    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    PROOF_VERSION,
+};
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
@@ -203,19 +206,6 @@ fn build_envelope(
     let aux_root = [0x22; 32];
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
-    let header = ProofEnvelopeHeader {
-        proof_version: PROOF_VERSION,
-        proof_kind,
-        param_digest: config.param_digest.clone(),
-        air_spec_id: air_spec_id.clone(),
-        public_inputs: public_inputs_bytes.clone(),
-        commitment_digest: DigestBytes {
-            bytes: commitment_digest,
-        },
-        header_length: 0,
-        body_length: 0,
-    };
-
     let security_level = match context.profile.fri_queries {
         96 => FriSecurityLevel::HiSec,
         48 => FriSecurityLevel::Throughput,
@@ -237,14 +227,18 @@ fn build_envelope(
     )
     .expect("synthetic fri proof");
 
-    let ood_openings = build_ood_openings(context, &header, &public_inputs, &core_root, &aux_root);
+    let ood_openings =
+        build_ood_openings(context, proof_kind, &public_inputs, &core_root, &aux_root);
 
-    let body = ProofEnvelopeBody {
+    let merkle = MerkleProofBundle {
         core_root,
         aux_root,
         fri_layer_roots,
-        ood_openings,
-        fri_proof,
+    };
+
+    let telemetry = Telemetry {
+        header_length: 0,
+        body_length: 0,
         fri_parameters: FriParametersMirror {
             fold: 2,
             cap_degree: context.profile.fri_depth_range.max as u16,
@@ -254,8 +248,31 @@ fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
-    let envelope = ProofEnvelope { header, body };
-    ProofBytes::new(envelope.to_bytes())
+    let mut proof = Proof {
+        version: PROOF_VERSION,
+        kind: proof_kind,
+        param_digest: config.param_digest.clone(),
+        air_spec_id: air_spec_id.clone(),
+        public_inputs: public_inputs_bytes.clone(),
+        commitment_digest: DigestBytes {
+            bytes: commitment_digest,
+        },
+        merkle,
+        openings: Openings {
+            out_of_domain: ood_openings,
+        },
+        fri_proof,
+        telemetry,
+    };
+
+    let payload = proof.serialize_payload();
+    let header_bytes = proof.serialize_header(&payload);
+    proof.telemetry.body_length = (payload.len() + 32) as u32;
+    proof.telemetry.header_length = header_bytes.len() as u32;
+    let integrity = compute_integrity_digest(&header_bytes, &payload);
+    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+
+    ProofBytes::new(proof.to_bytes())
 }
 
 fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
@@ -278,7 +295,7 @@ fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
 
 fn build_ood_openings(
     context: &VerifierContext,
-    header: &ProofEnvelopeHeader,
+    proof_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     core_root: &[u8; 32],
     aux_root: &[u8; 32],
@@ -288,7 +305,7 @@ fn build_ood_openings(
         version: context.common_ids.transcript_version_id.clone(),
         poseidon_param_id: context.profile.poseidon_param_id.clone(),
         air_spec_id,
-        proof_kind: header.proof_kind,
+        proof_kind,
         param_digest: context.param_digest.clone(),
     })
     .expect("transcript");

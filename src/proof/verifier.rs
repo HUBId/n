@@ -14,11 +14,11 @@ use crate::fri::FriVerifier;
 use crate::hash::Hasher;
 use crate::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
-    serialize_public_inputs, OutOfDomainOpening, ProofEnvelope, ProofEnvelopeBody,
-    ProofEnvelopeHeader, PROOF_VERSION,
+    serialize_public_inputs,
 };
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
+use crate::proof::types::{OutOfDomainOpening, Proof, PROOF_VERSION};
 use crate::utils::serialization::ProofBytes;
 
 use super::errors::VerificationFailure;
@@ -47,7 +47,7 @@ pub fn verify_proof_bytes(
 
 #[derive(Debug, Clone)]
 pub(crate) struct PrecheckedProof {
-    pub(crate) envelope: ProofEnvelope,
+    pub(crate) proof: Proof,
     pub(crate) fri_seed: [u8; 32],
     pub(crate) security_level: FriSecurityLevel,
 }
@@ -60,32 +60,20 @@ pub(crate) fn precheck_proof_bytes(
     context: &VerifierContext,
     block_context: Option<&TranscriptBlockContext>,
 ) -> Result<PrecheckedProof, VerificationFailure> {
-    if config.proof_version.0 != PROOF_VERSION {
+    if (config.proof_version.0 as u16) != PROOF_VERSION {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
     if config.param_digest != context.param_digest {
         return Err(VerificationFailure::ErrParamDigestMismatch);
     }
 
-    let envelope = ProofEnvelope::from_bytes(proof_bytes.as_slice())
+    let proof = Proof::from_bytes(proof_bytes.as_slice())
         .map_err(|_| VerificationFailure::ErrEnvelopeMalformed)?;
-    validate_header(
-        &envelope.header,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
-    )?;
-    let prechecked = precheck_body(
-        &envelope.body,
-        &envelope.header,
-        public_inputs,
-        context,
-        block_context,
-    )?;
+    validate_header(&proof, declared_kind, public_inputs, config, context)?;
+    let prechecked = precheck_body(&proof, public_inputs, context, block_context)?;
 
     Ok(PrecheckedProof {
-        envelope,
+        proof,
         fri_seed: prechecked.fri_seed,
         security_level: prechecked.security_level,
     })
@@ -93,13 +81,12 @@ pub(crate) fn precheck_proof_bytes(
 
 pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerificationFailure> {
     FriVerifier::verify(
-        &proof.envelope.body.fri_proof,
+        &proof.proof.fri_proof,
         proof.security_level,
         proof.fri_seed,
         |index| {
             proof
-                .envelope
-                .body
+                .proof
                 .fri_proof
                 .final_polynomial
                 .get(index)
@@ -111,35 +98,35 @@ pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), Verificat
 }
 
 fn validate_header(
-    header: &ProofEnvelopeHeader,
+    proof: &Proof,
     declared_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     config: &ProofSystemConfig,
     context: &VerifierContext,
 ) -> Result<(), VerificationFailure> {
-    if header.proof_version != PROOF_VERSION {
+    if proof.version != PROOF_VERSION {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
     let expected_kind = map_public_to_config_kind(public_inputs.kind());
-    if header.proof_kind != expected_kind || header.proof_kind != declared_kind {
+    if proof.kind != expected_kind || proof.kind != declared_kind {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
-    if header.param_digest != config.param_digest {
+    if proof.param_digest != config.param_digest {
         return Err(VerificationFailure::ErrParamDigestMismatch);
     }
-    if header.param_digest != context.param_digest {
+    if proof.param_digest != context.param_digest {
         return Err(VerificationFailure::ErrParamDigestMismatch);
     }
 
     let expected_public_inputs = serialize_public_inputs(public_inputs);
-    if header.public_inputs != expected_public_inputs {
+    if proof.public_inputs != expected_public_inputs {
         return Err(VerificationFailure::ErrPublicInputMismatch);
     }
 
-    let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, header.proof_kind);
-    if header.air_spec_id != expected_air_spec {
+    let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, proof.kind);
+    if proof.air_spec_id != expected_air_spec {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
@@ -152,40 +139,42 @@ struct PrecheckedBody {
 }
 
 fn precheck_body(
-    body: &ProofEnvelopeBody,
-    header: &ProofEnvelopeHeader,
+    proof: &Proof,
     public_inputs: &PublicInputs<'_>,
     context: &VerifierContext,
     block_context: Option<&TranscriptBlockContext>,
 ) -> Result<PrecheckedBody, VerificationFailure> {
-    let payload = body.serialize_payload();
+    let payload = proof.serialize_payload();
     let expected_body_length = payload.len() as u32 + 32;
-    if header.body_length != expected_body_length {
+    if proof.telemetry.body_length != expected_body_length {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
-    let commitment_digest =
-        compute_commitment_digest(&body.core_root, &body.aux_root, &body.fri_layer_roots);
-    if header.commitment_digest.bytes != commitment_digest {
+    let commitment_digest = compute_commitment_digest(
+        &proof.merkle.core_root,
+        &proof.merkle.aux_root,
+        &proof.merkle.fri_layer_roots,
+    );
+    if proof.commitment_digest.bytes != commitment_digest {
         return Err(VerificationFailure::ErrCommitmentDigestMismatch);
     }
 
-    if body
+    if proof
         .fri_proof
         .layer_roots
         .first()
         .copied()
         .unwrap_or([0u8; 32])
-        != body.core_root
+        != proof.merkle.core_root
     {
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
 
-    if body.fri_layer_roots != body.fri_proof.layer_roots {
+    if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
 
-    let transcript_kind = header.proof_kind;
+    let transcript_kind = proof.kind;
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
     let mut transcript = Transcript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
@@ -201,7 +190,7 @@ fn precheck_body(
         .absorb_public_inputs(&public_inputs_bytes)
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     transcript
-        .absorb_commitment_roots(body.core_root, Some(body.aux_root))
+        .absorb_commitment_roots(proof.merkle.core_root, Some(proof.merkle.aux_root))
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     transcript
         .absorb_air_spec_id(air_spec_id)
@@ -223,12 +212,12 @@ fn precheck_body(
         .draw_ood_seed()
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
 
-    verify_ood_openings(&body.ood_openings, &ood_points, &alpha_vector)?;
+    verify_ood_openings(&proof.openings.out_of_domain, &ood_points, &alpha_vector)?;
 
     let fri_seed = challenges
         .draw_fri_seed()
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
-    for (layer_index, _) in body.fri_layer_roots.iter().enumerate() {
+    for (layer_index, _) in proof.merkle.fri_layer_roots.iter().enumerate() {
         challenges
             .draw_fri_eta(layer_index)
             .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
@@ -238,30 +227,30 @@ fn precheck_body(
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
 
     let security_level = map_security_level(&context.profile);
-    if body.fri_proof.security_level != security_level {
+    if proof.fri_proof.security_level != security_level {
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
-    if body.fri_parameters.fold != 2
-        || body.fri_parameters.query_budget as usize != security_level.query_budget()
+    if proof.telemetry.fri_parameters.fold != 2
+        || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
     {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
-    let header_bytes = header.serialize(body);
-    if header.header_length != header_bytes.len() as u32 {
+    let header_bytes = proof.serialize_header(&payload);
+    if proof.telemetry.header_length != header_bytes.len() as u32 {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
 
     let integrity_digest = compute_integrity_digest(&header_bytes, &payload);
-    if body.integrity_digest.bytes != integrity_digest {
+    if proof.telemetry.integrity_digest.bytes != integrity_digest {
         return Err(VerificationFailure::ErrIntegrityDigestMismatch);
     }
 
-    if proof_size_exceeds_limit(header, body, context) {
+    if proof_size_exceeds_limit(proof, context) {
         return Err(VerificationFailure::ErrProofTooLarge);
     }
 
-    enforce_resource_limits(header.proof_kind, public_inputs, context, body)?;
+    enforce_resource_limits(proof.kind, public_inputs, context, proof)?;
 
     Ok(PrecheckedBody {
         fri_seed,
@@ -273,13 +262,13 @@ fn enforce_resource_limits(
     proof_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     context: &VerifierContext,
-    body: &ProofEnvelopeBody,
+    proof: &Proof,
 ) -> Result<(), VerificationFailure> {
-    if body.fri_proof.layer_roots.len() > context.limits.max_layers as usize {
+    if proof.fri_proof.layer_roots.len() > context.limits.max_layers as usize {
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
 
-    if body.fri_proof.queries.len() > context.limits.max_queries as usize {
+    if proof.fri_proof.queries.len() > context.limits.max_queries as usize {
         return Err(VerificationFailure::ErrFRIQueryOutOfRange);
     }
 
@@ -332,13 +321,9 @@ fn verify_ood_openings(
     Ok(())
 }
 
-fn proof_size_exceeds_limit(
-    header: &ProofEnvelopeHeader,
-    body: &ProofEnvelopeBody,
-    context: &VerifierContext,
-) -> bool {
-    let header_bytes = header.serialize(body);
-    let payload = body.serialize_payload();
+fn proof_size_exceeds_limit(proof: &Proof, context: &VerifierContext) -> bool {
+    let payload = proof.serialize_payload();
+    let header_bytes = proof.serialize_header(&payload);
     let total = header_bytes.len() + payload.len() + 32;
     total > context.limits.max_proof_size_bytes as usize
 }

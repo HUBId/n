@@ -5,6 +5,8 @@
 //! but come with extensive documentation that mirrors the constraints imposed
 //! by the proof formats documented elsewhere.
 
+use serde::{Deserialize, Serialize};
+
 /// Wrapper around proof bytes ensuring explicit conversions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProofBytes {
@@ -32,14 +34,14 @@ pub struct WitnessBlob<'a> {
 }
 
 /// Fixed width digest byte array used throughout the documentation layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DigestBytes {
     /// Raw digest bytes (e.g. BLAKE3, SHA-256 etc.).
     pub bytes: [u8; 32],
 }
 
 /// Wrapper around field element encodings.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldElementBytes {
     /// Little endian encoding of a field element.
     pub bytes: [u8; 32],

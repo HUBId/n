@@ -254,11 +254,11 @@ mod tests {
         CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig, ProofVersion,
         PROFILE_STANDARD_CONFIG,
     };
-    use crate::proof::envelope::{
-        ProofEnvelope, ProofEnvelopeBody, ProofEnvelopeHeader, PROOF_VERSION,
-    };
     use crate::proof::public_inputs::{
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
+    };
+    use crate::proof::types::{
+        FriParametersMirror, MerkleProofBundle, Openings, Proof, Telemetry, PROOF_VERSION,
     };
     use crate::proof::verifier::PrecheckedProof;
     use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
@@ -267,7 +267,7 @@ mod tests {
         let profile: ProfileConfig = PROFILE_STANDARD_CONFIG.clone();
         let param_digest = ParamDigest(DigestBytes { bytes: [1u8; 32] });
         let config = ProofSystemConfig {
-            proof_version: ProofVersion(PROOF_VERSION),
+            proof_version: ProofVersion(PROOF_VERSION as u8),
             profile: profile.clone(),
             param_digest: param_digest.clone(),
         };
@@ -346,33 +346,35 @@ mod tests {
 
     fn dummy_prechecked_proof() -> PrecheckedProof {
         PrecheckedProof {
-            envelope: ProofEnvelope {
-                header: ProofEnvelopeHeader {
-                    proof_version: PROOF_VERSION,
-                    proof_kind: crate::config::ProofKind::Tx,
-                    param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
-                    air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
-                    public_inputs: Vec::new(),
-                    commitment_digest: DigestBytes { bytes: [8u8; 32] },
-                    header_length: 0,
-                    body_length: 0,
-                },
-                body: ProofEnvelopeBody {
+            proof: Proof {
+                version: PROOF_VERSION,
+                kind: crate::config::ProofKind::Tx,
+                param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
+                air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
+                public_inputs: Vec::new(),
+                commitment_digest: DigestBytes { bytes: [8u8; 32] },
+                merkle: MerkleProofBundle {
                     core_root: [0u8; 32],
                     aux_root: [0u8; 32],
                     fri_layer_roots: Vec::new(),
-                    ood_openings: Vec::new(),
-                    fri_proof: crate::fri::FriProof::new(
-                        crate::fri::FriSecurityLevel::Standard,
-                        1,
-                        Vec::new(),
-                        Vec::new(),
-                        Vec::new(),
-                        [0u8; 32],
-                        Vec::new(),
-                    )
-                    .expect("empty fri proof"),
-                    fri_parameters: crate::proof::envelope::FriParametersMirror::default(),
+                },
+                openings: Openings {
+                    out_of_domain: Vec::new(),
+                },
+                fri_proof: crate::fri::FriProof::new(
+                    crate::fri::FriSecurityLevel::Standard,
+                    1,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    [0u8; 32],
+                    Vec::new(),
+                )
+                .expect("empty fri proof"),
+                telemetry: Telemetry {
+                    header_length: 0,
+                    body_length: 0,
+                    fri_parameters: FriParametersMirror::default(),
                     integrity_digest: DigestBytes { bytes: [9u8; 32] },
                 },
             },
