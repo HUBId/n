@@ -38,4 +38,4 @@ pub mod transcript;
 
 pub use public_inputs::ProofKind;
 pub use types::{Openings, Proof, Telemetry, VerifyError, VerifyReport};
-pub use verifier::verify_proof_bytes as verify;
+pub use verifier::verify;

@@ -6,7 +6,8 @@
 //! any expensive cryptographic operation.
 
 use crate::config::{
-    ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
+    ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, ProofVersion,
+    VerifierContext, COMMON_IDENTIFIERS, PROFILE_HIGH_SECURITY_CONFIG, PROFILE_STANDARD_CONFIG,
 };
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
@@ -24,7 +25,8 @@ use crate::proof::types::{
     PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
     PROOF_VERSION,
 };
-use crate::utils::serialization::ProofBytes;
+use crate::utils::serialization::{DigestBytes, ProofBytes};
+use crate::{config::FriDepthRange, params::StarkParams};
 
 #[derive(Debug, Default, Clone, Copy)]
 struct VerificationStages {
@@ -35,14 +37,61 @@ struct VerificationStages {
     composition_ok: bool,
 }
 
-/// Verifies a serialized proof against the provided configuration and context.
-pub fn verify_proof_bytes(
-    declared_kind: ConfigProofKind,
+#[derive(Debug, Clone)]
+pub struct VerifierBindings {
+    pub config: ProofSystemConfig,
+    pub context: VerifierContext,
+}
+
+pub fn derive_verifier_bindings(params: &StarkParams) -> VerifierBindings {
+    let mut profile = if params.profile_id().starts_with("PROFILE_HISEC") {
+        PROFILE_HIGH_SECURITY_CONFIG.clone()
+    } else {
+        PROFILE_STANDARD_CONFIG.clone()
+    };
+
+    profile.lde_factor = params.lde().blowup as u8;
+    profile.fri_queries = params.fri().queries;
+    profile.fri_depth_range = FriDepthRange {
+        min: params.fri().domain_log2 as u8,
+        max: params.fri().domain_log2 as u8,
+    };
+    profile.limits.max_proof_size_bytes = params.proof().max_size_kb * 1024;
+    profile.limits.max_layers = params.fri().num_layers.max(1) as u8;
+    profile.limits.max_queries = params.fri().queries;
+
+    let digest = DigestBytes {
+        bytes: params.params_hash(),
+    };
+    let param_digest = crate::config::ParamDigest(digest);
+
+    let config = ProofSystemConfig {
+        proof_version: ProofVersion(params.proof().version as u8),
+        profile: profile.clone(),
+        param_digest: param_digest.clone(),
+    };
+
+    let context = VerifierContext {
+        profile,
+        param_digest,
+        common_ids: COMMON_IDENTIFIERS.clone(),
+        limits: config.profile.limits.clone(),
+        metrics: None,
+    };
+
+    VerifierBindings { config, context }
+}
+
+/// Verifies a decoded proof against the provided parameters.
+pub fn verify(
+    proof: &Proof,
     public_inputs: &PublicInputs<'_>,
-    proof_bytes: &ProofBytes,
-    config: &ProofSystemConfig,
-    context: &VerifierContext,
+    params: &StarkParams,
 ) -> Result<VerifyReport, VerifyError> {
+    let bindings = derive_verifier_bindings(params);
+    let config = &bindings.config;
+    let context = &bindings.context;
+
     if (config.proof_version.0 as u16) != PROOF_VERSION {
         return Err(VerifyError::VersionMismatch {
             expected: PROOF_VERSION,
@@ -53,11 +102,13 @@ pub fn verify_proof_bytes(
         return Err(VerifyError::ParamsHashMismatch);
     }
 
-    let proof = Proof::from_bytes(proof_bytes.as_slice())?;
-    let total_bytes = proof_bytes.as_slice().len() as u64;
+    let payload = proof.serialize_payload();
+    let header_bytes = proof.serialize_header(&payload);
+    let total_bytes = (header_bytes.len() + payload.len() + 32) as u64;
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
     let mut stages = VerificationStages::default();
     match precheck_decoded_proof(
-        proof,
+        proof.clone(),
         declared_kind,
         public_inputs,
         config,

@@ -1,10 +1,7 @@
-use rpp_stark::config::{
-    compute_param_digest, CommonIdentifiers, ParamDigest, ProfileConfig,
-    ProofKind as ConfigProofKind, ProofSystemConfig, ResourceLimits, VerifierContext,
-    COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG, PROOF_VERSION_V1,
-};
+use rpp_stark::config::{ProofKind as ConfigProofKind, ProofSystemConfig, VerifierContext};
 use rpp_stark::field::FieldElement;
 use rpp_stark::hash::Hasher;
+use rpp_stark::params::{StarkParams, StarkParamsBuilder};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
@@ -14,7 +11,7 @@ use rpp_stark::proof::types::{
     FriParametersMirror, FriVerifyIssue, MerkleProofBundle, Openings, OutOfDomainOpening, Proof,
     Telemetry, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::{derive_verifier_bindings, verify};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
 use rpp_stark::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
@@ -22,42 +19,30 @@ use rpp_stark::hash::merkle::{MerkleIndex, MerklePathElement};
 
 #[test]
 fn proof_size_limit_is_enforced() {
-    let (config, context, inputs) = test_environment(|limits| {
-        limits.max_proof_size_bytes = 64;
+    let (params, config, context, inputs) = test_environment(|builder| {
+        builder.proof.max_size_kb = 1;
     });
 
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
+    let proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
 
-    let report = verify_proof_bytes(
-        ConfigProofKind::Tx,
-        &public_inputs,
-        &proof_bytes,
-        &config,
-        &context,
-    )
-    .expect("verify report");
+    let report = verify(&proof, &public_inputs, &params).expect("verify report");
 
     assert_eq!(report.error, Some(VerifyError::ProofTooLarge));
 }
 
 #[test]
 fn fri_layer_overflow_is_rejected() {
-    let (config, context, inputs) = test_environment(|limits| {
-        limits.max_layers = 2;
+    let (params, config, context, inputs) = test_environment(|builder| {
+        builder.fri.num_layers = 2;
     });
 
     let proof_bytes = build_envelope(&config, &context, &inputs, 3, 1, 4);
     let public_inputs = inputs.as_public_inputs();
+    let proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
 
-    let report = verify_proof_bytes(
-        ConfigProofKind::Tx,
-        &public_inputs,
-        &proof_bytes,
-        &config,
-        &context,
-    )
-    .expect("verify report");
+    let report = verify(&proof, &public_inputs, &params).expect("verify report");
 
     assert_eq!(
         report.error,
@@ -69,21 +54,15 @@ fn fri_layer_overflow_is_rejected() {
 
 #[test]
 fn fri_query_budget_limit_is_enforced() {
-    let (config, context, inputs) = test_environment(|limits| {
-        limits.max_queries = 1;
+    let (params, config, context, inputs) = test_environment(|builder| {
+        builder.fri.queries = 1;
     });
 
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 3, 4);
     let public_inputs = inputs.as_public_inputs();
+    let proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
 
-    let report = verify_proof_bytes(
-        ConfigProofKind::Tx,
-        &public_inputs,
-        &proof_bytes,
-        &config,
-        &context,
-    )
-    .expect("verify report");
+    let report = verify(&proof, &public_inputs, &params).expect("verify report");
 
     assert_eq!(
         report.error,
@@ -95,36 +74,16 @@ fn fri_query_budget_limit_is_enforced() {
 
 #[test]
 fn trace_degree_bound_is_enforced() {
-    let (_config, mut context, mut inputs) = test_environment(|limits| {
-        limits.per_proof_max_trace_steps.tx = 8;
-        limits.per_proof_max_trace_width.tx = 2;
-    });
+    let (params, config, context, mut inputs) = test_environment(|_builder| {});
 
-    inputs.header.trace_length = 16;
-    inputs.header.trace_width = 4;
-
-    // Recompute digests because the public inputs changed.
-    let param_digest = recompute_digest(&context.profile, &context.common_ids);
-    context.param_digest = param_digest.clone();
-    context.profile = context.profile.clone();
-    context.limits = context.profile.limits.clone();
-    let config = ProofSystemConfig {
-        proof_version: PROOF_VERSION_V1,
-        profile: context.profile.clone(),
-        param_digest: param_digest.clone(),
-    };
+    inputs.header.trace_length = context.limits.per_proof_max_trace_steps.tx + 1;
+    inputs.header.trace_width = context.limits.per_proof_max_trace_width.tx as u32 + 1;
 
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
+    let proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
 
-    let report = verify_proof_bytes(
-        ConfigProofKind::Tx,
-        &public_inputs,
-        &proof_bytes,
-        &config,
-        &context,
-    )
-    .expect("verify report");
+    let report = verify(&proof, &public_inputs, &params).expect("verify report");
 
     assert_eq!(report.error, Some(VerifyError::DegreeBoundExceeded));
 }
@@ -156,35 +115,27 @@ impl OwnedExecutionInputs {
 }
 
 fn test_environment<F>(
-    mut update_limits: F,
-) -> (ProofSystemConfig, VerifierContext, OwnedExecutionInputs)
+    mut update_params: F,
+) -> (
+    StarkParams,
+    ProofSystemConfig,
+    VerifierContext,
+    OwnedExecutionInputs,
+)
 where
-    F: FnMut(&mut ResourceLimits),
+    F: FnMut(&mut StarkParamsBuilder),
 {
-    let mut profile = PROFILE_STANDARD_CONFIG.clone();
-    update_limits(&mut profile.limits);
-    let common = COMMON_IDENTIFIERS.clone();
-    let param_digest = recompute_digest(&profile, &common);
+    let mut builder = StarkParamsBuilder::new();
+    update_params(&mut builder);
+    let params = builder.build().expect("valid params");
+    let bindings = derive_verifier_bindings(&params);
 
-    let config = ProofSystemConfig {
-        proof_version: PROOF_VERSION_V1,
-        profile: profile.clone(),
-        param_digest: param_digest.clone(),
-    };
-
-    let context = VerifierContext {
-        profile: profile.clone(),
-        param_digest,
-        common_ids: common.clone(),
-        limits: profile.limits.clone(),
-        metrics: None,
-    };
-
-    (config, context, OwnedExecutionInputs::new(8, 4))
-}
-
-fn recompute_digest(profile: &ProfileConfig, common: &CommonIdentifiers) -> ParamDigest {
-    compute_param_digest(profile, common)
+    (
+        params,
+        bindings.config,
+        bindings.context,
+        OwnedExecutionInputs::new(8, 4),
+    )
 }
 
 fn build_envelope(
