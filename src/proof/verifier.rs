@@ -18,13 +18,14 @@ use crate::proof::envelope::{
 };
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
-use crate::proof::types::{OutOfDomainOpening, Proof, PROOF_VERSION};
+use crate::proof::types::{
+    OutOfDomainOpening, Proof, PROOF_ALPHA_VECTOR_LEN, PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT,
+    PROOF_MIN_OOD_POINTS, PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE,
+    PROOF_TELEMETRY_MAX_QUERY_BUDGET, PROOF_VERSION,
+};
 use crate::utils::serialization::ProofBytes;
 
 use super::errors::VerificationFailure;
-
-const ALPHA_VECTOR_LEN: usize = 4;
-const MIN_OOD_POINTS: usize = 2;
 
 /// Verifies a serialized proof against the provided configuration and context.
 pub fn verify_proof_bytes(
@@ -203,10 +204,10 @@ fn precheck_body(
         .finalize()
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     let alpha_vector = challenges
-        .draw_alpha_vector(ALPHA_VECTOR_LEN)
+        .draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     let ood_points = challenges
-        .draw_ood_points(MIN_OOD_POINTS)
+        .draw_ood_points(PROOF_MIN_OOD_POINTS)
         .map_err(|_| VerificationFailure::ErrTranscriptOrder)?;
     let _ood_seed = challenges
         .draw_ood_seed()
@@ -232,6 +233,13 @@ fn precheck_body(
     }
     if proof.telemetry.fri_parameters.fold != 2
         || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
+    {
+        return Err(VerificationFailure::ErrEnvelopeMalformed);
+    }
+
+    if proof.telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
+        || proof.telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
+        || proof.telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
     {
         return Err(VerificationFailure::ErrEnvelopeMalformed);
     }
@@ -268,7 +276,15 @@ fn enforce_resource_limits(
         return Err(VerificationFailure::ErrFRILayerRootMismatch);
     }
 
+    if proof.fri_proof.layer_roots.len() > PROOF_MAX_FRI_LAYERS {
+        return Err(VerificationFailure::ErrFRILayerRootMismatch);
+    }
+
     if proof.fri_proof.queries.len() > context.limits.max_queries as usize {
+        return Err(VerificationFailure::ErrFRIQueryOutOfRange);
+    }
+
+    if proof.fri_proof.queries.len() > PROOF_MAX_QUERY_COUNT {
         return Err(VerificationFailure::ErrFRIQueryOutOfRange);
     }
 

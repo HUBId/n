@@ -13,16 +13,13 @@ use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, Pub
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
     FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_VERSION,
+    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
 use rpp_stark::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
 use rpp_stark::hash::merkle::{MerkleIndex, MerklePathElement};
-
-const ALPHA_VECTOR_LEN: usize = 4;
-const MIN_OOD_POINTS: usize = 2;
 
 #[test]
 fn proof_size_limit_is_enforced() {
@@ -326,10 +323,10 @@ fn build_ood_openings(
 
     let mut challenges = transcript.finalize().expect("finalize");
     let alphas = challenges
-        .draw_alpha_vector(ALPHA_VECTOR_LEN)
+        .draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)
         .expect("alpha vector");
     let points = challenges
-        .draw_ood_points(MIN_OOD_POINTS)
+        .draw_ood_points(PROOF_MIN_OOD_POINTS)
         .expect("ood points");
     let _ = challenges.draw_ood_seed().expect("ood seed");
 

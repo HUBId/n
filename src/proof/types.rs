@@ -6,6 +6,48 @@ use serde::{Deserialize, Serialize};
 /// Canonical proof version implemented by this crate.
 pub const PROOF_VERSION: u16 = 1;
 
+/// Canonical number of α challenges drawn from the Fiat–Shamir transcript.
+///
+/// The specification fixes the composition vector to four coefficients so the
+/// prover and verifier must always request exactly four challenges.
+pub const PROOF_ALPHA_VECTOR_LEN: usize = 4;
+
+/// Minimum number of out-of-domain points drawn before sealing the transcript.
+///
+/// The prover samples two ζ challenges to satisfy the DEEP consistency checks;
+/// verifiers must reject envelopes declaring fewer OOD openings.
+pub const PROOF_MIN_OOD_POINTS: usize = 2;
+
+/// Maximum query budget a canonical proof is allowed to declare.
+///
+/// All shipping profiles stay within 128 FRI queries which bounds the
+/// transcript sampling and telemetry reporting.
+pub const PROOF_MAX_QUERY_COUNT: usize = 128;
+
+/// Maximum number of FRI layers committed to by a canonical proof.
+///
+/// Profiles advertise at most twenty folding rounds; exceeding this limit is
+/// considered a malformed envelope.
+pub const PROOF_MAX_FRI_LAYERS: usize = 20;
+
+/// Maximum cap polynomial degree recorded in the telemetry frame.
+///
+/// Proof builders cap this value at the advertised FRI depth range which never
+/// exceeds twenty in the current specification.
+pub const PROOF_TELEMETRY_MAX_CAP_DEGREE: u16 = 20;
+
+/// Maximum final-polynomial cap size recorded in telemetry.
+///
+/// Query caps are limited to the canonical 128 query budget, so the telemetry
+/// payload may not declare a larger commitment.
+pub const PROOF_TELEMETRY_MAX_CAP_SIZE: u32 = 128;
+
+/// Maximum query budget mirrored in the telemetry section.
+///
+/// The telemetry frame mirrors the configured FRI security level and is
+/// bounded by the 128-query cap mandated by the specification.
+pub const PROOF_TELEMETRY_MAX_QUERY_BUDGET: u16 = 128;
+
 /// Fully decoded proof container mirroring the authoritative specification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
