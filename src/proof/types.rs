@@ -1,5 +1,4 @@
-use crate::config::{AirSpecId, ParamDigest, ProofKind};
-use crate::fri::FriProof;
+use crate::config::ParamDigest;
 use crate::utils::serialization::DigestBytes;
 use serde::{Deserialize, Serialize};
 
@@ -23,12 +22,6 @@ pub const PROOF_MIN_OOD_POINTS: usize = 2;
 /// All shipping profiles stay within 128 FRI queries which bounds the
 /// transcript sampling and telemetry reporting.
 pub const PROOF_MAX_QUERY_COUNT: usize = 128;
-
-/// Maximum number of FRI layers committed to by a canonical proof.
-///
-/// Profiles advertise at most twenty folding rounds; exceeding this limit is
-/// considered a malformed envelope.
-pub const PROOF_MAX_FRI_LAYERS: usize = 20;
 
 /// Maximum cap polynomial degree recorded in the telemetry frame.
 ///
@@ -54,25 +47,18 @@ pub struct Proof {
     /// Declared proof version (currently `1`).
     #[serde(with = "proof_version_codec")]
     pub version: u16,
-    /// Canonical proof kind stored in the envelope header.
-    #[serde(with = "proof_kind_codec")]
-    pub kind: ProofKind,
     /// Parameter digest binding configuration knobs.
     pub param_digest: ParamDigest,
-    /// AIR specification identifier for the proof kind.
-    pub air_spec_id: AirSpecId,
-    /// Canonical public input encoding.
-    pub public_inputs: Vec<u8>,
-    /// Digest binding commitments prior to parsing the body.
-    pub commitment_digest: DigestBytes,
-    /// Merkle commitment bundle for core, auxiliary and FRI layers.
-    pub merkle: MerkleProofBundle,
+    /// Digest binding the declared public values.
+    pub public_digest: DigestBytes,
+    /// Trace commitment bundle for core and auxiliary roots.
+    pub trace_commitment: TraceCommitment,
+    /// Optional composition polynomial commitment digest.
+    pub composition_commitment: Option<DigestBytes>,
     /// Out-of-domain opening payloads.
     pub openings: Openings,
-    /// FRI proof payload accompanying the envelope.
-    pub fri_proof: FriProof,
-    /// Telemetry frame describing declared lengths and digests.
-    pub telemetry: Telemetry,
+    /// Optional telemetry frame describing declared lengths and digests.
+    pub telemetry: Option<Telemetry>,
 }
 
 /// Serialization failure domains for proof encoding/decoding.
@@ -80,72 +66,37 @@ pub struct Proof {
 pub enum SerKind {
     /// Top-level proof framing.
     Proof,
-    /// Merkle commitment bundle section.
+    /// Trace commitment section.
     TraceCommitment,
     /// Optional composition commitment digest.
     CompositionCommitment,
-    /// Embedded FRI proof payload.
-    Fri,
     /// Out-of-domain openings section.
     Openings,
     /// Telemetry frame storing auxiliary metadata.
     Telemetry,
-    /// Serialized public-input body.
-    PublicInputs,
+    /// Public digest body.
+    PublicDigest,
 }
 
-/// Merkle commitment bundle covering core, auxiliary and FRI layer roots.
+/// Trace commitment bundle covering core and auxiliary roots.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MerkleProofBundle {
+pub struct TraceCommitment {
+    /// Digest binding commitments prior to parsing the body.
+    pub commitment_digest: DigestBytes,
     /// Core commitment root.
     pub core_root: [u8; 32],
     /// Auxiliary commitment root (zero if absent).
     pub aux_root: [u8; 32],
-    /// FRI layer roots emitted during the prover pipeline.
-    pub fri_layer_roots: Vec<[u8; 32]>,
 }
 
-impl MerkleProofBundle {
+impl TraceCommitment {
     /// Constructs a bundle from the provided roots without additional checks.
-    pub fn new(core_root: [u8; 32], aux_root: [u8; 32], fri_layer_roots: Vec<[u8; 32]>) -> Self {
+    pub fn new(commitment_digest: DigestBytes, core_root: [u8; 32], aux_root: [u8; 32]) -> Self {
         Self {
+            commitment_digest,
             core_root,
             aux_root,
-            fri_layer_roots,
         }
-    }
-
-    /// Assembles a bundle and validates that the provided FRI proof advertises
-    /// compatible layer roots. The first FRI root must match the declared core
-    /// root and the layer ordering must be identical.
-    pub fn from_fri_proof(
-        core_root: [u8; 32],
-        aux_root: [u8; 32],
-        fri_proof: &crate::fri::FriProof,
-    ) -> Result<Self, VerifyError> {
-        let bundle = Self::new(core_root, aux_root, fri_proof.layer_roots.clone());
-        bundle.ensure_consistency(fri_proof)?;
-        Ok(bundle)
-    }
-
-    /// Ensures that the bundle roots match the ones advertised by the FRI
-    /// proof. Callers may use this helper when the bundle is constructed from
-    /// individual roots to verify that the redundant data is internally
-    /// consistent.
-    pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
-        if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.core_root {
-            return Err(VerifyError::MerkleVerifyFailed {
-                section: MerkleSection::FriRoots,
-            });
-        }
-
-        if self.fri_layer_roots != fri_proof.layer_roots {
-            return Err(VerifyError::MerkleVerifyFailed {
-                section: MerkleSection::FriRoots,
-            });
-        }
-
-        Ok(())
     }
 }
 
@@ -156,15 +107,13 @@ pub struct Openings {
     pub out_of_domain: Vec<OutOfDomainOpening>,
 }
 
-/// Telemetry frame exposing declared lengths and FRI parameters.
+/// Telemetry frame exposing declared lengths and digests.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Telemetry {
     /// Declared header length (used for sanity checks).
     pub header_length: u32,
     /// Declared body length (includes integrity digest).
     pub body_length: u32,
-    /// Optional mirror of the FRI parameters encoded in the proof body.
-    pub fri_parameters: FriParametersMirror,
     /// Integrity digest covering the header bytes and body payload.
     pub integrity_digest: DigestBytes,
 }
@@ -177,15 +126,12 @@ pub struct VerifyReport {
     /// Flag indicating whether parameter hashing checks succeeded.
     #[serde(default)]
     pub params_ok: bool,
-    /// Flag indicating whether public input binding checks succeeded.
+    /// Flag indicating whether public digest binding checks succeeded.
     #[serde(default)]
-    pub public_ok: bool,
-    /// Flag indicating whether Merkle commitment checks succeeded.
+    pub public_digest_ok: bool,
+    /// Flag indicating whether trace commitment checks succeeded.
     #[serde(default)]
-    pub merkle_ok: bool,
-    /// Flag indicating whether the FRI verifier accepted the proof.
-    #[serde(default)]
-    pub fri_ok: bool,
+    pub trace_ok: bool,
     /// Flag indicating whether composition polynomial openings matched expectations.
     #[serde(default)]
     pub composition_ok: bool,
@@ -201,44 +147,14 @@ pub struct VerifyReport {
 pub enum MerkleSection {
     /// Commitment digest derived from advertised roots mismatched expectations.
     CommitmentDigest,
-    /// FRI layer roots emitted by the prover did not line up with the Merkle bundle.
-    FriRoots,
-    /// Authentication path validation failed while replaying FRI queries.
-    FriPath,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FriVerifyIssue {
-    /// The verifier derived more queries than the envelope advertised or allowed.
-    QueryOutOfRange,
-    /// Authentication path validation failed for one of the FRI queries.
-    PathInvalid,
-    /// Layer roots or folding invariants failed inside the FRI verifier.
-    LayerMismatch,
-    /// Security level recorded in the proof did not match the verifier profile.
-    SecurityLevelMismatch,
-    /// The envelope declared more layers than the verifier or spec permits.
-    LayerBudgetExceeded,
-    /// The codeword reconstructed during FRI validation was empty or malformed.
-    EmptyCodeword,
-    /// The FRI proof encoded an unexpected version identifier.
-    VersionMismatch,
-    /// The advertised query budget disagreed with the verifier profile.
-    QueryBudgetMismatch,
-    /// Folding invariants or related constraints were violated.
-    FoldingConstraint,
-    /// The prover emitted inconsistent out-of-domain samples.
-    OodsInvalid,
-    /// The verifier rejected the FRI proof for another reason.
-    Generic,
+    /// Authentication path validation failed while replaying trace queries.
+    TracePath,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerifyError {
     /// The proof version encoded in the header is not supported.
     VersionMismatch { expected: u16, actual: u16 },
-    /// The proof kind byte does not match the canonical ordering.
-    UnknownProofKind(u8),
     /// Declared header length does not match the observed byte count.
     HeaderLengthMismatch { declared: u32, actual: u32 },
     /// Declared body length does not match the observed byte count.
@@ -247,22 +163,18 @@ pub enum VerifyError {
     UnexpectedEndOfBuffer(String),
     /// Integrity digest recomputed from the payload disagreed with the header.
     IntegrityDigestMismatch,
-    /// The FRI section contained invalid structure.
-    InvalidFriSection(String),
     /// Encountered a non-canonical field element while decoding.
     NonCanonicalFieldElement,
     /// Parameter digest did not match the expected configuration digest.
     ParamsHashMismatch,
-    /// Public inputs failed decoding or did not match the expected layout.
-    PublicInputMismatch,
+    /// Public digest failed decoding or did not match the expected layout.
+    PublicDigestMismatch,
     /// Transcript phases were emitted out of order or with missing tags.
     TranscriptOrder,
     /// Out-of-domain openings were malformed or contained inconsistent values.
     OutOfDomainInvalid,
-    /// Merkle verification failed for a specific section.
+    /// Trace commitment verification failed for a specific section.
     MerkleVerifyFailed { section: MerkleSection },
-    /// FRI verification rejected the envelope.
-    FriVerifyFailed { issue: FriVerifyIssue },
     /// Composition polynomial exceeded declared degree bounds.
     DegreeBoundExceeded,
     /// Proof exceeded the configured maximum proof size.
@@ -277,30 +189,6 @@ pub enum VerifyError {
     Serialization(SerKind),
 }
 
-/// Mirror of the FRI parameters stored inside the proof body.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FriParametersMirror {
-    /// Folding factor (fixed to two in the current implementation).
-    pub fold: u8,
-    /// Degree of the cap polynomial.
-    pub cap_degree: u16,
-    /// Size of the cap commitment.
-    pub cap_size: u32,
-    /// Query budget consumed during verification.
-    pub query_budget: u16,
-}
-
-impl Default for FriParametersMirror {
-    fn default() -> Self {
-        Self {
-            fold: 2,
-            cap_degree: 0,
-            cap_size: 0,
-            query_budget: 0,
-        }
-    }
-}
-
 /// Out-of-domain opening description stored in the proof body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutOfDomainOpening {
@@ -312,53 +200,6 @@ pub struct OutOfDomainOpening {
     pub aux_values: Vec<[u8; 32]>,
     /// Composition polynomial evaluation.
     pub composition_value: [u8; 32],
-}
-
-mod proof_kind_codec {
-    use super::ProofKind;
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(value: &ProofKind, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_u8(encode(*value))
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<ProofKind, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let byte = u8::deserialize(deserializer)?;
-        decode(byte).map_err(serde::de::Error::custom)
-    }
-
-    fn encode(kind: ProofKind) -> u8 {
-        match kind {
-            ProofKind::Tx => 0,
-            ProofKind::State => 1,
-            ProofKind::Pruning => 2,
-            ProofKind::Uptime => 3,
-            ProofKind::Consensus => 4,
-            ProofKind::Identity => 5,
-            ProofKind::Aggregation => 6,
-            ProofKind::VRF => 7,
-        }
-    }
-
-    fn decode(byte: u8) -> Result<ProofKind, &'static str> {
-        Ok(match byte {
-            0 => ProofKind::Tx,
-            1 => ProofKind::State,
-            2 => ProofKind::Pruning,
-            3 => ProofKind::Uptime,
-            4 => ProofKind::Consensus,
-            5 => ProofKind::Identity,
-            6 => ProofKind::Aggregation,
-            7 => ProofKind::VRF,
-            _ => return Err("unknown proof kind"),
-        })
-    }
 }
 
 mod proof_version_codec {
