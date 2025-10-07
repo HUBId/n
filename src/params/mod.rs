@@ -50,9 +50,10 @@ mod stark_params;
 mod types;
 mod validate;
 
+pub use crate::ser::{SerError, SerKind};
 pub use builder::{BuiltinProfile, StarkParamsBuilder};
 pub use hash::params_hash;
-pub use ser::{deserialize_params, serialize_params, SerKind};
+pub use ser::{deserialize_params, serialize_params};
 pub use stark_params::StarkParams;
 pub use types::{
     ChallengeBounds, Endianness, FieldKind, FriFolding, FriParams, HashFamily, HashKind, LdeOrder,

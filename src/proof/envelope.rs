@@ -16,9 +16,9 @@ use crate::proof::ser::{
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
 use crate::proof::types::{
-    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, SerKind, Telemetry,
-    VerifyError,
+    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, Telemetry, VerifyError,
 };
+use crate::ser::SerKind;
 use crate::{
     config::{AirSpecId, ParamDigest, ProofKind},
     fri::FriProof,
