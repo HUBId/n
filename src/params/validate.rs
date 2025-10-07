@@ -41,7 +41,7 @@ pub enum ParamsError {
     /// Slack bits exceeded the allowed ratio of the target bits.
     SecuritySlackTooLarge { slack: u8, max_allowed: u8 },
     /// Serialisation failure when processing the parameter set.
-    SerializationError { kind: super::ser::SerKind },
+    SerializationError { kind: crate::ser::SerKind },
 }
 
 /// Validates all Stark parameter invariants and returns a [`ValidationReport`].
