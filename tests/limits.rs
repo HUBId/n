@@ -4,17 +4,23 @@ use rpp_stark::config::{
     ProofKind as ConfigProofKind, ProofSystemConfig, ResourceLimits, VerifierContext,
     COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG, PROOF_VERSION_V1,
 };
+use rpp_stark::field::prime_field::CanonicalSerialize;
 use rpp_stark::field::FieldElement;
-use rpp_stark::hash::{Hasher, PseudoBlake3Xof};
+use rpp_stark::hash::PseudoBlake3Xof;
+use rpp_stark::merkle::{
+    CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleProof,
+    MerkleTree, ProofNode,
+};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
+use rpp_stark::proof::params::canonical_stark_params;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
-    FriParametersMirror, FriVerifyIssue, MerkleAuthenticationPath, MerkleProofBundle, Openings,
-    OutOfDomainOpening, Proof, Telemetry, TraceOpenings, VerifyError, PROOF_ALPHA_VECTOR_LEN,
-    PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    CompositionOpenings, FriParametersMirror, FriVerifyIssue, MerkleAuthenticationPath,
+    MerklePathNode, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    TraceOpenings, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
@@ -194,7 +200,7 @@ fn build_envelope(
     context: &VerifierContext,
     inputs: &OwnedExecutionInputs,
     layer_count: usize,
-    query_count: usize,
+    _query_count: usize,
     final_poly_len: usize,
 ) -> ProofBytes {
     let public_inputs = inputs.as_public_inputs();
@@ -210,9 +216,6 @@ fn build_envelope(
             root
         })
         .collect();
-    let core_root = fri_layer_roots.first().copied().unwrap_or([0u8; 32]);
-    let aux_root = [0x22; 32];
-    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
     let security_level = match context.profile.fri_queries {
         96 => FriSecurityLevel::HiSec,
@@ -220,13 +223,51 @@ fn build_envelope(
         _ => FriSecurityLevel::Standard,
     };
 
+    let initial_domain_size = 1024;
     let final_polynomial = vec![FieldElement::ZERO; final_poly_len];
-    let queries = build_queries(layer_count, query_count);
     let fold_challenges = vec![FieldElement::ZERO; fri_layer_roots.len()];
 
+    let params = canonical_stark_params();
+    let leaf_count = initial_domain_size.max(1);
+    let zero_leaf = FieldElement::ZERO.to_bytes();
+    let trace_leaves: Vec<Leaf> = (0..leaf_count)
+        .map(|_| Leaf::new(zero_leaf.to_vec()))
+        .collect();
+    let (core_digest, core_aux) = <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::commit(
+        &params,
+        trace_leaves.clone().into_iter(),
+    )
+    .expect("trace commitment");
+
+    let mut fri_roots = fri_layer_roots.clone();
+    if fri_roots.is_empty() {
+        fri_roots.push(digest_to_array(core_digest.as_bytes()));
+    }
+
+    let composition_leaves = trace_leaves.clone();
+    let (aux_digest, aux_aux) = <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::commit(
+        &params,
+        composition_leaves.clone().into_iter(),
+    )
+    .expect("composition commitment");
+
+    let core_root = digest_to_array(core_digest.as_bytes());
+    let aux_root = digest_to_array(aux_digest.as_bytes());
+
+    let (ood_openings, derived_indices) = build_ood_openings(
+        context,
+        proof_kind,
+        &public_inputs,
+        &core_root,
+        &aux_root,
+        security_level,
+        &fri_layer_roots,
+        initial_domain_size,
+    );
+    let queries = build_queries(layer_count, &derived_indices);
     let fri_proof = FriProof::new(
         security_level,
-        1024,
+        initial_domain_size,
         fri_layer_roots.clone(),
         fold_challenges,
         final_polynomial,
@@ -235,19 +276,34 @@ fn build_envelope(
     )
     .expect("synthetic fri proof");
 
-    let (ood_openings, trace_indices) = build_ood_openings(
-        context,
-        proof_kind,
-        &public_inputs,
-        &core_root,
-        &aux_root,
-        &fri_proof,
-    );
+    let trace_indices: Vec<u32> = fri_proof
+        .queries
+        .iter()
+        .map(|query| query.position as u32)
+        .collect();
+
+    let (trace_leaf_bytes, trace_paths) =
+        build_opening_artifacts(&params, &core_aux, &trace_leaves, &trace_indices);
+    let trace_openings = TraceOpenings {
+        indices: trace_indices.clone(),
+        leaves: trace_leaf_bytes,
+        paths: trace_paths,
+    };
+
+    let (comp_leaf_bytes, comp_paths) =
+        build_opening_artifacts(&params, &aux_aux, &composition_leaves, &trace_indices);
+    let composition_openings = CompositionOpenings {
+        indices: trace_indices.clone(),
+        leaves: comp_leaf_bytes,
+        paths: comp_paths,
+    };
+
+    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_roots);
 
     let merkle = MerkleProofBundle {
         core_root,
         aux_root,
-        fri_layer_roots,
+        fri_layer_roots: fri_roots,
     };
 
     let telemetry = Telemetry {
@@ -273,8 +329,8 @@ fn build_envelope(
         },
         merkle,
         openings: Openings {
-            trace: build_trace_section(&trace_indices),
-            composition: None,
+            trace: trace_openings,
+            composition: Some(composition_openings),
             out_of_domain: ood_openings,
         },
         fri_proof,
@@ -291,10 +347,11 @@ fn build_envelope(
     ProofBytes::new(proof.to_bytes())
 }
 
-fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
-    (0..query_count)
-        .map(|idx| FriQueryProof {
-            position: idx,
+fn build_queries(layer_count: usize, indices: &[u32]) -> Vec<FriQueryProof> {
+    indices
+        .iter()
+        .map(|&index| FriQueryProof {
+            position: index as usize,
             layers: (0..layer_count)
                 .map(|_| FriQueryLayerProof {
                     value: FieldElement::ZERO,
@@ -309,23 +366,15 @@ fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
         .collect()
 }
 
-fn build_trace_section(indices: &[u32]) -> TraceOpenings {
-    let leaves = vec![Vec::new(); indices.len()];
-    let paths = vec![MerkleAuthenticationPath { nodes: Vec::new() }; indices.len()];
-    TraceOpenings {
-        indices: indices.to_vec(),
-        leaves,
-        paths,
-    }
-}
-
 fn build_ood_openings(
     context: &VerifierContext,
     proof_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     core_root: &[u8; 32],
     aux_root: &[u8; 32],
-    fri_proof: &FriProof,
+    security_level: FriSecurityLevel,
+    layer_roots: &[[u8; 32]],
+    initial_domain_size: usize,
 ) -> (Vec<OutOfDomainOpening>, Vec<u32>) {
     let air_spec_id = context.profile.air_spec_ids.tx.clone();
     let mut transcript = Transcript::new(TranscriptHeader {
@@ -352,7 +401,7 @@ fn build_ood_openings(
         .expect("block ctx");
 
     let mut challenges = transcript.finalize().expect("finalize");
-    let alphas = challenges
+    let _alphas = challenges
         .draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)
         .expect("alpha vector");
     let points = challenges
@@ -360,19 +409,19 @@ fn build_ood_openings(
         .expect("ood points");
     let _ = challenges.draw_ood_seed().expect("ood seed");
 
+    let zero_value = field_to_bytes(FieldElement::ZERO);
     let ood_values: Vec<OutOfDomainOpening> = points
         .iter()
-        .enumerate()
-        .map(|(index, point)| OutOfDomainOpening {
+        .map(|point| OutOfDomainOpening {
             point: *point,
-            core_values: vec![hash_ood_value(b"RPP-OOD/CORE", point, &alphas, index)],
+            core_values: vec![zero_value],
             aux_values: Vec::new(),
-            composition_value: hash_ood_value(b"RPP-OOD/COMP", point, &alphas, index),
+            composition_value: zero_value,
         })
         .collect();
 
     let _ = challenges.draw_fri_seed().expect("fri seed");
-    for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {
+    for (layer_index, _) in layer_roots.iter().enumerate() {
         challenges
             .draw_fri_eta(layer_index)
             .expect("fri eta challenge");
@@ -380,22 +429,11 @@ fn build_ood_openings(
     let query_seed = challenges.draw_query_seed().expect("query seed");
     let indices = derive_query_indices(
         query_seed,
-        fri_proof.security_level.query_budget(),
-        fri_proof.initial_domain_size,
+        security_level.query_budget(),
+        initial_domain_size,
     );
 
     (ood_values, indices)
-}
-
-fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: usize) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
-    hasher.update(point);
-    hasher.update(&(index as u32).to_le_bytes());
-    for alpha in alphas {
-        hasher.update(alpha);
-    }
-    *hasher.finalize().as_bytes()
 }
 
 fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<u32> {
@@ -419,4 +457,70 @@ fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec
         .into_iter()
         .map(|idx| idx.try_into().unwrap_or(u32::MAX))
         .collect()
+}
+
+fn build_opening_artifacts(
+    params: &rpp_stark::params::StarkParams,
+    aux: &CommitAux,
+    leaves: &[Leaf],
+    indices: &[u32],
+) -> (Vec<Vec<u8>>, Vec<MerkleAuthenticationPath>) {
+    let mut leaf_bytes = Vec::with_capacity(indices.len());
+    let mut paths = Vec::with_capacity(indices.len());
+    for &index in indices {
+        let proof = MerkleTree::<DeterministicMerkleHasher>::open(params, aux, &[index])
+            .expect("synthetic merkle proof");
+        let bytes = leaves
+            .get(index as usize)
+            .map(|leaf| leaf.as_bytes().to_vec())
+            .unwrap_or_else(|| FieldElement::ZERO.to_bytes().to_vec());
+        leaf_bytes.push(bytes);
+        paths.push(convert_tree_proof(&proof, index));
+    }
+    (leaf_bytes, paths)
+}
+
+fn convert_tree_proof(proof: &MerkleProof, index: u32) -> MerkleAuthenticationPath {
+    let mut nodes = Vec::with_capacity(proof.path().len());
+    let mut current = index;
+    let arity = proof.arity.as_usize() as u32;
+    for node in proof.path() {
+        match node {
+            ProofNode::Arity2([digest]) => {
+                let position = (current % arity) as u8;
+                nodes.push(MerklePathNode {
+                    index: position,
+                    sibling: digest_to_array(digest.as_bytes()),
+                });
+            }
+            ProofNode::Arity4(digests) => {
+                let position = (current % arity) as u8;
+                let sibling_index = (position as usize)
+                    .saturating_sub(1)
+                    .min(digests.len().saturating_sub(1));
+                nodes.push(MerklePathNode {
+                    index: position,
+                    sibling: digest_to_array(digests[sibling_index].as_bytes()),
+                });
+            }
+        }
+        if arity > 0 {
+            current /= arity;
+        }
+    }
+    MerkleAuthenticationPath { nodes }
+}
+
+fn field_to_bytes(value: FieldElement) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    let le = value.to_bytes();
+    bytes[..le.len()].copy_from_slice(&le);
+    bytes
+}
+
+fn digest_to_array(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let len = bytes.len().min(32);
+    out[..len].copy_from_slice(&bytes[..len]);
+    out
 }

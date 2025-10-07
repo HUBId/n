@@ -222,6 +222,10 @@ pub enum MerkleSection {
     FriRoots,
     /// Authentication path validation failed while replaying FRI queries.
     FriPath,
+    /// Core trace openings failed to verify against the commitment.
+    TraceCommit,
+    /// Composition openings failed to verify against the commitment.
+    CompositionCommit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -276,8 +280,18 @@ pub enum VerifyError {
     TranscriptOrder,
     /// Out-of-domain openings were malformed or contained inconsistent values.
     OutOfDomainInvalid,
+    /// Proof declared a Merkle scheme unsupported by the verifier.
+    UnsupportedMerkleScheme,
     /// Merkle verification failed for a specific section.
     MerkleVerifyFailed { section: MerkleSection },
+    /// Trace leaf payload did not match the expected evaluation.
+    TraceLeafMismatch,
+    /// Composition leaf payload did not match the expected evaluation.
+    CompositionLeafMismatch,
+    /// Trace out-of-domain evaluation disagreed with the Merkle/Fri binding.
+    TraceOodMismatch,
+    /// Composition out-of-domain evaluation disagreed with the Merkle/Fri binding.
+    CompositionOodMismatch,
     /// FRI verification rejected the envelope.
     FriVerifyFailed { issue: FriVerifyIssue },
     /// Composition polynomial exceeded declared degree bounds.

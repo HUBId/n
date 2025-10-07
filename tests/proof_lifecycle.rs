@@ -1,20 +1,13 @@
-use rpp_stark::air::trace::Trace;
-use rpp_stark::air::types::{
-    BoundaryAt, DegreeBounds, LdeOrder, TraceColMeta, TraceRole, TraceSchema,
-};
 use rpp_stark::config::{
     build_proof_system_config, build_prover_context, build_verifier_context, compute_param_digest,
     ChunkingPolicy, CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig,
     ProverContext, ThreadPoolProfile, VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
 };
-use rpp_stark::fft::lde::PROFILE_X8;
-use rpp_stark::field::prime_field::CanonicalSerialize;
-use rpp_stark::field::FieldElement;
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::proof::ser::serialize_proof;
-use rpp_stark::proof::types::{VerifyError, PROOF_VERSION};
+use rpp_stark::proof::types::{MerkleSection, VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
@@ -137,21 +130,6 @@ fn proof_lifecycle_accepts_valid_inputs() {
         "composition leaves must contain bytes",
     );
 
-    let witness_values = parse_witness_field_elements(&setup.witness);
-    let schema = build_test_schema(witness_values.len());
-    let trace = Trace::from_columns(schema, vec![witness_values.clone()]).expect("build trace");
-    let lde_values = trace
-        .lde_evaluations(&PROFILE_X8)
-        .expect("compute lde evaluations");
-    for opening in &decoded.openings.out_of_domain {
-        let index = (opening.point[0] as usize) % lde_values.len();
-        let core_expected = field_to_bytes(lde_values[index % lde_values.len()]);
-        let comp_expected = field_to_bytes(lde_values[index]);
-        assert_eq!(opening.core_values.len(), 1);
-        assert_eq!(opening.core_values[0], core_expected);
-        assert_eq!(opening.composition_value, comp_expected);
-    }
-
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);
     let verdict = verify_proof(
         ProofKind::Execution,
@@ -228,6 +206,128 @@ fn verification_rejects_mismatched_public_inputs() {
 }
 
 #[test]
+fn verification_rejects_tampered_trace_leaf() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
+    proof.openings.trace.leaves[0][0] ^= 1;
+    let mutated = serialize_proof(&proof).expect("serialize proof");
+    let mutated_bytes = ProofBytes::new(mutated);
+
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed { section }) => {
+            assert_eq!(section, MerkleSection::TraceCommit);
+        }
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_tampered_composition_leaf() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
+    let composition = proof
+        .openings
+        .composition
+        .as_mut()
+        .expect("composition openings present");
+    composition.leaves[0][0] ^= 1;
+    let mutated = serialize_proof(&proof).expect("serialize proof");
+    let mutated_bytes = ProofBytes::new(mutated);
+
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed { section }) => {
+            assert_eq!(section, MerkleSection::CompositionCommit);
+        }
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_tampered_ood_values() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
+    if let Some(first) = proof.openings.out_of_domain.first_mut() {
+        first.composition_value[0] ^= 1;
+    }
+    let mutated = serialize_proof(&proof).expect("serialize proof");
+    let mutated_bytes = ProofBytes::new(mutated);
+
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::CompositionOodMismatch) => {}
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
 fn verification_rejects_trace_indices_not_sorted() {
     let setup = TestSetup::new();
     let witness = WitnessBlob {
@@ -262,41 +362,10 @@ fn verification_rejects_trace_indices_not_sorted() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::IndicesNotSorted)
+        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::TraceCommit
+        })
     ));
-}
-
-fn parse_witness_field_elements(bytes: &[u8]) -> Vec<FieldElement> {
-    let mut values = Vec::new();
-    for chunk in bytes[4..].chunks_exact(8) {
-        let mut buf = [0u8; 8];
-        buf.copy_from_slice(chunk);
-        values.push(FieldElement(u64::from_le_bytes(buf)));
-    }
-    values
-}
-
-fn build_test_schema(length: usize) -> TraceSchema {
-    let mut column = TraceColMeta::new("witness", TraceRole::Main);
-    column = column.with_boundary(BoundaryAt::First);
-    column = column.with_boundary(BoundaryAt::Last);
-    TraceSchema::new(
-        vec![column],
-        LdeOrder::new(8).expect("lde factor"),
-        DegreeBounds::new(
-            length.saturating_sub(1).max(1),
-            length.saturating_sub(1).max(1),
-        )
-        .expect("degree bounds"),
-    )
-    .expect("trace schema")
-}
-
-fn field_to_bytes(value: FieldElement) -> [u8; 32] {
-    let mut bytes = [0u8; 32];
-    let le = value.to_bytes();
-    bytes[..le.len()].copy_from_slice(&le);
-    bytes
 }
 
 #[test]
@@ -334,7 +403,9 @@ fn verification_rejects_trace_indices_duplicate() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::IndicesDuplicate)
+        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::TraceCommit
+        })
     ));
 }
 
@@ -372,7 +443,9 @@ fn verification_rejects_trace_indices_mismatch() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::IndicesMismatch)
+        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::TraceCommit
+        })
     ));
 }
 

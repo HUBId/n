@@ -26,6 +26,7 @@
 //! releases while rejecting payloads that advertise an unsupported `version`.
 
 pub mod envelope;
+pub mod params;
 pub mod ser;
 pub mod types;
 pub mod verifier;
