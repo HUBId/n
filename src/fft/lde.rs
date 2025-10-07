@@ -165,7 +165,7 @@ pub struct LowDegreeExtender {
 impl LowDegreeExtender {
     /// Builds a new extender for the provided trace dimensions and profile.
     ///
-    /// The trace slice consumed by [`extend_trace`] must contain
+    /// The trace slice consumed by `extend_trace` must contain
     /// `trace_rows * trace_columns` elements laid out in **row-major natural order**.
     pub fn new(
         trace_rows: usize,

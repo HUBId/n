@@ -26,7 +26,7 @@
 //!
 //! where `β` is sampled via [`crate::transcript::TranscriptLabel::FriFoldChallenge`], `σ` is the
 //! coset shift supplied by [`coset_shift_schedule`], and arithmetic takes place
-//! over the Goldilocks field via [`fe_add`] and [`fe_mul`]. This formula mirrors
+//! over the Goldilocks field via `fe_add` and `fe_mul`. This formula mirrors
 //! the domain squaring performed by [`phi`].
 //!
 //! # Index and point mappings

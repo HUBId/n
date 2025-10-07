@@ -1,7 +1,7 @@
 //! Proof envelope implementation and serialization helpers.
 //!
 //! The builder defined in this module is responsible for assembling a
-//! specification-compliant [`Proof`](crate::proof::types::Proof).  It enforces
+//! specification-compliant [`Proof`].  It enforces
 //! structural invariants before emitting the proof and relies on the canonical
 //! serialization helpers from [`crate::proof::ser`] to derive the telemetry and
 //! size metrics.

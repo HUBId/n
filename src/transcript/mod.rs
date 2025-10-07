@@ -21,7 +21,7 @@
 //! | Queries | [`TranscriptLabel::QueryIndexStream`] | Transcript challenges | Index stream for trace/Fri openings. |
 //! | Final | [`TranscriptLabel::ProofClose`] | Transcript challenge | Final binding digest stored in the proof. |
 //!
-//! Determinism guarantee: identical [`StarkParams`] (including `params_hash` and
+//! Determinism guarantee: identical [`StarkParams`](crate::params::StarkParams) (including `params_hash` and
 //! transcript seed), the same [`TranscriptContext`], identical label ordering
 //! and payloads yield identical challenge sequences and state digests for both
 //! prover and verifier.  Forking via [`Transcript::fork`] produces independent

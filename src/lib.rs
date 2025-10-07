@@ -78,8 +78,8 @@ pub enum VerificationVerdict {
 /// 1. Bind the [`ProofSystemConfig`] and [`ProverContext`] against the declared
 ///    `kind`.
 /// 2. Ingest the phase-2 public input layout using [`PublicInputs`].
-/// 3. Absorb the witness container and execute the pipeline described in
-///    [`proof::prover::PipelineSpec`].
+/// 3. Absorb the witness container and execute the pipeline described in the
+///    `proof::prover` module.
 /// 4. Assemble the [`proof::types::Proof`] container and serialise it using the
 ///    canonical helpers exposed by [`proof::ser`].
 ///
@@ -103,8 +103,8 @@ pub fn generate_proof(
 
 /// Verifies a single proof and returns a [`VerificationVerdict`].
 ///
-/// The verification logic MUST execute the steps described in
-/// [`proof::verifier::SingleVerifySpec`]. The `config` and `verifier_context`
+/// The verification logic MUST execute the steps described in the
+/// `proof::verifier` module. The `config` and `verifier_context`
 /// parameters must match the ones used by the prover; otherwise
 /// [`proof::types::VerifyError::ParamsHashMismatch`] is expected.
 pub fn verify_proof(
@@ -136,8 +136,8 @@ pub fn verify_proof(
 
 /// Verifies a batch of proofs under a shared block context.
 ///
-/// Implementations must follow the aggregation rules documented in
-/// [`proof::aggregation::BatchVerificationSpec`]. The returned outcome records
+/// Implementations must follow the aggregation rules documented in the
+/// `proof::aggregation` module. The returned outcome records
 /// whether all proofs were accepted and, in case of failures, which
 /// [`proof::types::VerifyError`] triggered the rejection.
 pub fn batch_verify(
