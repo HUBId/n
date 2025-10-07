@@ -169,6 +169,22 @@ Fehlermodell der gesamten Codebasis.
 Das Default-Feature-Set ändert kein bestehendes Verhalten außerhalb der
 Library.
 
+### Parallelisierungs-Feature
+
+Das optionale Cargo-Feature `parallel` aktiviert deterministisch geplante
+Rayon-Workloads für zentrale Hotspots:
+
+* Radix-2 FFT-Stufen (bit-reverse und Cooley–Tukey) in `src/fft`.
+* Merkle-Baum-Konstruktion in `src/merkle`.
+* FRI-Folding (`binary_fold`) in `src/fri`.
+
+Alle Algorithmen verwenden einen festen Chunk-Scheduler und teilen die Arbeit in
+stabile Bereiche ein, damit die Reihenfolge der Speicherzugriffe unabhängig von
+der Thread-Anzahl bleibt. Die sequentielle und die parallele Ausführung liefern
+dadurch byte-identische Roots, Evaluierungen und Proof-Artefakte. Tests unter
+`tests/parallel_equivalence.rs` verifizieren diesen Anspruch, indem sie die
+Parallelisierung zur Laufzeit deaktivieren und Ergebnisse direkt vergleichen.
+
 ### Modulbaum & Dateien (Top-Level)
 
 - `src/params/...` – Parameter, Profile, Hash-Bindings, `params_hash()`.

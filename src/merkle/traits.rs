@@ -4,7 +4,14 @@ use super::types::{Leaf, MerkleError};
 
 /// Hash abstraction used by the Merkle commitment layer.
 pub trait MerkleHasher {
-    type Digest: AsRef<[u8]> + Eq + Copy + Clone + serde::Serialize + serde::de::DeserializeOwned;
+    type Digest: AsRef<[u8]>
+        + Eq
+        + Copy
+        + Clone
+        + Send
+        + Sync
+        + serde::Serialize
+        + serde::de::DeserializeOwned;
 
     fn hash_leaves(domain_sep: u64, ordered_leaf_bytes: &[u8]) -> Self::Digest;
 

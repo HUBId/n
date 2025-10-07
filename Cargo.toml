@@ -16,11 +16,12 @@ crate-type = ["rlib"]
 default = []
 audit-lde = []
 audit-lde-hisec = ["audit-lde"]
-parallel = []
+parallel = ["rayon"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["use-std"] }
+rayon = { version = "1", optional = true }
 
 [dev-dependencies]
 bincode = "1"

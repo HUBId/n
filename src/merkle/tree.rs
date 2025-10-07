@@ -151,10 +151,12 @@ impl<H: MerkleHasher> MerkleTree<H> {
         I: ExactSizeIterator<Item = Leaf>,
     {
         let expected = self.config.expected_leaf_bytes();
-        let mut hashed: Vec<H::Digest> = Vec::with_capacity(leaves.len());
-        let mut leaf_count = 0usize;
+        let leaves_vec: Vec<Leaf> = leaves.collect();
+        if leaves_vec.is_empty() {
+            return Err(MerkleError::EmptyLeaves);
+        }
 
-        for leaf in leaves {
+        for leaf in &leaves_vec {
             if leaf.as_bytes().len() != expected {
                 let got = (leaf.as_bytes().len() / field_element_size(self.config.field)) as u8;
                 return Err(MerkleError::LeafWidthMismatch {
@@ -162,14 +164,30 @@ impl<H: MerkleHasher> MerkleTree<H> {
                     got,
                 });
             }
-            let digest = H::hash_leaves(self.config.domain_sep, leaf.as_bytes());
-            hashed.push(digest);
-            leaf_count += 1;
         }
 
-        if hashed.is_empty() {
-            return Err(MerkleError::EmptyLeaves);
-        }
+        let leaf_count = leaves_vec.len();
+        #[cfg(feature = "parallel")]
+        let hashed: Vec<H::Digest> = if crate::utils::parallelism_enabled() {
+            use rayon::prelude::*;
+            let chunk = crate::utils::preferred_chunk_size(leaf_count.max(1));
+            leaves_vec
+                .par_iter()
+                .with_min_len(chunk)
+                .with_max_len(chunk)
+                .map(|leaf| H::hash_leaves(self.config.domain_sep, leaf.as_bytes()))
+                .collect()
+        } else {
+            leaves_vec
+                .iter()
+                .map(|leaf| H::hash_leaves(self.config.domain_sep, leaf.as_bytes()))
+                .collect()
+        };
+        #[cfg(not(feature = "parallel"))]
+        let hashed: Vec<H::Digest> = leaves_vec
+            .iter()
+            .map(|leaf| H::hash_leaves(self.config.domain_sep, leaf.as_bytes()))
+            .collect();
 
         let mut levels = Vec::new();
         levels.push(hashed.clone());
@@ -178,26 +196,72 @@ impl<H: MerkleHasher> MerkleTree<H> {
         let mut current = hashed;
 
         while current.len() > 1 {
-            let mut next = Vec::with_capacity(current.len().div_ceil(arity));
-            for chunk in current.chunks(arity) {
-                let mut children: Vec<H::Digest> = chunk.to_vec();
-                while children.len() < arity {
+            let next_len = current.len().div_ceil(arity);
+            #[cfg(feature = "parallel")]
+            let next: Vec<H::Digest> = if crate::utils::parallelism_enabled() {
+                use rayon::prelude::*;
+                let chunk = crate::utils::preferred_chunk_size(next_len.max(1));
+                (0..next_len)
+                    .into_par_iter()
+                    .with_min_len(chunk)
+                    .with_max_len(chunk)
+                    .map(|index| {
+                        let start = index * arity;
+                        let end = (start + arity).min(current.len());
+                        let mut children: Vec<H::Digest> = current[start..end].to_vec();
+                        assert!(!children.is_empty(), "missing child when padding level");
+                        let last = *children
+                            .last()
+                            .expect("padded branch must have at least one child");
+                        while children.len() < arity {
+                            children.push(last);
+                        }
+                        H::hash_nodes(self.config.domain_sep, &children)
+                    })
+                    .collect()
+            } else {
+                (0..next_len)
+                    .map(|index| {
+                        let start = index * arity;
+                        let end = (start + arity).min(current.len());
+                        let mut children: Vec<H::Digest> = current[start..end].to_vec();
+                        assert!(!children.is_empty(), "missing child when padding level");
+                        let last = *children
+                            .last()
+                            .expect("padded branch must have at least one child");
+                        while children.len() < arity {
+                            children.push(last);
+                        }
+                        H::hash_nodes(self.config.domain_sep, &children)
+                    })
+                    .collect()
+            };
+            #[cfg(not(feature = "parallel"))]
+            let next: Vec<H::Digest> = (0..next_len)
+                .map(|index| {
+                    let start = index * arity;
+                    let end = (start + arity).min(current.len());
+                    let mut children: Vec<H::Digest> = current[start..end].to_vec();
+                    assert!(!children.is_empty(), "missing child when padding level");
                     let last = *children
                         .last()
-                        .ok_or(MerkleError::InvalidTreeState {
-                            reason: "missing child when padding level",
-                        })?;
-                    children.push(last);
-                }
-                next.push(H::hash_nodes(self.config.domain_sep, &children));
-            }
+                        .expect("padded branch must have at least one child");
+                    while children.len() < arity {
+                        children.push(last);
+                    }
+                    H::hash_nodes(self.config.domain_sep, &children)
+                })
+                .collect();
             levels.push(next.clone());
             current = next;
         }
 
-        let root = current.first().copied().ok_or(MerkleError::InvalidTreeState {
-            reason: "missing root after commitment",
-        })?;
+        let root = current
+            .first()
+            .copied()
+            .ok_or(MerkleError::InvalidTreeState {
+                reason: "missing root after commitment",
+            })?;
         self.leaf_count = leaf_count;
         self.levels = Some(levels);
 

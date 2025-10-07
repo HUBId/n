@@ -310,11 +310,6 @@ pub(super) fn radix2_domain_size(log2_size: usize) -> usize {
     1usize << log2_size
 }
 
-/// Returns the number of butterflies executed per stage.
-pub(super) fn radix2_stage_butterflies(log2_size: usize) -> usize {
-    radix2_domain_size(log2_size) / 2
-}
-
 /// Applies the canonical bit-reversal permutation to `values` in-place.
 pub(super) fn apply_bit_reversal(values: &mut [FieldElement], log2_size: usize) {
     let size = values.len();
@@ -337,28 +332,47 @@ pub(super) fn execute_cooley_tukey_stages(
     twiddles: &[FieldElement],
 ) {
     let size = radix2_domain_size(log2_size);
-    let total_butterflies = radix2_stage_butterflies(log2_size);
     for stage in 0..log2_size {
         let m = 1usize << (stage + 1);
         let half_m = m / 2;
         let twiddle_stride = size / m;
-        let mut processed = 0;
-        while processed < total_butterflies {
-            let chunk_end = (processed + RADIX2_FFT_BUTTERFLIES_PER_TILE).min(total_butterflies);
-            for butterfly in processed..chunk_end {
-                let block = butterfly / half_m;
-                let j = butterfly % half_m;
-                let k = block * m;
-                let twiddle_index = j * twiddle_stride;
-                let twiddle = twiddles[twiddle_index];
-                let u = values[k + j];
-                let v = values[k + j + half_m];
-                let t = montgomery_mul(&twiddle, &v);
-                values[k + j] = u.add(&t);
-                values[k + j + half_m] = u.sub(&t);
+        let stage_twiddles: Vec<FieldElement> =
+            (0..half_m).map(|j| twiddles[j * twiddle_stride]).collect();
+
+        #[cfg(feature = "parallel")]
+        {
+            use crate::utils::parallelism_enabled;
+            use crate::utils::preferred_chunk_size;
+            use rayon::prelude::*;
+
+            if parallelism_enabled() {
+                let chunk = preferred_chunk_size((size / m).max(1));
+                values
+                    .par_chunks_exact_mut(m)
+                    .with_min_len(chunk)
+                    .with_max_len(chunk)
+                    .for_each(|block| apply_stage_block(block, half_m, &stage_twiddles));
+            } else {
+                for block in values.chunks_exact_mut(m) {
+                    apply_stage_block(block, half_m, &stage_twiddles);
+                }
             }
-            processed = chunk_end;
         }
+        #[cfg(not(feature = "parallel"))]
+        for block in values.chunks_exact_mut(m) {
+            apply_stage_block(block, half_m, &stage_twiddles);
+        }
+    }
+}
+
+fn apply_stage_block(block: &mut [FieldElement], half_m: usize, stage_twiddles: &[FieldElement]) {
+    for j in 0..half_m {
+        let twiddle = stage_twiddles[j];
+        let u = block[j];
+        let v = block[j + half_m];
+        let t = montgomery_mul(&twiddle, &v);
+        block[j] = u.add(&t);
+        block[j + half_m] = u.sub(&t);
     }
 }
 
