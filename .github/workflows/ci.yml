@@ -16,6 +16,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Cargo build
         run: cargo build --locked
+      - name: Cargo clippy
+        run: cargo clippy --locked -- -D warnings
       - name: Cargo test
         run: cargo test -p rpp-stark -- --nocapture
       - name: Generate profile reports
