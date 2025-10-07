@@ -409,6 +409,182 @@ Alle Tests grün, Snapshots stabil, Clippy ohne Warnungen, Benches laufen,
 Doku vollständig (Layouts, Reihenfolgen, Versionierung, Policies). Keine
 nightly-Abhängigkeiten.
 
+## Roadmap
+
+### Phase 0 – Projektgerüst & Leitplanken
+
+**Ziele:** saubere Basis, keine Nightly, deterministische Tests.
+
+**Aufgaben**
+
+- MSRV festlegen (README + CI).
+- `clippy -D warnings`, `#![forbid(unsafe_code)]` in lib-root.
+- CI: build+test+clippy auf stable; Artefakte: Test-Logs, Snapshots.
+
+**Definition of Done (DoD):** Pipeline grün, keine Warnings, Policies dokumentiert.
+
+### Phase 1 – Zentrales Ser-Schema (`ser/`)
+
+**Ziele:** einheitliche LE-Serialisierung für Ints, Felt, Digest, Vec, Option, Enums.
+
+**Aufgaben**
+
+- Ser-Helfer: `u16`/`u32`/`u64`/`u128` (LE), `bool` (`u8`), Bytes (LP `u32`), Felt (fixe LE-Byte-Länge), Digest (roh), `Vec<T>` (`u32`-Anzahl), Option (`u8`-Flag), Enum-Tag (`u8`/`u16`).
+- Fehler `SerError`/`SerKind` + Mapping.
+- Tests: Roundtrip, Property (kleine `Vec<Felt>`), Negativ (InvalidLength/Tag), Snapshots für repräsentative Strukturen.
+
+**DoD:** Snapshots stabil, alle Module müssen diese Helfer verwenden.
+
+### Phase 2 – Params (+ Profile & Hash)
+
+**Ziele:** `StarkParams` + `params_hash()` stabil; Profile X8/HISEC.
+
+**Aufgaben**
+
+- Strukturfelder (`proof`/`fri`/`merkle`/`transcript`/`lde`/`security`/`hash`) exakt wie Blueprint.
+- Profile definieren (z. B. X8, HISEC X16); Blake2s-256 als Default-Digest.
+- Tests: Roundtrip, `params_hash`-Stabilität, Snapshot pro Profil, Invarianten.
+
+**DoD:** `params_hash` fix, Profiles dokumentiert.
+
+### Phase 3 – Transcript
+
+**Ziele:** deterministische Fiat–Shamir-Engine mit festen Labels/Phasen.
+
+**Aufgaben**
+
+- Phasenfolge: Init → Public → TraceCommit → CompCommit? → FRI (layered) → Queries → Final.
+- API: `absorb_bytes`/`digest`/`felt`; `challenge_field`/`usize`/`bytes`.
+- Tests: Wiederholbarkeit (gleiche Inputs ⇒ gleiche Challenges), Label-Order.
+
+**DoD:** deterministisch, Dokumentation mit Label-Tabelle.
+
+### Phase 4 – Merkle
+
+**Ziele:** Arity-2/4 Baum, festes Leaf-Layout (LE), Verify-API.
+
+**Aufgaben**
+
+- Leaf-Layout: `leaf_width × Felt` (LE-konkat), Order via `lde.order`.
+- Domain-Separation (Leaf/Node Tags) dokumentieren.
+- Proof-Struktur + Batch-Openings (Indices strikt aufsteigend + unique).
+- Tests: Commit/Open/Verify; Negativ (Pfadknoten/Root/Arity/Indices), Snapshots.
+
+**DoD:** Verify stabil; Bytes & Regeln dokumentiert.
+
+### Phase 5 – FRI
+
+**Ziele:** Proof & Verify für kleines N; Folding formal fixiert.
+
+**Aufgaben**
+
+- Domain `N = 2^logN`; Folding mit βᵢ; Index-Mapping klar.
+- Proof: version, `roots[]`, `fold_challenges[]`, `query_proofs[]`, optional OODS.
+- Verifier: reproduziert Roots/Challenges via Transcript; nutzt lokale Query-Indizes.
+- Tests: E2E klein; Negativ (Challenge flip, Pfad-Fehler), Snapshots.
+
+**DoD:** Kleine FRI-Beweise laufen deterministisch.
+
+### Phase 6 – AIR & Composition
+
+**Ziele:** AIR-Traits + Beispiel-AIR + Composer.
+
+**Aufgaben**
+
+- Traits: `Air`, `TraceBuilder`, `PublicInputsCodec` (Encode + Digest), `Evaluator`/`Boundary`.
+- Composer: α-Randomizer via Transcript; Degree-Limits; Evaluationsvektoren.
+- Beispiel-AIR (LFSR/MiMC) für E2E.
+- Tests: deterministischer Trace, Degree-Grenzen, E2E-Mini.
+
+**DoD:** Beispiel-AIR generiert Prove/Verify-fähige Evaluations.
+
+### Phase 7 – Proof-Envelope (ABI) & Header-Verifier
+
+**Ziele:** binärstabiler Envelope + Header-Checks.
+
+**Aufgaben**
+
+- Proof-Layout exakt laut Blueprint (Version, Hashes, Commits, FRI, Openings, Telemetry).
+- Ser/De via `ser/`.
+- `verify()` (Teil A): Version, `params_hash`, `public_digest`, `size_gate` (echte Serialisierung).
+- Tests: Roundtrip + Snapshot; 4 Negativfälle (Version/Params/Public/Size).
+
+**DoD:** Proof-Bytes eingefroren (Snapshot), Header-Verifier grün.
+
+### Phase 8 – Verifier-Orchestrierung komplett
+
+**Ziele:** vollständige Verify-Pipeline.
+
+**Aufgaben**
+
+- Transcript-Rebuild (fixe Reihenfolge).
+- Query-Indices lokal erzeugen, sortieren, deduplizieren; mit `openings.trace.indices` abgleichen (`NotSorted`/`Duplicate`/`Mismatch`).
+- Merkle-Openings: Root-Match + Pfad-Verify.
+- FRI-Verify einhängen, Fehler mappen.
+- Composition-Konsistenz (falls `comp_commit`): Leaves bytegenau an gleichen Indizes.
+- Report-Flags setzen; `total_bytes` füllen.
+- Tests: Queries-Gleichheit, Merkle-Negativmatrix, FRI-Glue (flip), Composition-Mutation, Report.
+
+**DoD:** Alle Verifier-Tests grün; Diagnose-Fehler präzise.
+
+### Phase 9 – Parallelisierung (optional, stable)
+
+**Ziele:** Rayon-Flag ohne Ergebnisabweichung.
+
+**Aufgaben**
+
+- Parallele Pfade (Commit/FRI) hinter `parallel`-Feature; deterministische Reduktionen.
+- Tests: Bit-Gleichheit on/off für Mini-Proof.
+
+**DoD:** Byte-identische Outputs mit/ohne Parallel.
+
+### Phase 10 – Hardening, Docs, Release
+
+**Ziele:** robuste Lib, klare Doku, Version 1.0.
+
+**Aufgaben**
+
+- Negative Property-Tests (gezielte Fail-Injection).
+- README/Docs: Layout-Tabellen (Proof/Openings/Bundle), Label-Reihenfolge, Versionierungspolitik, Size-Gates, STWO-Adapterhinweise.
+- Benchmarks (stable): Parse/Verify für kleine/mittlere Größen; Artefakte speichern.
+- Version taggen; CHANGELOG.
+
+**DoD:** Doku vollständig, CI grün, Bench-Artefakte vorhanden, Tag v1.0.0.
+
+### PR-Plan (empfohlen, klein & linear)
+
+1. Ser-Schema + Tests.
+2. Params + Profiles + Snapshots.
+3. Transcript + Determinismus-Tests.
+4. Merkle + Tests/Snapshots.
+5. FRI + Mini-E2E + Snapshots.
+6. AIR + Beispiel-AIR + E2E.
+7. Proof-Envelope + Header-Verifier + Snapshots.
+8. Vollständiger Verifier (Queries/Merkle/FRI/Composition) + Tests.
+9. Parallel-Flag + Gleichheits-Tests.
+10. Docs/Benches/Release.
+
+### Quality Gates (pro PR)
+
+- `cargo test` (stable)
+- `cargo clippy -D warnings`
+- deterministische Snapshots (keine Umgebungsabhängigkeiten)
+- Kein `unsafe`, keine `unwrap`/`expect` in Lib-Logik
+- Review-Checklist: Endianness, Längenfelder, Fehlerpfade, deterministische Reihenfolge
+
+### Risiken & Gegenmaßnahmen
+
+- Drift beim Ser-Layout: Snapshots + `PROOF_VERSION++` bei Änderungen.
+- Nichtdeterminismus: alle Zufallspfade über Transcript; keine OS-RNGs; Sort + Dedup für Indizes.
+- Größen-Explosion: Size-Gate früh aktiv; Benchmarks zur Beobachtung.
+- STWO-Interop: Digest 32B (Blake2s) + dokumentierte Domain-Separation; ggf. Adapter-Hasher.
+
+### Spätere Chain-Integration (separat)
+
+- Adapter-Layer (Felt/Digest/Hasher), Feature-Gate `backend-rpp-stark`.
+- Zwei CLI-Binaries (`prove`, `verify`) für manuelle Tests.
+- Proof-Size-Gate an Node-Config mappen.
+
 ## Canonical STARK parameters
 
 The [`params`](src/params/mod.rs) module defines `StarkParams` as the single
