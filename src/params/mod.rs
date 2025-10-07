@@ -20,16 +20,17 @@
 //! | Merkle & Transcript | Commitment encoding rules and Fiat–Shamir transcript framing. |
 //! | Proof & Security | Envelope size limits and overall soundness budgeting. |
 //!
-//! All validation logic lives in [`validate`], canonical serialisation lives in
-//! [`ser`] and the stable digest computation is exposed via
+//! All validation logic lives in the internal `validate` module, canonical
+//! serialisation lives in the `ser` module, and the stable digest computation is
+//! exposed via
 //! [`StarkParams::params_hash`].  Consumers are expected to use the
 //! [`StarkParamsBuilder`] helper which offers safe defaults and pre-defined
 //! [`BuiltinProfile`] presets.
 //!
 //! # Invariants
 //!
-//! * The canonical serialisation is strictly ordered as documented in
-//!   [`ser`] and is stable across Rust versions.
+//! * The canonical serialisation is strictly ordered as documented in the `ser`
+//!   module and is stable across Rust versions.
 //! * [`StarkParams::params_hash`] commits to this serialisation and therefore
 //!   uniquely identifies compatible parameter sets.
 //! * [`StarkParams::is_compatible_with`] only allows variations on

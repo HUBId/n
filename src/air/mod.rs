@@ -32,7 +32,7 @@
 //! | `permutation` | `columns::PERM_WIDTH` | Optional permutation argument state. |
 //! | `lookup` | `columns::LOOKUP_WIDTH` | Lookup table witnesses for Kap. 3. |
 //!
-//! The [`trace::RowIterator`] yields rows in strictly increasing step order and
+//! The trace row iterator yields rows in strictly increasing step order and
 //! column-major storage is prohibited. Each concrete AIR must document its
 //! column labelling in Kap. 2 so that verifier reproduces the same layout.
 //!
@@ -45,7 +45,7 @@
 //! | `public_values` | `Vec<FieldElement>` | Registers exposed to the verifier. |
 //! | `challenge_bound` | `u32` LE | Upper bound on transcript challenges (Kap. 4). |
 //!
-//! Serialisation rules are centralised in [`types::PublicInputs`] and shared with
+//! Serialisation rules are centralised in the [`types`] module and shared with
 //! the transcript module to guarantee that both prover and verifier feed the
 //! exact byte stream during the `PublicInputsDigest` absorption phase.
 //!
@@ -60,7 +60,7 @@
 //!   their Merkle leaves match the verifier derivation.
 //! * **Merkle.** Commitment ordering follows the stage boundary: trace roots are
 //!   absorbed before composition roots. Branch encodings are fixed in Kap. 4.
-//! * **Transcript and FRI.** [`traits::AirTranscript`] enumerates every label and
+//! * **Transcript and FRI.** The [`traits`] module enumerates every label and
 //!   enforces the Fiat–Shamir challenge ordering: `TraceChallengeA` →
 //!   `CompChallengeA` → `FriFoldChallenge(i)` → `QueryIndexStream`. Kap. 7 shows
 //!   the resulting deterministic proof objects.

@@ -11,6 +11,7 @@ use crate::config::{
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
 use crate::fri::FriVerifier;
+use crate::fri::PseudoBlake3Xof;
 use crate::hash::Hasher;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
@@ -25,6 +26,7 @@ use crate::proof::types::{
     PROOF_VERSION,
 };
 use crate::utils::serialization::ProofBytes;
+use core::convert::TryInto;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct VerificationStages {
@@ -313,11 +315,17 @@ fn precheck_body(
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
     }
-    challenges
+    let query_seed = challenges
         .draw_query_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let security_level = map_security_level(&context.profile);
+    let derived_indices = derive_query_positions(
+        query_seed,
+        security_level.query_budget(),
+        proof.fri_proof.initial_domain_size,
+    );
+    validate_trace_indices(&proof.openings.trace.indices, &derived_indices)?;
     if proof.fri_proof.security_level != security_level {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::SecurityLevelMismatch,
@@ -359,6 +367,56 @@ fn precheck_body(
         fri_seed,
         security_level,
     })
+}
+
+fn validate_trace_indices(provided: &[u32], derived: &[usize]) -> Result<(), VerifyError> {
+    let mut previous: Option<u32> = None;
+    for &value in provided {
+        if let Some(prev) = previous {
+            if value < prev {
+                return Err(VerifyError::IndicesNotSorted);
+            }
+            if value == prev {
+                return Err(VerifyError::IndicesDuplicate);
+            }
+        }
+        previous = Some(value);
+    }
+
+    if derived.len() != provided.len() {
+        return Err(VerifyError::IndicesMismatch);
+    }
+
+    for (&expected, &actual) in provided.iter().zip(derived.iter()) {
+        let actual_u32: u32 = actual
+            .try_into()
+            .map_err(|_| VerifyError::IndicesMismatch)?;
+        if expected != actual_u32 {
+            return Err(VerifyError::IndicesMismatch);
+        }
+    }
+
+    Ok(())
+}
+
+fn derive_query_positions(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<usize> {
+    if domain_size == 0 {
+        return Vec::new();
+    }
+    let mut xof = PseudoBlake3Xof::new(&seed);
+    let target = count.min(domain_size);
+    let mut unique = Vec::with_capacity(target);
+    let mut seen = vec![false; domain_size];
+    while unique.len() < target {
+        let word = xof.next_u64();
+        let position = (word % (domain_size as u64)) as usize;
+        if !seen[position] {
+            seen[position] = true;
+            unique.push(position);
+        }
+    }
+    unique.sort();
+    unique
 }
 
 fn enforce_resource_limits(

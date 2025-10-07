@@ -9,10 +9,10 @@
 //!   field elements in little-endian byte order.  The order is always
 //!   row-major.  No length prefix or index tag is added.
 //! * **Domain separation:** every hash invocation receives the `domain_sep`
-//!   parameter from [`StarkParams`], preceded by a one byte node tag (`0x00`
+//!   parameter from [`StarkParams`](crate::params::StarkParams), preceded by a one byte node tag (`0x00`
 //!   for leaves, `0x01` for internal nodes).
 //! * **Hash family:** the hashing backend is selected through
-//!   [`StarkParams::hash`].  The [`MerkleHasher`] trait abstracts the concrete
+//!   [`StarkParams::hash`](crate::params::StarkParams::hash).  The [`MerkleHasher`] trait abstracts the concrete
 //!   implementation to keep the commitment layer family-neutral.
 //!
 //! The public API re-exports the most relevant types for convenience.

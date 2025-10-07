@@ -12,7 +12,8 @@ use rpp_stark::proof::ser::{
     serialize_proof_header, serialize_proof_payload,
 };
 use rpp_stark::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
+    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
+    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings,
     PROOF_VERSION,
 };
 use rpp_stark::ser::SerKind;
@@ -64,7 +65,32 @@ fn sample_proof() -> Proof {
         aux_root,
         fri_layer_roots,
     };
+    let trace = TraceOpenings {
+        indices: vec![0, 3],
+        leaves: vec![vec![0xaa], vec![0xbb, 0xcc]],
+        paths: vec![
+            MerkleAuthenticationPath {
+                nodes: vec![MerklePathNode {
+                    index: 0,
+                    sibling: [0x44u8; 32],
+                }],
+            },
+            MerkleAuthenticationPath {
+                nodes: vec![MerklePathNode {
+                    index: 1,
+                    sibling: [0x55u8; 32],
+                }],
+            },
+        ],
+    };
+    let composition = Some(CompositionOpenings {
+        indices: vec![0],
+        leaves: vec![vec![0xdd, 0xee, 0xff]],
+        paths: vec![MerkleAuthenticationPath { nodes: Vec::new() }],
+    });
     let openings = Openings {
+        trace,
+        composition,
         out_of_domain: vec![OutOfDomainOpening {
             point: [3u8; 32],
             core_values: vec![[4u8; 32]],

@@ -261,7 +261,8 @@ mod tests {
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     };
     use crate::proof::types::{
-        FriParametersMirror, MerkleProofBundle, Openings, Proof, Telemetry, PROOF_VERSION,
+        FriParametersMirror, MerkleProofBundle, Openings, Proof, Telemetry, TraceOpenings,
+        PROOF_VERSION,
     };
     use crate::proof::verifier::PrecheckedProof;
     use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
@@ -362,6 +363,12 @@ mod tests {
                     fri_layer_roots: Vec::new(),
                 },
                 openings: Openings {
+                    trace: TraceOpenings {
+                        indices: Vec::new(),
+                        leaves: Vec::new(),
+                        paths: Vec::new(),
+                    },
+                    composition: None,
                     out_of_domain: Vec::new(),
                 },
                 fri_proof: crate::fri::FriProof::new(

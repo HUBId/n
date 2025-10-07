@@ -6,6 +6,7 @@ use rpp_stark::config::{
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
+use rpp_stark::proof::ser::serialize_proof;
 use rpp_stark::proof::types::{VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
@@ -172,6 +173,122 @@ fn verification_rejects_mismatched_public_inputs() {
             failing_proof_index: 0,
             error: VerifyError::PublicInputMismatch,
         }
+    ));
+}
+
+#[test]
+fn verification_rejects_trace_indices_not_sorted() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
+    if decoded.openings.trace.indices.len() < 2 {
+        panic!("expected at least two trace indices");
+    }
+    decoded.openings.trace.indices.swap(0, 1);
+    let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
+    let mutated = ProofBytes::new(mutated_bytes);
+
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        &mutated,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    assert!(matches!(
+        verdict,
+        VerificationVerdict::Reject(VerifyError::IndicesNotSorted)
+    ));
+}
+
+#[test]
+fn verification_rejects_trace_indices_duplicate() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
+    if decoded.openings.trace.indices.len() < 2 {
+        panic!("expected at least two trace indices");
+    }
+    decoded.openings.trace.indices[1] = decoded.openings.trace.indices[0];
+    let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
+    let mutated = ProofBytes::new(mutated_bytes);
+
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        &mutated,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    assert!(matches!(
+        verdict,
+        VerificationVerdict::Reject(VerifyError::IndicesDuplicate)
+    ));
+}
+
+#[test]
+fn verification_rejects_trace_indices_mismatch() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
+    for index in &mut decoded.openings.trace.indices {
+        *index = index.saturating_add(1);
+    }
+    let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
+    let mutated = ProofBytes::new(mutated_bytes);
+
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        &mutated,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    assert!(matches!(
+        verdict,
+        VerificationVerdict::Reject(VerifyError::IndicesMismatch)
     ));
 }
 

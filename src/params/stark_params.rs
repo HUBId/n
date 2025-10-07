@@ -82,7 +82,7 @@ impl StarkParams {
     /// Computes the canonical parameter hash.
     ///
     /// The digest is computed over the canonical byte layout defined in
-    /// [`crate::params::ser`].
+    /// [`crate::params::serialize_params`].
     pub fn params_hash(&self) -> [u8; 32] {
         params_hash(self)
     }
