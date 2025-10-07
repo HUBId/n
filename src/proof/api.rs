@@ -9,9 +9,11 @@
 use crate::config::{ProofSystemConfig, ProverContext, VerifierContext};
 use crate::utils::serialization::{ProofBytes, WitnessBlob};
 
-use super::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
+use super::aggregation::{self, BatchProofRecord, BatchVerificationOutcome, BlockContext};
+use super::prover;
 use super::public_inputs::{ProofKind, PublicInputs};
-use super::types::{VerifyError, VerifyReport};
+use super::ser::map_public_to_config_kind;
+use super::types::{FriVerifyIssue, VerifyError, VerifyReport, PROOF_VERSION};
 
 /// Documentation container describing the full lifecycle of a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,32 +120,80 @@ impl WitnessContainerSpec {
 
 /// Forward declaration of the generate_proof function (no implementation).
 pub fn generate_proof(
-    _kind: ProofKind,
-    _public_inputs: &PublicInputs<'_>,
-    _witness: WitnessBlob<'_>,
-    _config: &ProofSystemConfig,
-    _prover_context: &ProverContext,
+    kind: ProofKind,
+    public_inputs: &PublicInputs<'_>,
+    witness: WitnessBlob<'_>,
+    config: &ProofSystemConfig,
+    prover_context: &ProverContext,
 ) -> Result<ProofBytes, VerifyError> {
-    unimplemented!("interface declaration only")
+    if kind != public_inputs.kind() {
+        return Err(VerifyError::PublicInputMismatch);
+    }
+
+    let proof = prover::build_envelope(public_inputs, witness, config, prover_context)
+        .map_err(map_prover_error_to_verify)?;
+    Ok(ProofBytes::new(proof.to_bytes()))
 }
 
 /// Forward declaration of the verify_proof function (no implementation).
 pub fn verify_proof(
-    _kind: ProofKind,
-    _public_inputs: &PublicInputs<'_>,
-    _proof_bytes: &ProofBytes,
-    _config: &ProofSystemConfig,
-    _verifier_context: &VerifierContext,
+    kind: ProofKind,
+    public_inputs: &PublicInputs<'_>,
+    proof_bytes: &ProofBytes,
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
 ) -> Result<VerifyReport, VerifyError> {
-    unimplemented!("interface declaration only")
+    if kind != public_inputs.kind() {
+        return Err(VerifyError::PublicInputMismatch);
+    }
+
+    let declared_kind = map_public_to_config_kind(kind);
+    super::verifier::verify_proof_bytes(
+        declared_kind,
+        public_inputs,
+        proof_bytes,
+        config,
+        verifier_context,
+    )
 }
 
 /// Forward declaration of the batch_verify function (no implementation).
 pub fn batch_verify(
-    _block_context: &BlockContext,
-    _proofs: &[BatchProofRecord<'_>],
-    _config: &ProofSystemConfig,
-    _verifier_context: &VerifierContext,
+    block_context: &BlockContext,
+    proofs: &[BatchProofRecord<'_>],
+    config: &ProofSystemConfig,
+    verifier_context: &VerifierContext,
 ) -> Result<BatchVerificationOutcome, VerifyError> {
-    unimplemented!("interface declaration only")
+    for record in proofs {
+        if record.kind != record.public_inputs.kind() {
+            return Err(VerifyError::PublicInputMismatch);
+        }
+    }
+
+    Ok(aggregation::batch_verify(
+        block_context,
+        proofs,
+        config,
+        verifier_context,
+    ))
+}
+
+fn map_prover_error_to_verify(error: prover::ProverError) -> VerifyError {
+    use prover::ProverError;
+
+    match error {
+        ProverError::UnsupportedProofVersion(actual) => VerifyError::VersionMismatch {
+            expected: PROOF_VERSION,
+            actual,
+        },
+        ProverError::ParamDigestMismatch => VerifyError::ParamsHashMismatch,
+        ProverError::MalformedWitness(reason) => {
+            VerifyError::UnexpectedEndOfBuffer(reason.to_string())
+        }
+        ProverError::Transcript(_) => VerifyError::TranscriptOrder,
+        ProverError::Fri(_) => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::Generic,
+        },
+        ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
+    }
 }
