@@ -174,6 +174,8 @@ fn map_prover_error(error: prover::ProverError) -> StarkError {
         ProverError::MalformedWitness(reason) => StarkError::InvalidInput(reason),
         ProverError::Transcript(_) => StarkError::SubsystemFailure("prover_transcript_error"),
         ProverError::Fri(_) => StarkError::SubsystemFailure("prover_fri_error"),
+        ProverError::Air(_) => StarkError::SubsystemFailure("prover_air_error"),
+        ProverError::Merkle(_) => StarkError::SubsystemFailure("prover_merkle_error"),
         ProverError::ProofTooLarge { .. } => StarkError::InvalidInput("proof_too_large"),
     }
 }

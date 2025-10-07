@@ -8,25 +8,47 @@
 //! 4. Produce a binary FRI proof using the deterministic seed.
 //! 5. Assemble the envelope header/body, compute digests and enforce size limits.
 
+use crate::air::composition::{compose, CompositionParams, ConstraintGroup};
+use crate::air::trace::Trace;
+use crate::air::traits::{
+    Air as AirContract, BoundaryBuilder as AirBoundaryBuilder,
+    BoundaryConstraint as AirBoundaryConstraint, Evaluator as AirEvaluator,
+    PublicInputsCodec as AirPublicInputsCodec, TraceBuilder as AirTraceBuilder,
+};
+use crate::air::types::{
+    AirError as AirLayerError, DegreeBounds, LdeOrder, TraceColMeta, TraceRole, TraceSchema,
+};
 use crate::config::{
     AirSpecId, ProfileConfig, ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig,
     ProverContext,
 };
+use crate::fft::lde::{LowDegreeExtensionParameters, PROFILE_HISEC_X16, PROFILE_X8};
 use crate::field::FieldElement;
 use crate::fri::{FriError, FriProof, FriSecurityLevel, PseudoBlake3Xof};
-use crate::hash::Hasher;
+use crate::merkle::{
+    CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleError,
+    MerkleProof, MerkleTree, ProofNode,
+};
+use crate::params::{HashKind, StarkParams, StarkParamsBuilder};
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
     serialize_public_inputs,
 };
-use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
-use crate::proof::types::{
-    FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
-    Proof, Telemetry, TraceOpenings, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+use crate::proof::transcript::{
+    Transcript as ProofTranscript, TranscriptBlockContext, TranscriptHeader,
 };
+use crate::proof::types::{
+    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
+    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings,
+    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+};
+use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
+use core::cmp::min;
 use core::convert::TryInto;
+
+use crate::field::prime_field::CanonicalSerialize;
 
 use super::types::{FriVerifyIssue, MerkleSection, VerifyError};
 
@@ -43,6 +65,10 @@ pub enum ProverError {
     Transcript(crate::proof::transcript::TranscriptError),
     /// Binary FRI prover returned an error.
     Fri(FriError),
+    /// AIR layer surface error.
+    Air(AirLayerError),
+    /// Merkle tree construction failed.
+    Merkle(MerkleError),
     /// The resulting proof exceeded the configured size limit.
     ProofTooLarge { actual: usize, limit: u32 },
 }
@@ -56,6 +82,18 @@ impl From<crate::proof::transcript::TranscriptError> for ProverError {
 impl From<FriError> for ProverError {
     fn from(err: FriError) -> Self {
         ProverError::Fri(err)
+    }
+}
+
+impl From<AirLayerError> for ProverError {
+    fn from(err: AirLayerError) -> Self {
+        ProverError::Air(err)
+    }
+}
+
+impl From<MerkleError> for ProverError {
+    fn from(err: MerkleError) -> Self {
+        ProverError::Merkle(err)
     }
 }
 
@@ -84,18 +122,40 @@ pub fn build_envelope(
         return Err(ProverError::MalformedWitness("empty_evaluations"));
     }
 
-    // Preliminary FRI run to extract the core root (independent of the seed).
-    let dummy_seed = [0u8; 32];
-    let preliminary_proof = FriProof::prove(security_level, dummy_seed, &evaluations)?;
-    let core_root = preliminary_proof
-        .layer_roots
-        .first()
-        .copied()
-        .unwrap_or([0u8; 32]);
-    let aux_root = [0u8; 32];
+    let trace_schema = build_trace_schema(&evaluations, context.profile.lde_factor as usize)?;
+    let trace = Trace::from_columns(trace_schema.clone(), vec![evaluations.clone()])?;
+    let lde_params = map_lde_profile(context.profile.lde_factor as usize);
+    let lde_values = trace.lde_evaluations(lde_params)?;
+
+    let stark_params = build_stark_params();
+    let (core_root, core_aux, trace_leaves) = commit_evaluations(&stark_params, &lde_values)?;
+
+    let mut air_transcript = prepare_air_transcript(&stark_params, &core_root)?;
+    let degree_bounds = DegreeBounds::new(
+        trace.length().saturating_sub(1).max(1),
+        trace.length().saturating_sub(1).max(1),
+    )?;
+    let composition_groups = vec![ConstraintGroup::new(
+        "trace",
+        TraceRole::Main,
+        trace.length().saturating_sub(1).max(1),
+        vec![lde_values.clone()],
+    )];
+    let (composition_values, composition_commitment) = compose(
+        &DummyAir,
+        CompositionParams {
+            stark: &stark_params,
+            transcript: &mut air_transcript,
+            degree_bounds,
+            groups: &composition_groups,
+        },
+    )?;
+    let aux_root = digest_to_array(composition_commitment.root.as_bytes());
+    let composition_aux = composition_commitment.aux;
+    let composition_leaves = evaluations_to_leaves(&composition_values)?;
 
     let public_inputs_bytes = serialize_public_inputs(public_inputs);
-    let mut transcript = Transcript::new(TranscriptHeader {
+    let mut transcript = ProofTranscript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
         poseidon_param_id: context.profile.poseidon_param_id.clone(),
         air_spec_id: air_spec_id.clone(),
@@ -113,7 +173,7 @@ pub fn build_envelope(
     let _ood_seed = challenges.draw_ood_seed()?;
 
     let fri_seed = challenges.draw_fri_seed()?;
-    let fri_proof = FriProof::prove(security_level, fri_seed, &evaluations)?;
+    let fri_proof = FriProof::prove(security_level, fri_seed, &composition_values)?;
 
     // Consume the η challenges to keep transcript counters aligned with the proof.
     for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {
@@ -121,23 +181,31 @@ pub fn build_envelope(
     }
     let query_seed = challenges.draw_query_seed()?;
 
-    if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != core_root {
-        return Err(ProverError::Fri(FriError::LayerRootMismatch { layer: 0 }));
-    }
-
     let trace_indices = derive_query_indices(
         query_seed,
         security_level.query_budget(),
         fri_proof.initial_domain_size,
     );
-    let ood_openings = derive_ood_openings(&ood_points, &alpha_vector);
+    let composition_openings = build_composition_openings(
+        &stark_params,
+        &composition_aux,
+        &composition_leaves,
+        &trace_indices,
+    )?;
+    let trace_openings =
+        build_trace_openings(&stark_params, &core_aux, &trace_leaves, &trace_indices)?;
+    let ood_openings =
+        derive_ood_openings(&ood_points, &alpha_vector, &lde_values, &composition_values);
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
     let fri_parameters = FriParametersMirror {
         fold: 2,
         cap_degree: context.profile.fri_depth_range.max as u16,
-        cap_size: fri_proof.final_polynomial.len() as u32,
+        cap_size: min(
+            fri_proof.final_polynomial.len() as u32,
+            crate::proof::types::PROOF_TELEMETRY_MAX_CAP_SIZE,
+        ),
         query_budget: security_level.query_budget() as u16,
     };
 
@@ -165,8 +233,8 @@ pub fn build_envelope(
         },
         merkle,
         openings: Openings {
-            trace: build_trace_openings(trace_indices),
-            composition: None,
+            trace: trace_openings,
+            composition: Some(composition_openings),
             out_of_domain: ood_openings,
         },
         fri_proof,
@@ -240,26 +308,308 @@ fn map_security_level(profile: &ProfileConfig) -> FriSecurityLevel {
     }
 }
 
-fn derive_ood_openings(points: &[[u8; 32]], alpha_vector: &[[u8; 32]]) -> Vec<OutOfDomainOpening> {
+fn build_trace_schema(
+    values: &[FieldElement],
+    lde_factor: usize,
+) -> Result<TraceSchema, ProverError> {
+    let mut column = TraceColMeta::new("witness", TraceRole::Main);
+    column = column.with_boundary(crate::air::types::BoundaryAt::First);
+    column = column.with_boundary(crate::air::types::BoundaryAt::Last);
+    let lde_order = LdeOrder::new(lde_factor).map_err(ProverError::Air)?;
+    let degree = values.len().saturating_sub(1).max(1);
+    let degree_bounds = DegreeBounds::new(degree, degree).map_err(ProverError::Air)?;
+    TraceSchema::new(vec![column], lde_order, degree_bounds).map_err(ProverError::Air)
+}
+
+fn map_lde_profile(factor: usize) -> &'static LowDegreeExtensionParameters {
+    match factor {
+        16 => &PROFILE_HISEC_X16,
+        _ => &PROFILE_X8,
+    }
+}
+
+fn build_stark_params() -> StarkParams {
+    let mut builder = StarkParamsBuilder::new();
+    builder.hash = HashKind::Blake2s { digest_size: 32 };
+    builder.merkle.leaf_width = 1;
+    builder
+        .build()
+        .expect("built-in Stark parameters should be valid")
+}
+
+fn commit_evaluations(
+    params: &StarkParams,
+    evaluations: &[FieldElement],
+) -> Result<([u8; 32], CommitAux, Vec<Leaf>), ProverError> {
+    let leaves = evaluations_to_leaves(evaluations)?;
+    let (root, aux) = <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::commit(
+        params,
+        leaves.clone().into_iter(),
+    )?;
+    Ok((digest_to_array(root.as_bytes()), aux, leaves))
+}
+
+fn prepare_air_transcript(
+    params: &StarkParams,
+    trace_root: &[u8; 32],
+) -> Result<AirTranscript, ProverError> {
+    let mut transcript = AirTranscript::new(params, TranscriptContext::StarkMain);
+    transcript
+        .absorb_field_elements(TranscriptLabel::PublicInputsDigest, &[FieldElement::ZERO])
+        .map_err(|_| ProverError::MalformedWitness("transcript_public"))?;
+    transcript
+        .absorb_digest(
+            TranscriptLabel::TraceRoot,
+            &DigestBytes { bytes: *trace_root },
+        )
+        .map_err(|_| ProverError::MalformedWitness("transcript_trace_root"))?;
+    let _ = transcript
+        .challenge_field(TranscriptLabel::TraceChallengeA)
+        .map_err(|_| ProverError::MalformedWitness("transcript_trace_challenge"))?;
+    transcript
+        .absorb_digest(TranscriptLabel::CompRoot, &DigestBytes { bytes: [0u8; 32] })
+        .map_err(|_| ProverError::MalformedWitness("transcript_comp_root_placeholder"))?;
+    Ok(transcript)
+}
+
+fn evaluations_to_leaves(values: &[FieldElement]) -> Result<Vec<Leaf>, ProverError> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut leaves = Vec::with_capacity(values.len());
+    for value in values {
+        let mut bytes = Vec::with_capacity(8);
+        bytes.extend_from_slice(&value.to_bytes());
+        leaves.push(Leaf::new(bytes));
+    }
+    Ok(leaves)
+}
+
+fn build_trace_openings(
+    params: &StarkParams,
+    aux: &CommitAux,
+    leaves: &[Leaf],
+    indices: &[u32],
+) -> Result<TraceOpenings, ProverError> {
+    let (leaf_bytes, paths) = build_opening_artifacts(params, aux, leaves, indices)?;
+    Ok(TraceOpenings {
+        indices: indices.to_vec(),
+        leaves: leaf_bytes,
+        paths,
+    })
+}
+
+fn build_composition_openings(
+    params: &StarkParams,
+    aux: &CommitAux,
+    leaves: &[Leaf],
+    indices: &[u32],
+) -> Result<CompositionOpenings, ProverError> {
+    let (leaf_bytes, paths) = build_opening_artifacts(params, aux, leaves, indices)?;
+    Ok(CompositionOpenings {
+        indices: indices.to_vec(),
+        leaves: leaf_bytes,
+        paths,
+    })
+}
+
+fn build_opening_artifacts(
+    params: &StarkParams,
+    aux: &CommitAux,
+    leaves: &[Leaf],
+    indices: &[u32],
+) -> Result<(Vec<Vec<u8>>, Vec<MerkleAuthenticationPath>), ProverError> {
+    let mut leaf_bytes = Vec::with_capacity(indices.len());
+    let mut paths = Vec::with_capacity(indices.len());
+    for &index in indices {
+        let proof =
+            <MerkleTree<DeterministicMerkleHasher> as MerkleCommit>::open(params, aux, &[index])?;
+        let bytes = leaves
+            .get(index as usize)
+            .map(|leaf| leaf.as_bytes().to_vec())
+            .unwrap_or_default();
+        leaf_bytes.push(bytes);
+        paths.push(convert_tree_proof(&proof, index));
+    }
+    Ok((leaf_bytes, paths))
+}
+
+fn convert_tree_proof(proof: &MerkleProof, index: u32) -> MerkleAuthenticationPath {
+    let mut nodes = Vec::new();
+    let mut current = index;
+    let arity = proof.arity.as_usize() as u32;
+    for node in proof.path() {
+        match node {
+            ProofNode::Arity2([digest]) => {
+                let position = (current % arity) as u8;
+                nodes.push(MerklePathNode {
+                    index: position,
+                    sibling: digest_to_array(digest.as_bytes()),
+                });
+            }
+            ProofNode::Arity4(digests) => {
+                let position = (current % arity) as u8;
+                let sibling_index = (position as usize)
+                    .saturating_sub(1)
+                    .min(digests.len().saturating_sub(1));
+                nodes.push(MerklePathNode {
+                    index: position,
+                    sibling: digest_to_array(digests[sibling_index].as_bytes()),
+                });
+            }
+        }
+        if arity > 0 {
+            current /= arity;
+        }
+    }
+    MerkleAuthenticationPath { nodes }
+}
+
+fn derive_ood_openings(
+    points: &[[u8; 32]],
+    _alpha_vector: &[[u8; 32]],
+    trace_values: &[FieldElement],
+    composition_values: &[FieldElement],
+) -> Vec<OutOfDomainOpening> {
+    if composition_values.is_empty() || trace_values.is_empty() {
+        return Vec::new();
+    }
+    let trace_len = trace_values.len();
+    let comp_len = composition_values.len();
     points
         .iter()
-        .enumerate()
-        .map(|(index, point)| OutOfDomainOpening {
-            point: *point,
-            core_values: vec![hash_ood_value(b"RPP-OOD/CORE", point, alpha_vector, index)],
-            aux_values: Vec::new(),
-            composition_value: hash_ood_value(b"RPP-OOD/COMP", point, alpha_vector, index),
+        .map(|point| {
+            let comp_index = (point[0] as usize) % comp_len;
+            let trace_index = comp_index % trace_len;
+            let core_value = field_to_bytes(trace_values[trace_index]);
+            let comp_value = field_to_bytes(composition_values[comp_index]);
+            OutOfDomainOpening {
+                point: *point,
+                core_values: vec![core_value],
+                aux_values: Vec::new(),
+                composition_value: comp_value,
+            }
         })
         .collect()
 }
 
-fn build_trace_openings(indices: Vec<u32>) -> TraceOpenings {
-    let leaves = vec![Vec::new(); indices.len()];
-    let paths = vec![MerkleAuthenticationPath { nodes: Vec::new() }; indices.len()];
-    TraceOpenings {
-        indices,
-        leaves,
-        paths,
+fn field_to_bytes(value: FieldElement) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    let le = value.to_bytes();
+    bytes[..le.len()].copy_from_slice(&le);
+    bytes
+}
+
+fn digest_to_array(bytes: &[u8]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let len = bytes.len().min(32);
+    out[..len].copy_from_slice(&bytes[..len]);
+    out
+}
+
+struct DummyAir;
+
+impl AirContract for DummyAir {
+    type TraceBuilder = NoopTraceBuilder;
+    type BoundaryBuilder = NoopBoundaryBuilder;
+    type Evaluator = NoopEvaluator;
+    type PublicInputsCodec = NoopPublicInputsCodec;
+
+    fn trace_schema(&self) -> Result<TraceSchema, AirLayerError> {
+        Err(AirLayerError::LayoutViolation(
+            "dummy air schema unavailable",
+        ))
+    }
+
+    fn public_spec(&self) -> Result<crate::air::types::PublicSpec, AirLayerError> {
+        Err(AirLayerError::LayoutViolation(
+            "dummy air public spec unavailable",
+        ))
+    }
+
+    fn new_trace_builder(&self) -> Result<Self::TraceBuilder, AirLayerError> {
+        Ok(NoopTraceBuilder)
+    }
+
+    fn new_boundary_builder(&self) -> Result<Self::BoundaryBuilder, AirLayerError> {
+        Ok(NoopBoundaryBuilder)
+    }
+
+    fn new_evaluator(&self) -> Result<Self::Evaluator, AirLayerError> {
+        Ok(NoopEvaluator)
+    }
+
+    fn public_inputs_codec(&self) -> Result<Self::PublicInputsCodec, AirLayerError> {
+        Ok(NoopPublicInputsCodec)
+    }
+}
+
+struct NoopTraceBuilder;
+
+impl AirTraceBuilder for NoopTraceBuilder {
+    fn add_column(
+        &mut self,
+        _role: TraceRole,
+        _values: Vec<FieldElement>,
+    ) -> Result<crate::air::types::ColIx, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy trace builder"))
+    }
+
+    fn build(
+        self,
+        _degree_bounds: DegreeBounds,
+    ) -> Result<crate::air::types::TraceData, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy trace builder"))
+    }
+}
+
+struct NoopBoundaryBuilder;
+
+impl AirBoundaryBuilder for NoopBoundaryBuilder {
+    fn set(
+        &mut self,
+        _column: crate::air::types::ColIx,
+        _at: crate::air::types::BoundaryAt,
+        _value: FieldElement,
+    ) -> Result<(), AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy boundary builder"))
+    }
+
+    fn build(self) -> Result<Vec<AirBoundaryConstraint>, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy boundary builder"))
+    }
+}
+
+struct NoopEvaluator;
+
+impl AirEvaluator for NoopEvaluator {
+    fn enforce_zero(&mut self, _expr: crate::air::traits::PolyExpr) -> Result<(), AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy evaluator"))
+    }
+
+    fn constraints(&self) -> Result<Vec<crate::air::traits::Constraint>, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy evaluator"))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NoopPublicInputsCodec;
+
+impl AirPublicInputsCodec for NoopPublicInputsCodec {
+    type Value = ();
+
+    fn encode(
+        &self,
+        _value: &Self::Value,
+    ) -> Result<Vec<crate::utils::serialization::FieldElementBytes>, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy codec"))
+    }
+
+    fn decode(
+        &self,
+        _bytes: &[crate::utils::serialization::FieldElementBytes],
+    ) -> Result<Self::Value, AirLayerError> {
+        Err(AirLayerError::LayoutViolation("dummy codec"))
     }
 }
 
@@ -284,17 +634,6 @@ fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec
         .into_iter()
         .map(|idx| idx.try_into().unwrap_or(u32::MAX))
         .collect()
-}
-
-fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: usize) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
-    hasher.update(point);
-    hasher.update(&(index as u32).to_le_bytes());
-    for alpha in alphas {
-        hasher.update(alpha);
-    }
-    *hasher.finalize().as_bytes()
 }
 
 /// Helper converting prover errors into verification failures when the prover
@@ -322,6 +661,10 @@ impl From<ProverError> for VerifyError {
             },
             ProverError::Fri(_) => VerifyError::FriVerifyFailed {
                 issue: FriVerifyIssue::Generic,
+            },
+            ProverError::Air(_) => VerifyError::UnexpectedEndOfBuffer("air_error".to_string()),
+            ProverError::Merkle(_) => VerifyError::MerkleVerifyFailed {
+                section: MerkleSection::FriPath,
             },
             ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
         }

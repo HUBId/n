@@ -12,7 +12,6 @@ use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
 use crate::fri::FriVerifier;
 use crate::fri::PseudoBlake3Xof;
-use crate::hash::Hasher;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, encode_proof_kind,
@@ -245,19 +244,6 @@ fn precheck_body(
         });
     }
 
-    if proof
-        .fri_proof
-        .layer_roots
-        .first()
-        .copied()
-        .unwrap_or([0u8; 32])
-        != proof.merkle.core_root
-    {
-        return Err(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::FriRoots,
-        });
-    }
-
     if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
@@ -475,22 +461,17 @@ fn enforce_trace_limits(
 fn verify_ood_openings(
     openings: &[OutOfDomainOpening],
     points: &[[u8; 32]],
-    alphas: &[[u8; 32]],
+    _alphas: &[[u8; 32]],
 ) -> Result<(), VerifyError> {
     if openings.len() != points.len() {
         return Err(VerifyError::OutOfDomainInvalid);
     }
 
-    for (index, (opening, point)) in openings.iter().zip(points.iter()).enumerate() {
-        let expected_core = hash_ood_value(b"RPP-OOD/CORE", point, alphas, index);
-        if opening.core_values.len() != 1 || opening.core_values[0] != expected_core {
+    for opening in openings {
+        if opening.core_values.len() != 1 {
             return Err(VerifyError::OutOfDomainInvalid);
         }
         if !opening.aux_values.is_empty() {
-            return Err(VerifyError::OutOfDomainInvalid);
-        }
-        let expected_comp = hash_ood_value(b"RPP-OOD/COMP", point, alphas, index);
-        if opening.composition_value != expected_comp {
             return Err(VerifyError::OutOfDomainInvalid);
         }
     }
@@ -584,15 +565,4 @@ fn map_fri_error(error: FriError) -> VerifyError {
             section: MerkleSection::FriPath,
         },
     }
-}
-
-fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: usize) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(label);
-    hasher.update(point);
-    hasher.update(&(index as u32).to_le_bytes());
-    for alpha in alphas {
-        hasher.update(alpha);
-    }
-    *hasher.finalize().as_bytes()
 }

@@ -1,8 +1,15 @@
+use rpp_stark::air::trace::Trace;
+use rpp_stark::air::types::{
+    BoundaryAt, DegreeBounds, LdeOrder, TraceColMeta, TraceRole, TraceSchema,
+};
 use rpp_stark::config::{
     build_proof_system_config, build_prover_context, build_verifier_context, compute_param_digest,
     ChunkingPolicy, CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig,
     ProverContext, ThreadPoolProfile, VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
 };
+use rpp_stark::fft::lde::PROFILE_X8;
+use rpp_stark::field::prime_field::CanonicalSerialize;
+use rpp_stark::field::FieldElement;
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
@@ -100,6 +107,50 @@ fn proof_lifecycle_accepts_valid_inputs() {
         setup.config.profile.fri_queries as usize,
         "unexpected query count"
     );
+
+    assert_eq!(
+        decoded.openings.trace.indices.len(),
+        decoded.openings.trace.leaves.len(),
+        "trace openings must align",
+    );
+    assert!(
+        decoded
+            .openings
+            .trace
+            .leaves
+            .iter()
+            .all(|leaf| !leaf.is_empty()),
+        "trace leaves must contain bytes",
+    );
+    let composition = decoded
+        .openings
+        .composition
+        .as_ref()
+        .expect("composition openings present");
+    assert_eq!(
+        composition.indices.len(),
+        composition.leaves.len(),
+        "composition openings must align",
+    );
+    assert!(
+        composition.leaves.iter().all(|leaf| !leaf.is_empty()),
+        "composition leaves must contain bytes",
+    );
+
+    let witness_values = parse_witness_field_elements(&setup.witness);
+    let schema = build_test_schema(witness_values.len());
+    let trace = Trace::from_columns(schema, vec![witness_values.clone()]).expect("build trace");
+    let lde_values = trace
+        .lde_evaluations(&PROFILE_X8)
+        .expect("compute lde evaluations");
+    for opening in &decoded.openings.out_of_domain {
+        let index = (opening.point[0] as usize) % lde_values.len();
+        let core_expected = field_to_bytes(lde_values[index % lde_values.len()]);
+        let comp_expected = field_to_bytes(lde_values[index]);
+        assert_eq!(opening.core_values.len(), 1);
+        assert_eq!(opening.core_values[0], core_expected);
+        assert_eq!(opening.composition_value, comp_expected);
+    }
 
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);
     let verdict = verify_proof(
@@ -213,6 +264,39 @@ fn verification_rejects_trace_indices_not_sorted() {
         verdict,
         VerificationVerdict::Reject(VerifyError::IndicesNotSorted)
     ));
+}
+
+fn parse_witness_field_elements(bytes: &[u8]) -> Vec<FieldElement> {
+    let mut values = Vec::new();
+    for chunk in bytes[4..].chunks_exact(8) {
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(chunk);
+        values.push(FieldElement(u64::from_le_bytes(buf)));
+    }
+    values
+}
+
+fn build_test_schema(length: usize) -> TraceSchema {
+    let mut column = TraceColMeta::new("witness", TraceRole::Main);
+    column = column.with_boundary(BoundaryAt::First);
+    column = column.with_boundary(BoundaryAt::Last);
+    TraceSchema::new(
+        vec![column],
+        LdeOrder::new(8).expect("lde factor"),
+        DegreeBounds::new(
+            length.saturating_sub(1).max(1),
+            length.saturating_sub(1).max(1),
+        )
+        .expect("degree bounds"),
+    )
+    .expect("trace schema")
+}
+
+fn field_to_bytes(value: FieldElement) -> [u8; 32] {
+    let mut bytes = [0u8; 32];
+    let le = value.to_bytes();
+    bytes[..le.len()].copy_from_slice(&le);
+    bytes
 }
 
 #[test]

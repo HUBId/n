@@ -13,7 +13,7 @@ use super::aggregation::{self, BatchProofRecord, BatchVerificationOutcome, Block
 use super::prover;
 use super::public_inputs::{ProofKind, PublicInputs};
 use super::ser::map_public_to_config_kind;
-use super::types::{FriVerifyIssue, VerifyError, VerifyReport, PROOF_VERSION};
+use super::types::{FriVerifyIssue, MerkleSection, VerifyError, VerifyReport, PROOF_VERSION};
 
 /// Documentation container describing the full lifecycle of a proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -193,6 +193,10 @@ fn map_prover_error_to_verify(error: prover::ProverError) -> VerifyError {
         ProverError::Transcript(_) => VerifyError::TranscriptOrder,
         ProverError::Fri(_) => VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::Generic,
+        },
+        ProverError::Air(_) => VerifyError::TranscriptOrder,
+        ProverError::Merkle(_) => VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriPath,
         },
         ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
     }
