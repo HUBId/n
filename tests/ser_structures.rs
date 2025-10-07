@@ -1,11 +1,12 @@
 use insta::assert_snapshot;
-use rpp_stark::config::{AirSpecId, ParamDigest, ProofKind};
+use rpp_stark::config::{AirSpecId, ParamDigest, ProofKind, PROFILE_STANDARD_CONFIG};
 use rpp_stark::field::FieldElement;
 use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::merkle::{
     decode_proof as decode_merkle_proof, encode_proof as encode_merkle_proof, Digest, MerkleError,
     MerkleProof, ProofNode,
 };
+use rpp_stark::proof::params::canonical_stark_params;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, deserialize_proof, serialize_proof,
@@ -37,7 +38,9 @@ fn sample_merkle_proof() -> MerkleProof {
 fn sample_fri_proof() -> FriProof {
     let evaluations: Vec<FieldElement> = (0..32).map(|i| FieldElement(i as u64 + 1)).collect();
     let seed = [7u8; 32];
-    FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("fri proof")
+    let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+    FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+        .expect("fri proof")
 }
 
 fn sample_proof() -> Proof {

@@ -128,7 +128,7 @@ pub fn build_envelope(
     let lde_params = map_lde_profile(context.profile.lde_factor as usize);
     let lde_values = trace.lde_evaluations(lde_params)?;
 
-    let stark_params = canonical_stark_params();
+    let stark_params = canonical_stark_params(&context.profile);
     let (core_root, core_aux, trace_leaves) = commit_evaluations(&stark_params, &lde_values)?;
 
     let mut air_transcript = prepare_air_transcript(&stark_params, &core_root)?;
@@ -174,7 +174,8 @@ pub fn build_envelope(
     let _ood_seed = challenges.draw_ood_seed()?;
 
     let fri_seed = challenges.draw_fri_seed()?;
-    let fri_proof = FriProof::prove(security_level, fri_seed, &composition_values)?;
+    let fri_proof =
+        FriProof::prove_with_params(security_level, fri_seed, &composition_values, &stark_params)?;
 
     // Consume the η challenges to keep transcript counters aligned with the proof.
     for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {

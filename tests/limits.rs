@@ -227,7 +227,7 @@ fn build_envelope(
     let final_polynomial = vec![FieldElement::ZERO; final_poly_len];
     let fold_challenges = vec![FieldElement::ZERO; fri_layer_roots.len()];
 
-    let params = canonical_stark_params();
+    let params = canonical_stark_params(&context.profile);
     let leaf_count = initial_domain_size.max(1);
     let zero_leaf = FieldElement::ZERO.to_bytes();
     let trace_leaves: Vec<Leaf> = (0..leaf_count)

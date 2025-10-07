@@ -18,6 +18,7 @@ use crate::merkle::verify_proof as verify_merkle_proof;
 use crate::merkle::{
     DeterministicMerkleHasher, Digest as MerkleDigest, Leaf, MerkleProof, ProofNode,
 };
+use crate::params::StarkParams;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
@@ -94,6 +95,7 @@ pub(crate) struct PrecheckedProof {
     pub(crate) proof: Proof,
     pub(crate) fri_seed: [u8; 32],
     pub(crate) security_level: FriSecurityLevel,
+    pub(crate) params: StarkParams,
 }
 
 #[allow(clippy::result_large_err)]
@@ -128,6 +130,7 @@ fn precheck_decoded_proof(
             proof,
             fri_seed: prechecked.fri_seed,
             security_level: prechecked.security_level,
+            params: prechecked.params,
         }),
         Err(error) => Err((proof, error)),
     }
@@ -166,10 +169,11 @@ pub(crate) fn precheck_proof_bytes(
 }
 
 pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerifyError> {
-    FriVerifier::verify(
+    FriVerifier::verify_with_params(
         &proof.proof.fri_proof,
         proof.security_level,
         proof.fri_seed,
+        &proof.params,
         |index| {
             proof
                 .proof
@@ -229,6 +233,7 @@ fn validate_header(
 struct PrecheckedBody {
     fri_seed: [u8; 32],
     security_level: FriSecurityLevel,
+    params: StarkParams,
 }
 
 fn precheck_body(
@@ -306,7 +311,7 @@ fn precheck_body(
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     ensure_merkle_scheme(config, context)?;
-    let stark_params = canonical_stark_params();
+    let stark_params = canonical_stark_params(&context.profile);
 
     let trace_values = verify_trace_commitment(
         &stark_params,
@@ -389,6 +394,7 @@ fn precheck_body(
     Ok(PrecheckedBody {
         fri_seed,
         security_level,
+        params: stark_params,
     })
 }
 

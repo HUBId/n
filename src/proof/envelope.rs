@@ -281,6 +281,7 @@ mod tests {
     use crate::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
     use crate::hash::merkle::{MerkleIndex, MerklePathElement, DIGEST_SIZE};
     use crate::params::ProofParams;
+    use crate::proof::params::canonical_stark_params;
     use crate::proof::prover::build_envelope as build_proof_envelope;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::proof::types::{
@@ -293,7 +294,9 @@ mod tests {
         let evaluations: Vec<FieldElement> =
             (0..1024).map(|i| FieldElement(i as u64 + 1)).collect();
         let seed = [7u8; 32];
-        FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("fri proof")
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("fri proof")
     }
 
     fn builder_params() -> ProofParams {

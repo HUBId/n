@@ -686,9 +686,10 @@ pub fn serialize_proof_payload(proof: &Proof) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ParamDigest as ConfigParamDigest, ProofKind};
+    use crate::config::{ParamDigest as ConfigParamDigest, ProofKind, PROFILE_STANDARD_CONFIG};
     use crate::field::FieldElement;
     use crate::fri::{FriProof, FriSecurityLevel};
+    use crate::proof::params::canonical_stark_params;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::proof::types::{
         CompositionOpenings, MerkleAuthenticationPath, MerklePathNode, TraceOpenings,
@@ -698,7 +699,9 @@ mod tests {
     fn sample_fri_proof() -> FriProof {
         let evaluations: Vec<FieldElement> = (0..64).map(|i| FieldElement(i as u64 + 1)).collect();
         let seed = [7u8; 32];
-        FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("fri proof")
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("fri proof")
     }
 
     fn build_sample_proof() -> Proof {
