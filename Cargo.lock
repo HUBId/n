@@ -639,6 +639,7 @@ dependencies = [
  "insta",
  "postcard",
  "proptest",
+ "rayon",
  "serde",
  "serde_json",
 ]

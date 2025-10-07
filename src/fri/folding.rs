@@ -143,6 +143,28 @@ pub fn binary_fold(
     beta: FieldElement,
     coset_shift: FieldElement,
 ) -> Vec<FieldElement> {
+    #[cfg(feature = "parallel")]
+    if crate::utils::parallelism_enabled() {
+        use rayon::prelude::*;
+        let pair_count = values.len() / BINARY_FOLD_ARITY;
+        let chunk = crate::utils::preferred_chunk_size(pair_count.max(1));
+        let mut result: Vec<FieldElement> = values
+            .par_chunks_exact(BINARY_FOLD_ARITY)
+            .with_min_len(chunk)
+            .with_max_len(chunk)
+            .map(|pair| {
+                let a = pair[0];
+                let b = pair[1];
+                let shifted_b = fe_mul(b, coset_shift);
+                fe_add(a, fe_mul(beta, shifted_b))
+            })
+            .collect();
+        if let Some(&last) = values.chunks_exact(BINARY_FOLD_ARITY).remainder().first() {
+            result.push(last);
+        }
+        return result;
+    }
+
     let mut result = Vec::with_capacity(values.len().div_ceil(BINARY_FOLD_ARITY));
     let mut chunks = values.chunks_exact(BINARY_FOLD_ARITY);
 
