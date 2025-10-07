@@ -202,11 +202,24 @@ fn map_verify_error(error: VerifyError) -> StarkError {
         VerifyError::PublicInputMismatch => StarkError::InvalidInput("public_input_mismatch"),
         VerifyError::TranscriptOrder => StarkError::InvalidInput("transcript_order"),
         VerifyError::OutOfDomainInvalid => StarkError::InvalidInput("out_of_domain_invalid"),
+        VerifyError::UnsupportedMerkleScheme => {
+            StarkError::InvalidInput("unsupported_merkle_scheme")
+        }
         VerifyError::MerkleVerifyFailed { section } => match section {
             MerkleSection::CommitmentDigest => StarkError::InvalidInput("merkle_commitment_digest"),
             MerkleSection::FriRoots => StarkError::InvalidInput("merkle_fri_roots"),
             MerkleSection::FriPath => StarkError::InvalidInput("merkle_fri_path"),
+            MerkleSection::TraceCommit => StarkError::InvalidInput("merkle_trace_commit"),
+            MerkleSection::CompositionCommit => {
+                StarkError::InvalidInput("merkle_composition_commit")
+            }
         },
+        VerifyError::TraceLeafMismatch => StarkError::InvalidInput("trace_leaf_mismatch"),
+        VerifyError::CompositionLeafMismatch => {
+            StarkError::InvalidInput("composition_leaf_mismatch")
+        }
+        VerifyError::TraceOodMismatch => StarkError::InvalidInput("trace_ood_mismatch"),
+        VerifyError::CompositionOodMismatch => StarkError::InvalidInput("composition_ood_mismatch"),
         VerifyError::FriVerifyFailed { issue } => match issue {
             FriVerifyIssue::QueryOutOfRange => StarkError::InvalidInput("fri_query_out_of_range"),
             FriVerifyIssue::PathInvalid => StarkError::InvalidInput("fri_path_invalid"),

@@ -24,12 +24,13 @@ use crate::config::{
 };
 use crate::fft::lde::{LowDegreeExtensionParameters, PROFILE_HISEC_X16, PROFILE_X8};
 use crate::field::FieldElement;
-use crate::fri::{FriError, FriProof, FriSecurityLevel, PseudoBlake3Xof};
+use crate::fri::{FriError, FriProof, FriSecurityLevel};
 use crate::merkle::{
     CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleError,
     MerkleProof, MerkleTree, ProofNode,
 };
-use crate::params::{HashKind, StarkParams, StarkParamsBuilder};
+use crate::params::StarkParams;
+use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
@@ -127,7 +128,7 @@ pub fn build_envelope(
     let lde_params = map_lde_profile(context.profile.lde_factor as usize);
     let lde_values = trace.lde_evaluations(lde_params)?;
 
-    let stark_params = build_stark_params();
+    let stark_params = canonical_stark_params();
     let (core_root, core_aux, trace_leaves) = commit_evaluations(&stark_params, &lde_values)?;
 
     let mut air_transcript = prepare_air_transcript(&stark_params, &core_root)?;
@@ -179,13 +180,31 @@ pub fn build_envelope(
     for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {
         let _ = challenges.draw_fri_eta(layer_index)?;
     }
-    let query_seed = challenges.draw_query_seed()?;
+    let _ = challenges.draw_query_seed()?;
 
-    let trace_indices = derive_query_indices(
-        query_seed,
-        security_level.query_budget(),
-        fri_proof.initial_domain_size,
-    );
+    let trace_indices: Vec<u32> = fri_proof
+        .queries
+        .iter()
+        .map(|query| query.position.try_into().unwrap_or(u32::MAX))
+        .collect();
+
+    let sampled_trace_values: Vec<FieldElement> = trace_indices
+        .iter()
+        .map(|&index| {
+            let pos = index as usize;
+            lde_values.get(pos).copied().unwrap_or(FieldElement::ZERO)
+        })
+        .collect();
+    let sampled_composition_values: Vec<FieldElement> = trace_indices
+        .iter()
+        .map(|&index| {
+            let pos = index as usize;
+            composition_values
+                .get(pos)
+                .copied()
+                .unwrap_or(FieldElement::ZERO)
+        })
+        .collect();
     let composition_openings = build_composition_openings(
         &stark_params,
         &composition_aux,
@@ -194,8 +213,12 @@ pub fn build_envelope(
     )?;
     let trace_openings =
         build_trace_openings(&stark_params, &core_aux, &trace_leaves, &trace_indices)?;
-    let ood_openings =
-        derive_ood_openings(&ood_points, &alpha_vector, &lde_values, &composition_values);
+    let ood_openings = derive_ood_openings(
+        &ood_points,
+        &alpha_vector,
+        &sampled_trace_values,
+        &sampled_composition_values,
+    );
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
@@ -326,15 +349,6 @@ fn map_lde_profile(factor: usize) -> &'static LowDegreeExtensionParameters {
         16 => &PROFILE_HISEC_X16,
         _ => &PROFILE_X8,
     }
-}
-
-fn build_stark_params() -> StarkParams {
-    let mut builder = StarkParamsBuilder::new();
-    builder.hash = HashKind::Blake2s { digest_size: 32 };
-    builder.merkle.leaf_width = 1;
-    builder
-        .build()
-        .expect("built-in Stark parameters should be valid")
 }
 
 fn commit_evaluations(
@@ -611,29 +625,6 @@ impl AirPublicInputsCodec for NoopPublicInputsCodec {
     ) -> Result<Self::Value, AirLayerError> {
         Err(AirLayerError::LayoutViolation("dummy codec"))
     }
-}
-
-fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<u32> {
-    if domain_size == 0 {
-        return Vec::new();
-    }
-    let mut xof = PseudoBlake3Xof::new(&seed);
-    let target = count.min(domain_size);
-    let mut unique = Vec::with_capacity(target);
-    let mut seen = vec![false; domain_size];
-    while unique.len() < target {
-        let word = xof.next_u64();
-        let position = (word % (domain_size as u64)) as usize;
-        if !seen[position] {
-            seen[position] = true;
-            unique.push(position);
-        }
-    }
-    unique.sort();
-    unique
-        .into_iter()
-        .map(|idx| idx.try_into().unwrap_or(u32::MAX))
-        .collect()
 }
 
 /// Helper converting prover errors into verification failures when the prover

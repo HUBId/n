@@ -24,7 +24,7 @@ pub mod traits;
 mod tree;
 mod types;
 
-pub use proof::{MerkleProof, ProofBuilder};
+pub use proof::{verify_proof, MerkleProof, ProofBuilder};
 pub use ser::{decode_commit_aux, decode_proof, encode_commit_aux, encode_proof};
 pub use traits::{MerkleCommit, MerkleHasher};
 pub use tree::{CommitAux, MerkleTree};

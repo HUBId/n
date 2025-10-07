@@ -7,11 +7,18 @@
 
 use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
+    MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
 };
+use crate::field::prime_field::CanonicalSerialize;
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
 use crate::fri::FriVerifier;
-use crate::fri::PseudoBlake3Xof;
+use crate::merkle::traits::MerkleHasher;
+use crate::merkle::verify_proof as verify_merkle_proof;
+use crate::merkle::{
+    DeterministicMerkleHasher, Digest as MerkleDigest, Leaf, MerkleProof, ProofNode,
+};
+use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, encode_proof_kind,
@@ -109,7 +116,14 @@ fn precheck_decoded_proof(
     ) {
         return Err((proof, error));
     }
-    match precheck_body(&proof, public_inputs, context, block_context, stages) {
+    match precheck_body(
+        &proof,
+        public_inputs,
+        config,
+        context,
+        block_context,
+        stages,
+    ) {
         Ok(prechecked) => Ok(PrecheckedProof {
             proof,
             fri_seed: prechecked.fri_seed,
@@ -220,6 +234,7 @@ struct PrecheckedBody {
 fn precheck_body(
     proof: &Proof,
     public_inputs: &PublicInputs<'_>,
+    config: &ProofSystemConfig,
     context: &VerifierContext,
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
@@ -280,17 +295,44 @@ fn precheck_body(
     let mut challenges = transcript
         .finalize()
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    let alpha_vector = challenges
+    let _alpha_vector = challenges
         .draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    let ood_points = challenges
+    let _ood_points = challenges
         .draw_ood_points(PROOF_MIN_OOD_POINTS)
         .map_err(|_| VerifyError::TranscriptOrder)?;
     let _ood_seed = challenges
         .draw_ood_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
-    verify_ood_openings(&proof.openings.out_of_domain, &ood_points, &alpha_vector)?;
+    ensure_merkle_scheme(config, context)?;
+    let stark_params = canonical_stark_params();
+
+    let trace_values = verify_trace_commitment(
+        &stark_params,
+        &proof.merkle.core_root,
+        &proof.openings.trace,
+    )?;
+
+    let composition_openings = proof
+        .openings
+        .composition
+        .as_ref()
+        .ok_or(VerifyError::EmptyOpenings)?;
+    let composition_values =
+        verify_composition_commitment(&stark_params, &proof.merkle.aux_root, composition_openings)?;
+
+    verify_composition_alignment(
+        &composition_values,
+        &proof.openings.trace.indices,
+        &proof.fri_proof,
+    )?;
+
+    verify_ood_openings(
+        &proof.openings.out_of_domain,
+        &trace_values,
+        &composition_values,
+    )?;
     stages.composition_ok = true;
 
     let fri_seed = challenges
@@ -301,17 +343,12 @@ fn precheck_body(
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
     }
-    let query_seed = challenges
+    let _ = challenges
         .draw_query_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let security_level = map_security_level(&context.profile);
-    let derived_indices = derive_query_positions(
-        query_seed,
-        security_level.query_budget(),
-        proof.fri_proof.initial_domain_size,
-    );
-    validate_trace_indices(&proof.openings.trace.indices, &derived_indices)?;
+    validate_trace_indices(&proof.openings.trace.indices, &proof.fri_proof)?;
     if proof.fri_proof.security_level != security_level {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::SecurityLevelMismatch,
@@ -355,7 +392,10 @@ fn precheck_body(
     })
 }
 
-fn validate_trace_indices(provided: &[u32], derived: &[usize]) -> Result<(), VerifyError> {
+fn validate_trace_indices(
+    provided: &[u32],
+    fri_proof: &crate::fri::FriProof,
+) -> Result<(), VerifyError> {
     let mut previous: Option<u32> = None;
     for &value in provided {
         if let Some(prev) = previous {
@@ -369,15 +409,16 @@ fn validate_trace_indices(provided: &[u32], derived: &[usize]) -> Result<(), Ver
         previous = Some(value);
     }
 
-    if derived.len() != provided.len() {
+    if fri_proof.queries.len() != provided.len() {
         return Err(VerifyError::IndicesMismatch);
     }
 
-    for (&expected, &actual) in provided.iter().zip(derived.iter()) {
-        let actual_u32: u32 = actual
+    for (&expected, query) in provided.iter().zip(fri_proof.queries.iter()) {
+        let actual: u32 = query
+            .position
             .try_into()
             .map_err(|_| VerifyError::IndicesMismatch)?;
-        if expected != actual_u32 {
+        if expected != actual {
             return Err(VerifyError::IndicesMismatch);
         }
     }
@@ -385,24 +426,168 @@ fn validate_trace_indices(provided: &[u32], derived: &[usize]) -> Result<(), Ver
     Ok(())
 }
 
-fn derive_query_positions(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<usize> {
-    if domain_size == 0 {
-        return Vec::new();
+fn ensure_merkle_scheme(
+    config: &ProofSystemConfig,
+    context: &VerifierContext,
+) -> Result<(), VerifyError> {
+    if config.profile.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
+        || context.common_ids.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
+    {
+        return Err(VerifyError::UnsupportedMerkleScheme);
     }
-    let mut xof = PseudoBlake3Xof::new(&seed);
-    let target = count.min(domain_size);
-    let mut unique = Vec::with_capacity(target);
-    let mut seen = vec![false; domain_size];
-    while unique.len() < target {
-        let word = xof.next_u64();
-        let position = (word % (domain_size as u64)) as usize;
-        if !seen[position] {
-            seen[position] = true;
-            unique.push(position);
+
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum LeafSource {
+    Trace,
+    Composition,
+}
+
+fn verify_trace_commitment(
+    params: &crate::params::StarkParams,
+    root: &[u8; 32],
+    openings: &crate::proof::types::TraceOpenings,
+) -> Result<Vec<FieldElement>, VerifyError> {
+    verify_merkle_section(
+        params,
+        root,
+        &openings.indices,
+        &openings.leaves,
+        &openings.paths,
+        MerkleSection::TraceCommit,
+        LeafSource::Trace,
+    )
+}
+
+fn verify_composition_commitment(
+    params: &crate::params::StarkParams,
+    root: &[u8; 32],
+    openings: &crate::proof::types::CompositionOpenings,
+) -> Result<Vec<FieldElement>, VerifyError> {
+    verify_merkle_section(
+        params,
+        root,
+        &openings.indices,
+        &openings.leaves,
+        &openings.paths,
+        MerkleSection::CompositionCommit,
+        LeafSource::Composition,
+    )
+}
+
+fn verify_merkle_section(
+    params: &crate::params::StarkParams,
+    root: &[u8; 32],
+    indices: &[u32],
+    leaves: &[Vec<u8>],
+    paths: &[crate::proof::types::MerkleAuthenticationPath],
+    section: MerkleSection,
+    source: LeafSource,
+) -> Result<Vec<FieldElement>, VerifyError> {
+    if indices.len() != leaves.len() || indices.len() != paths.len() || indices.is_empty() {
+        return Err(VerifyError::EmptyOpenings);
+    }
+
+    if params.merkle().arity != crate::params::MerkleArity::Binary {
+        return Err(VerifyError::UnsupportedMerkleScheme);
+    }
+
+    if params.merkle().leaf_width != 1 {
+        return Err(VerifyError::UnsupportedMerkleScheme);
+    }
+
+    let element_size = FieldElement::ZERO.to_bytes().len();
+    let expected_leaf_bytes = element_size * params.merkle().leaf_width as usize;
+    let root_digest = MerkleDigest::new(root.to_vec());
+    let mut values = Vec::with_capacity(indices.len());
+
+    for ((&index, leaf_bytes), path) in indices.iter().zip(leaves.iter()).zip(paths.iter()) {
+        if leaf_bytes.len() != expected_leaf_bytes {
+            return Err(match source {
+                LeafSource::Trace => VerifyError::TraceLeafMismatch,
+                LeafSource::Composition => VerifyError::CompositionLeafMismatch,
+            });
+        }
+
+        let proof = MerkleProof {
+            version: 1,
+            arity: crate::params::MerkleArity::Binary,
+            leaf_encoding: params.merkle().leaf_encoding,
+            path: convert_path(path, section)?,
+            indices: vec![index],
+            leaf_width: params.merkle().leaf_width,
+            domain_sep: params.merkle().domain_sep,
+            leaf_width_bytes: leaf_bytes.len() as u32,
+            digest_size: DeterministicMerkleHasher::digest_size() as u16,
+        };
+
+        let leaf = Leaf::new(leaf_bytes.clone());
+        let leaves_array = [leaf];
+        verify_merkle_proof::<DeterministicMerkleHasher>(
+            params,
+            &root_digest,
+            &proof,
+            &leaves_array,
+        )
+        .map_err(|_| VerifyError::MerkleVerifyFailed { section })?;
+
+        let mut field_bytes = [0u8; 8];
+        field_bytes.copy_from_slice(&leaf_bytes[..element_size]);
+        let value = FieldElement::from_bytes(&field_bytes)
+            .map_err(|_| VerifyError::NonCanonicalFieldElement)?;
+        values.push(value);
+    }
+
+    Ok(values)
+}
+
+fn convert_path(
+    path: &crate::proof::types::MerkleAuthenticationPath,
+    section: MerkleSection,
+) -> Result<Vec<ProofNode>, VerifyError> {
+    if path.nodes.is_empty() {
+        return Err(VerifyError::MerkleVerifyFailed { section });
+    }
+    let mut nodes = Vec::with_capacity(path.nodes.len());
+    for node in &path.nodes {
+        nodes.push(ProofNode::Arity2([MerkleDigest::new(
+            node.sibling.to_vec(),
+        )]));
+    }
+    Ok(nodes)
+}
+
+fn verify_composition_alignment(
+    composition_values: &[FieldElement],
+    indices: &[u32],
+    fri_proof: &crate::fri::FriProof,
+) -> Result<(), VerifyError> {
+    if composition_values.len() != fri_proof.queries.len()
+        || indices.len() != fri_proof.queries.len()
+    {
+        return Err(VerifyError::CompositionLeafMismatch);
+    }
+
+    for ((value, &index), query) in composition_values
+        .iter()
+        .zip(indices.iter())
+        .zip(fri_proof.queries.iter())
+    {
+        if query.position != index as usize {
+            return Err(VerifyError::CompositionLeafMismatch);
+        }
+        let first_layer = query
+            .layers
+            .first()
+            .ok_or(VerifyError::CompositionLeafMismatch)?;
+        if *value != first_layer.value {
+            return Err(VerifyError::CompositionLeafMismatch);
         }
     }
-    unique.sort();
-    unique
+
+    Ok(())
 }
 
 fn enforce_resource_limits(
@@ -460,13 +645,18 @@ fn enforce_trace_limits(
 
 fn verify_ood_openings(
     openings: &[OutOfDomainOpening],
-    points: &[[u8; 32]],
-    _alphas: &[[u8; 32]],
+    trace_values: &[FieldElement],
+    composition_values: &[FieldElement],
 ) -> Result<(), VerifyError> {
-    if openings.len() != points.len() {
+    if openings.is_empty() {
+        return Err(VerifyError::OutOfDomainInvalid);
+    }
+    if trace_values.is_empty() || composition_values.is_empty() {
         return Err(VerifyError::OutOfDomainInvalid);
     }
 
+    let trace_len = trace_values.len();
+    let comp_len = composition_values.len();
     for opening in openings {
         if opening.core_values.len() != 1 {
             return Err(VerifyError::OutOfDomainInvalid);
@@ -474,9 +664,34 @@ fn verify_ood_openings(
         if !opening.aux_values.is_empty() {
             return Err(VerifyError::OutOfDomainInvalid);
         }
+
+        let comp_index = (opening.point[0] as usize) % comp_len;
+        let expected_comp = composition_values[comp_index];
+        let observed_comp = field_from_fixed_bytes(&opening.composition_value)?;
+        if observed_comp != expected_comp {
+            return Err(VerifyError::CompositionOodMismatch);
+        }
+
+        let trace_index = comp_index % trace_len;
+        let expected_trace = trace_values[trace_index];
+        let observed_trace = field_from_fixed_bytes(
+            opening
+                .core_values
+                .first()
+                .ok_or(VerifyError::OutOfDomainInvalid)?,
+        )?;
+        if observed_trace != expected_trace {
+            return Err(VerifyError::TraceOodMismatch);
+        }
     }
 
     Ok(())
+}
+
+fn field_from_fixed_bytes(bytes: &[u8; 32]) -> Result<FieldElement, VerifyError> {
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(&bytes[..8]);
+    FieldElement::from_bytes(&buf).map_err(|_| VerifyError::NonCanonicalFieldElement)
 }
 
 fn proof_size_exceeds_limit(proof: &Proof, context: &VerifierContext) -> bool {
