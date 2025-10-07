@@ -589,15 +589,9 @@ fn encode_merkle_openings(
     Ok(())
 }
 
-type DecodedMerkleOpenings = (
-    Vec<u32>,
-    Vec<Vec<u8>>,
-    Vec<MerkleAuthenticationPath>,
-);
+type DecodedMerkleOpenings = (Vec<u32>, Vec<Vec<u8>>, Vec<MerkleAuthenticationPath>);
 
-fn decode_merkle_openings(
-    cursor: &mut ByteReader<'_>,
-) -> Result<DecodedMerkleOpenings, SerError> {
+fn decode_merkle_openings(cursor: &mut ByteReader<'_>) -> Result<DecodedMerkleOpenings, SerError> {
     let indices_len = read_u32(cursor, SerKind::Openings, "indices_len")? as usize;
     let mut indices = Vec::with_capacity(indices_len);
     for _ in 0..indices_len {

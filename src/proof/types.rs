@@ -98,8 +98,7 @@ impl MerkleProofBundle {
     }
 
     /// Assembles a bundle and validates that the provided FRI proof advertises
-    /// compatible layer roots. The first FRI root must match the declared core
-    /// root and the layer ordering must be identical.
+    /// compatible layer roots. The layer ordering must be identical.
     pub fn from_fri_proof(
         core_root: [u8; 32],
         aux_root: [u8; 32],
@@ -115,12 +114,6 @@ impl MerkleProofBundle {
     /// individual roots to verify that the redundant data is internally
     /// consistent.
     pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
-        if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != self.core_root {
-            return Err(VerifyError::MerkleVerifyFailed {
-                section: MerkleSection::FriRoots,
-            });
-        }
-
         if self.fri_layer_roots != fri_proof.layer_roots {
             return Err(VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriRoots,

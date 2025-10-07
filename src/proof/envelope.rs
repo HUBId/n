@@ -585,8 +585,11 @@ mod tests {
         };
         let witness_bytes = {
             let mut bytes = Vec::new();
-            bytes.extend_from_slice(&(1u32).to_le_bytes());
-            bytes.extend_from_slice(&(1u64).to_le_bytes());
+            let count = 8u32;
+            bytes.extend_from_slice(&count.to_le_bytes());
+            for value in 1u64..=count as u64 {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
             bytes
         };
 
@@ -599,6 +602,6 @@ mod tests {
             &context,
         );
 
-        assert!(envelope.is_ok());
+        assert!(envelope.is_ok(), "{:?}", envelope);
     }
 }
