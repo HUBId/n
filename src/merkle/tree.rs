@@ -182,7 +182,11 @@ impl<H: MerkleHasher> MerkleTree<H> {
             for chunk in current.chunks(arity) {
                 let mut children: Vec<H::Digest> = chunk.to_vec();
                 while children.len() < arity {
-                    let last = *children.last().unwrap();
+                    let last = *children
+                        .last()
+                        .ok_or(MerkleError::InvalidTreeState {
+                            reason: "missing child when padding level",
+                        })?;
                     children.push(last);
                 }
                 next.push(H::hash_nodes(self.config.domain_sep, &children));
@@ -191,7 +195,9 @@ impl<H: MerkleHasher> MerkleTree<H> {
             current = next;
         }
 
-        let root = current.first().copied().expect("non-empty tree");
+        let root = current.first().copied().ok_or(MerkleError::InvalidTreeState {
+            reason: "missing root after commitment",
+        })?;
         self.leaf_count = leaf_count;
         self.levels = Some(levels);
 

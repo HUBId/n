@@ -2,7 +2,6 @@ use super::proof::MerkleProof;
 use super::tree::CommitAux;
 use super::types::{Digest, MerkleError, ProofNode, SerKind};
 use crate::params::{Endianness, MerkleArity};
-use std::convert::TryInto;
 
 fn encode_endianness(value: Endianness) -> u8 {
     match value {
@@ -88,20 +87,34 @@ pub fn decode_proof(bytes: &[u8]) -> Result<MerkleProof, MerkleError> {
         Ok(slice)
     };
 
-    let version = u16::from_le_bytes(take(2)?.try_into().unwrap());
+    let mut version_bytes = [0u8; 2];
+    version_bytes.copy_from_slice(take(2)?);
+    let version = u16::from_le_bytes(version_bytes);
     let arity = decode_arity(take(1)?[0]).ok_or(MerkleError::Serialization(SerKind::Proof))?;
     let leaf_encoding =
         decode_endianness(take(1)?[0]).ok_or(MerkleError::Serialization(SerKind::Proof))?;
     let leaf_width = take(1)?[0];
-    let domain_sep = u64::from_le_bytes(take(8)?.try_into().unwrap());
-    let leaf_width_bytes = u32::from_le_bytes(take(4)?.try_into().unwrap());
-    let digest_size = u16::from_le_bytes(take(2)?.try_into().unwrap());
-    let index_len = u32::from_le_bytes(take(4)?.try_into().unwrap()) as usize;
+    let mut domain_sep_bytes = [0u8; 8];
+    domain_sep_bytes.copy_from_slice(take(8)?);
+    let domain_sep = u64::from_le_bytes(domain_sep_bytes);
+    let mut leaf_width_bytes_raw = [0u8; 4];
+    leaf_width_bytes_raw.copy_from_slice(take(4)?);
+    let leaf_width_bytes = u32::from_le_bytes(leaf_width_bytes_raw);
+    let mut digest_size_bytes = [0u8; 2];
+    digest_size_bytes.copy_from_slice(take(2)?);
+    let digest_size = u16::from_le_bytes(digest_size_bytes);
+    let mut index_len_bytes = [0u8; 4];
+    index_len_bytes.copy_from_slice(take(4)?);
+    let index_len = u32::from_le_bytes(index_len_bytes) as usize;
     let mut indices = Vec::with_capacity(index_len);
     for _ in 0..index_len {
-        indices.push(u32::from_le_bytes(take(4)?.try_into().unwrap()));
+        let mut index_bytes = [0u8; 4];
+        index_bytes.copy_from_slice(take(4)?);
+        indices.push(u32::from_le_bytes(index_bytes));
     }
-    let path_len = u32::from_le_bytes(take(4)?.try_into().unwrap()) as usize;
+    let mut path_len_bytes = [0u8; 4];
+    path_len_bytes.copy_from_slice(take(4)?);
+    let path_len = u32::from_le_bytes(path_len_bytes) as usize;
     let mut path = Vec::with_capacity(path_len);
     for _ in 0..path_len {
         let tag = take(1)?[0];
@@ -191,22 +204,38 @@ pub fn decode_commit_aux(bytes: &[u8]) -> Result<CommitAux, MerkleError> {
         Ok(slice)
     };
 
-    let version = u16::from_le_bytes(take(2)?.try_into().unwrap());
+    let mut version_bytes = [0u8; 2];
+    version_bytes.copy_from_slice(take(2)?);
+    let version = u16::from_le_bytes(version_bytes);
     let arity = decode_arity(take(1)?[0]).ok_or(MerkleError::Serialization(SerKind::CommitAux))?;
     let leaf_encoding =
         decode_endianness(take(1)?[0]).ok_or(MerkleError::Serialization(SerKind::CommitAux))?;
     let leaf_width = take(1)?[0];
-    let domain_sep = u64::from_le_bytes(take(8)?.try_into().unwrap());
-    let digest_size = u16::from_le_bytes(take(2)?.try_into().unwrap());
-    let leaf_count = u32::from_le_bytes(take(4)?.try_into().unwrap());
-    let depth = u32::from_le_bytes(take(4)?.try_into().unwrap());
-    let level_count = u32::from_le_bytes(take(4)?.try_into().unwrap()) as usize;
+    let mut domain_sep_bytes = [0u8; 8];
+    domain_sep_bytes.copy_from_slice(take(8)?);
+    let domain_sep = u64::from_le_bytes(domain_sep_bytes);
+    let mut digest_size_bytes = [0u8; 2];
+    digest_size_bytes.copy_from_slice(take(2)?);
+    let digest_size = u16::from_le_bytes(digest_size_bytes);
+    let mut leaf_count_bytes = [0u8; 4];
+    leaf_count_bytes.copy_from_slice(take(4)?);
+    let leaf_count = u32::from_le_bytes(leaf_count_bytes);
+    let mut depth_bytes = [0u8; 4];
+    depth_bytes.copy_from_slice(take(4)?);
+    let depth = u32::from_le_bytes(depth_bytes);
+    let mut level_count_bytes = [0u8; 4];
+    level_count_bytes.copy_from_slice(take(4)?);
+    let level_count = u32::from_le_bytes(level_count_bytes) as usize;
     let mut levels = Vec::with_capacity(level_count);
     for _ in 0..level_count {
-        let node_count = u32::from_le_bytes(take(4)?.try_into().unwrap()) as usize;
+        let mut node_count_bytes = [0u8; 4];
+        node_count_bytes.copy_from_slice(take(4)?);
+        let node_count = u32::from_le_bytes(node_count_bytes) as usize;
         let mut level = Vec::with_capacity(node_count);
         for _ in 0..node_count {
-            let len = u32::from_le_bytes(take(4)?.try_into().unwrap()) as usize;
+            let mut len_bytes = [0u8; 4];
+            len_bytes.copy_from_slice(take(4)?);
+            let len = u32::from_le_bytes(len_bytes) as usize;
             let raw = take(len)?;
             level.push(Digest::new(raw.to_vec()));
         }
