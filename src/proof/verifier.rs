@@ -677,7 +677,7 @@ fn verify_ood_openings(
         let observed_trace = field_from_fixed_bytes(
             opening
                 .core_values
-                .get(0)
+                .first()
                 .ok_or(VerifyError::OutOfDomainInvalid)?,
         )?;
         if observed_trace != expected_trace {
