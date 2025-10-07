@@ -134,8 +134,50 @@ impl MerkleProofBundle {
 /// Out-of-domain opening container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Openings {
+    /// Trace Merkle openings covering core trace queries.
+    pub trace: TraceOpenings,
+    /// Optional composition openings (mirrors the trace structure).
+    pub composition: Option<CompositionOpenings>,
     /// Individual out-of-domain openings.
     pub out_of_domain: Vec<OutOfDomainOpening>,
+}
+
+/// Merkle opening data covering trace commitments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TraceOpenings {
+    /// Query indices sampled from the FRI transcript.
+    pub indices: Vec<u32>,
+    /// Leaf payloads revealed for each queried index.
+    pub leaves: Vec<Vec<u8>>,
+    /// Authentication paths proving membership for each query.
+    pub paths: Vec<MerkleAuthenticationPath>,
+}
+
+/// Merkle opening data covering composition commitments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompositionOpenings {
+    /// Query indices sampled from the FRI transcript.
+    pub indices: Vec<u32>,
+    /// Leaf payloads revealed for each queried index.
+    pub leaves: Vec<Vec<u8>>,
+    /// Authentication paths proving membership for each query.
+    pub paths: Vec<MerkleAuthenticationPath>,
+}
+
+/// Authentication path for a Merkle opening.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MerkleAuthenticationPath {
+    /// Sequence of nodes from the leaf to the root.
+    pub nodes: Vec<MerklePathNode>,
+}
+
+/// Single node within an authentication path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MerklePathNode {
+    /// Position of the caller node within the parent (`0` for left, `1` for right).
+    pub index: u8,
+    /// Sibling digest paired with the caller node at this level.
+    pub sibling: [u8; 32],
 }
 
 /// Telemetry frame exposing declared lengths and FRI parameters.
@@ -251,8 +293,12 @@ pub enum VerifyError {
     ProofTooLarge,
     /// Proof declared openings but none were provided in the payload.
     EmptyOpenings,
-    /// Query indices were not strictly increasing or contained duplicates.
+    /// Query indices were not strictly increasing.
+    IndicesNotSorted,
+    /// Query indices contained duplicates.
     IndicesDuplicate,
+    /// Query indices disagreed with the locally derived transcript indices.
+    IndicesMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.
     AggregationDigestMismatch,
     /// Malformed serialization encountered while decoding a proof section.

@@ -1,18 +1,20 @@
+use core::convert::TryInto;
 use rpp_stark::config::{
     compute_param_digest, CommonIdentifiers, ParamDigest, ProfileConfig,
     ProofKind as ConfigProofKind, ProofSystemConfig, ResourceLimits, VerifierContext,
     COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG, PROOF_VERSION_V1,
 };
 use rpp_stark::field::FieldElement;
-use rpp_stark::hash::Hasher;
+use rpp_stark::hash::{Hasher, PseudoBlake3Xof};
 use rpp_stark::proof::envelope::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
-    FriParametersMirror, FriVerifyIssue, MerkleProofBundle, Openings, OutOfDomainOpening, Proof,
-    Telemetry, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    FriParametersMirror, FriVerifyIssue, MerkleAuthenticationPath, MerkleProofBundle, Openings,
+    OutOfDomainOpening, Proof, Telemetry, TraceOpenings, VerifyError, PROOF_ALPHA_VECTOR_LEN,
+    PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
@@ -233,8 +235,14 @@ fn build_envelope(
     )
     .expect("synthetic fri proof");
 
-    let ood_openings =
-        build_ood_openings(context, proof_kind, &public_inputs, &core_root, &aux_root);
+    let (ood_openings, trace_indices) = build_ood_openings(
+        context,
+        proof_kind,
+        &public_inputs,
+        &core_root,
+        &aux_root,
+        &fri_proof,
+    );
 
     let merkle = MerkleProofBundle {
         core_root,
@@ -265,6 +273,8 @@ fn build_envelope(
         },
         merkle,
         openings: Openings {
+            trace: build_trace_section(&trace_indices),
+            composition: None,
             out_of_domain: ood_openings,
         },
         fri_proof,
@@ -299,13 +309,24 @@ fn build_queries(layer_count: usize, query_count: usize) -> Vec<FriQueryProof> {
         .collect()
 }
 
+fn build_trace_section(indices: &[u32]) -> TraceOpenings {
+    let leaves = vec![Vec::new(); indices.len()];
+    let paths = vec![MerkleAuthenticationPath { nodes: Vec::new() }; indices.len()];
+    TraceOpenings {
+        indices: indices.to_vec(),
+        leaves,
+        paths,
+    }
+}
+
 fn build_ood_openings(
     context: &VerifierContext,
     proof_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     core_root: &[u8; 32],
     aux_root: &[u8; 32],
-) -> Vec<OutOfDomainOpening> {
+    fri_proof: &FriProof,
+) -> (Vec<OutOfDomainOpening>, Vec<u32>) {
     let air_spec_id = context.profile.air_spec_ids.tx.clone();
     let mut transcript = Transcript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
@@ -339,7 +360,7 @@ fn build_ood_openings(
         .expect("ood points");
     let _ = challenges.draw_ood_seed().expect("ood seed");
 
-    points
+    let ood_values: Vec<OutOfDomainOpening> = points
         .iter()
         .enumerate()
         .map(|(index, point)| OutOfDomainOpening {
@@ -348,7 +369,22 @@ fn build_ood_openings(
             aux_values: Vec::new(),
             composition_value: hash_ood_value(b"RPP-OOD/COMP", point, &alphas, index),
         })
-        .collect()
+        .collect();
+
+    let _ = challenges.draw_fri_seed().expect("fri seed");
+    for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {
+        challenges
+            .draw_fri_eta(layer_index)
+            .expect("fri eta challenge");
+    }
+    let query_seed = challenges.draw_query_seed().expect("query seed");
+    let indices = derive_query_indices(
+        query_seed,
+        fri_proof.security_level.query_budget(),
+        fri_proof.initial_domain_size,
+    );
+
+    (ood_values, indices)
 }
 
 fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: usize) -> [u8; 32] {
@@ -360,4 +396,27 @@ fn hash_ood_value(label: &[u8], point: &[u8; 32], alphas: &[[u8; 32]], index: us
         hasher.update(alpha);
     }
     *hasher.finalize().as_bytes()
+}
+
+fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<u32> {
+    if domain_size == 0 {
+        return Vec::new();
+    }
+    let mut xof = PseudoBlake3Xof::new(&seed);
+    let target = count.min(domain_size);
+    let mut unique = Vec::with_capacity(target);
+    let mut seen = vec![false; domain_size];
+    while unique.len() < target {
+        let word = xof.next_u64();
+        let position = (word % (domain_size as u64)) as usize;
+        if !seen[position] {
+            seen[position] = true;
+            unique.push(position);
+        }
+    }
+    unique.sort();
+    unique
+        .into_iter()
+        .map(|idx| idx.try_into().unwrap_or(u32::MAX))
+        .collect()
 }

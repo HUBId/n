@@ -283,7 +283,10 @@ mod tests {
     use crate::params::ProofParams;
     use crate::proof::prover::build_envelope as build_proof_envelope;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
-    use crate::proof::types::FriParametersMirror;
+    use crate::proof::types::{
+        CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
+        TraceOpenings,
+    };
     use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
     fn sample_fri_proof() -> FriProof {
@@ -316,7 +319,33 @@ mod tests {
     }
 
     fn sample_openings() -> Openings {
+        let trace = TraceOpenings {
+            indices: vec![0, 2, 4],
+            leaves: vec![vec![0x10, 0x11], vec![0x12], vec![0x13, 0x14, 0x15]],
+            paths: vec![
+                MerkleAuthenticationPath {
+                    nodes: vec![MerklePathNode {
+                        index: 0,
+                        sibling: [0x21u8; 32],
+                    }],
+                },
+                MerkleAuthenticationPath {
+                    nodes: vec![MerklePathNode {
+                        index: 1,
+                        sibling: [0x22u8; 32],
+                    }],
+                },
+                MerkleAuthenticationPath { nodes: Vec::new() },
+            ],
+        };
+        let composition = Some(CompositionOpenings {
+            indices: vec![0, 2],
+            leaves: vec![vec![0x33], vec![0x34, 0x35]],
+            paths: vec![MerkleAuthenticationPath { nodes: Vec::new() }; 2],
+        });
         Openings {
+            trace,
+            composition,
             out_of_domain: vec![OutOfDomainOpening {
                 point: [3u8; 32],
                 core_values: vec![[4u8; 32]],
@@ -450,8 +479,10 @@ mod tests {
             )
             .with_commitment_digest(DigestBytes { bytes: commitment })
             .with_merkle_bundle(merkle)
-            .with_openings(Openings {
-                out_of_domain: Vec::new(),
+            .with_openings({
+                let mut openings = sample_openings();
+                openings.out_of_domain.clear();
+                openings
             })
             .with_fri_proof(fri_proof)
             .with_telemetry(telemetry)

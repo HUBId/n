@@ -227,7 +227,9 @@ fn map_verify_error(error: VerifyError) -> StarkError {
         VerifyError::DegreeBoundExceeded => StarkError::InvalidInput("degree_bound_exceeded"),
         VerifyError::ProofTooLarge => StarkError::InvalidInput("proof_too_large"),
         VerifyError::EmptyOpenings => StarkError::InvalidInput("empty_openings"),
+        VerifyError::IndicesNotSorted => StarkError::InvalidInput("indices_not_sorted"),
         VerifyError::IndicesDuplicate => StarkError::InvalidInput("indices_duplicate"),
+        VerifyError::IndicesMismatch => StarkError::InvalidInput("indices_mismatch"),
         VerifyError::AggregationDigestMismatch => {
             StarkError::InvalidInput("aggregation_digest_mismatch")
         }

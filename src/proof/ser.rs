@@ -13,8 +13,9 @@ use crate::proof::public_inputs::{
     PublicInputs, RecursionHeaderV1, VrfHeaderV1,
 };
 use crate::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    VerifyError, PROOF_VERSION,
+    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
+    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings, VerifyError,
+    PROOF_VERSION,
 };
 use crate::ser::{
     ensure_consumed, ensure_u32, read_digest, read_u16, read_u32, read_u8, write_bytes,
@@ -366,6 +367,25 @@ fn deserialize_merkle_bundle(bytes: &[u8]) -> Result<MerkleProofBundle, SerError
 
 fn encode_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
     let mut buffer = Vec::new();
+    encode_merkle_openings(
+        &mut buffer,
+        &openings.trace.indices,
+        &openings.trace.leaves,
+        &openings.trace.paths,
+    )?;
+    match &openings.composition {
+        Some(section) => {
+            write_u8(&mut buffer, 1);
+            encode_merkle_openings(
+                &mut buffer,
+                &section.indices,
+                &section.leaves,
+                &section.paths,
+            )?;
+        }
+        None => write_u8(&mut buffer, 0),
+    }
+
     let count = ensure_u32(openings.out_of_domain.len(), SerKind::Openings, "ood_len")?;
     write_u32(&mut buffer, count);
     for opening in &openings.out_of_domain {
@@ -379,6 +399,31 @@ fn encode_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
 
 fn deserialize_openings(bytes: &[u8]) -> Result<Openings, SerError> {
     let mut cursor = ByteReader::new(bytes);
+    let (trace_indices, trace_leaves, trace_paths) = decode_merkle_openings(&mut cursor)?;
+    let trace = TraceOpenings {
+        indices: trace_indices,
+        leaves: trace_leaves,
+        paths: trace_paths,
+    };
+    let has_composition = read_u8(&mut cursor, SerKind::Openings, "composition_flag")?;
+    let composition = match has_composition {
+        0 => None,
+        1 => {
+            let (indices, leaves, paths) = decode_merkle_openings(&mut cursor)?;
+            Some(CompositionOpenings {
+                indices,
+                leaves,
+                paths,
+            })
+        }
+        _ => {
+            return Err(SerError::invalid_value(
+                SerKind::Openings,
+                "composition_flag",
+            ))
+        }
+    };
+
     let count = read_u32(&mut cursor, SerKind::Openings, "ood_len")? as usize;
     let mut out = Vec::with_capacity(count);
     for _ in 0..count {
@@ -388,7 +433,11 @@ fn deserialize_openings(bytes: &[u8]) -> Result<Openings, SerError> {
         out.push(opening);
     }
     ensure_consumed(&cursor, SerKind::Openings)?;
-    Ok(Openings { out_of_domain: out })
+    Ok(Openings {
+        trace,
+        composition,
+        out_of_domain: out,
+    })
 }
 
 fn serialize_telemetry_frame(proof: &Proof) -> Result<Vec<u8>, SerError> {
@@ -506,6 +555,73 @@ fn deserialize_out_of_domain_opening_inner(bytes: &[u8]) -> Result<OutOfDomainOp
     })
 }
 
+fn encode_merkle_openings(
+    buffer: &mut Vec<u8>,
+    indices: &[u32],
+    leaves: &[Vec<u8>],
+    paths: &[MerkleAuthenticationPath],
+) -> Result<(), SerError> {
+    let indices_len = ensure_u32(indices.len(), SerKind::Openings, "indices_len")?;
+    write_u32(buffer, indices_len);
+    for index in indices {
+        write_u32(buffer, *index);
+    }
+
+    let leaves_len = ensure_u32(leaves.len(), SerKind::Openings, "leaves_len")?;
+    write_u32(buffer, leaves_len);
+    for leaf in leaves {
+        let leaf_len = ensure_u32(leaf.len(), SerKind::Openings, "leaf_len")?;
+        write_u32(buffer, leaf_len);
+        write_bytes(buffer, leaf);
+    }
+
+    let paths_len = ensure_u32(paths.len(), SerKind::Openings, "paths_len")?;
+    write_u32(buffer, paths_len);
+    for path in paths {
+        let nodes_len = ensure_u32(path.nodes.len(), SerKind::Openings, "path_len")?;
+        write_u32(buffer, nodes_len);
+        for node in &path.nodes {
+            let MerklePathNode { index, sibling } = node;
+            write_u8(buffer, *index);
+            write_digest(buffer, sibling);
+        }
+    }
+    Ok(())
+}
+
+fn decode_merkle_openings(
+    cursor: &mut ByteReader<'_>,
+) -> Result<(Vec<u32>, Vec<Vec<u8>>, Vec<MerkleAuthenticationPath>), SerError> {
+    let indices_len = read_u32(cursor, SerKind::Openings, "indices_len")? as usize;
+    let mut indices = Vec::with_capacity(indices_len);
+    for _ in 0..indices_len {
+        indices.push(read_u32(cursor, SerKind::Openings, "index")?);
+    }
+
+    let leaves_len = read_u32(cursor, SerKind::Openings, "leaves_len")? as usize;
+    let mut leaves = Vec::with_capacity(leaves_len);
+    for _ in 0..leaves_len {
+        let leaf_len = read_u32(cursor, SerKind::Openings, "leaf_len")? as usize;
+        let bytes = cursor.read_vec(SerKind::Openings, "leaf_bytes", leaf_len)?;
+        leaves.push(bytes);
+    }
+
+    let paths_len = read_u32(cursor, SerKind::Openings, "paths_len")? as usize;
+    let mut paths = Vec::with_capacity(paths_len);
+    for _ in 0..paths_len {
+        let nodes_len = read_u32(cursor, SerKind::Openings, "path_len")? as usize;
+        let mut nodes = Vec::with_capacity(nodes_len);
+        for _ in 0..nodes_len {
+            let index = read_u8(cursor, SerKind::Openings, "path_index")?;
+            let sibling = read_digest(cursor, SerKind::Openings, "path_sibling")?;
+            nodes.push(MerklePathNode { index, sibling });
+        }
+        paths.push(MerkleAuthenticationPath { nodes });
+    }
+
+    Ok((indices, leaves, paths))
+}
+
 /// Deserialises an out-of-domain opening block.
 pub fn deserialize_out_of_domain_opening(bytes: &[u8]) -> Result<OutOfDomainOpening, VerifyError> {
     deserialize_out_of_domain_opening_inner(bytes).map_err(VerifyError::from)
@@ -546,18 +662,12 @@ pub fn serialize_proof_payload(proof: &Proof) -> Vec<u8> {
         write_digest(&mut buffer, root);
     }
 
+    let openings_bytes = serialize_openings(&proof.openings);
     write_u32(
         &mut buffer,
-        u32::try_from(proof.openings.out_of_domain.len()).expect("ood openings fit u32"),
+        u32::try_from(openings_bytes.len()).expect("openings payload fits u32"),
     );
-    for opening in &proof.openings.out_of_domain {
-        let encoded = serialize_out_of_domain_opening(opening);
-        write_u32(
-            &mut buffer,
-            u32::try_from(encoded.len()).expect("opening bytes fit u32"),
-        );
-        write_bytes(&mut buffer, &encoded);
-    }
+    write_bytes(&mut buffer, &openings_bytes);
 
     let fri_bytes = serialize_fri_proof(&proof.fri_proof);
     write_u32(
@@ -580,6 +690,9 @@ mod tests {
     use crate::field::FieldElement;
     use crate::fri::{FriProof, FriSecurityLevel};
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
+    use crate::proof::types::{
+        CompositionOpenings, MerkleAuthenticationPath, MerklePathNode, TraceOpenings,
+    };
     use crate::utils::serialization::DigestBytes;
 
     fn sample_fri_proof() -> FriProof {
@@ -613,7 +726,32 @@ mod tests {
             aux_root,
             fri_layer_roots,
         };
+        let trace = TraceOpenings {
+            indices: vec![0, 1],
+            leaves: vec![vec![0xaa, 0xbb], vec![0xcc]],
+            paths: vec![
+                MerkleAuthenticationPath {
+                    nodes: vec![MerklePathNode {
+                        index: 0,
+                        sibling: [0x11u8; 32],
+                    }],
+                },
+                MerkleAuthenticationPath {
+                    nodes: vec![MerklePathNode {
+                        index: 1,
+                        sibling: [0x22u8; 32],
+                    }],
+                },
+            ],
+        };
+        let composition = Some(CompositionOpenings {
+            indices: vec![0],
+            leaves: vec![vec![0xdd, 0xee]],
+            paths: vec![MerkleAuthenticationPath { nodes: Vec::new() }],
+        });
         let openings = Openings {
+            trace,
+            composition,
             out_of_domain: vec![OutOfDomainOpening {
                 point: [3u8; 32],
                 core_values: vec![[4u8; 32]],

@@ -13,7 +13,7 @@ use crate::config::{
     ProverContext,
 };
 use crate::field::FieldElement;
-use crate::fri::{FriError, FriProof, FriSecurityLevel};
+use crate::fri::{FriError, FriProof, FriSecurityLevel, PseudoBlake3Xof};
 use crate::hash::Hasher;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
@@ -22,10 +22,11 @@ use crate::proof::ser::{
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
+    Proof, Telemetry, TraceOpenings, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
+use core::convert::TryInto;
 
 use super::types::{FriVerifyIssue, MerkleSection, VerifyError};
 
@@ -118,12 +119,17 @@ pub fn build_envelope(
     for (layer_index, _) in fri_proof.layer_roots.iter().enumerate() {
         let _ = challenges.draw_fri_eta(layer_index)?;
     }
-    let _query_seed = challenges.draw_query_seed()?;
+    let query_seed = challenges.draw_query_seed()?;
 
     if fri_proof.layer_roots.first().copied().unwrap_or([0u8; 32]) != core_root {
         return Err(ProverError::Fri(FriError::LayerRootMismatch { layer: 0 }));
     }
 
+    let trace_indices = derive_query_indices(
+        query_seed,
+        security_level.query_budget(),
+        fri_proof.initial_domain_size,
+    );
     let ood_openings = derive_ood_openings(&ood_points, &alpha_vector);
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
@@ -159,6 +165,8 @@ pub fn build_envelope(
         },
         merkle,
         openings: Openings {
+            trace: build_trace_openings(trace_indices),
+            composition: None,
             out_of_domain: ood_openings,
         },
         fri_proof,
@@ -242,6 +250,39 @@ fn derive_ood_openings(points: &[[u8; 32]], alpha_vector: &[[u8; 32]]) -> Vec<Ou
             aux_values: Vec::new(),
             composition_value: hash_ood_value(b"RPP-OOD/COMP", point, alpha_vector, index),
         })
+        .collect()
+}
+
+fn build_trace_openings(indices: Vec<u32>) -> TraceOpenings {
+    let leaves = vec![Vec::new(); indices.len()];
+    let paths = vec![MerkleAuthenticationPath { nodes: Vec::new() }; indices.len()];
+    TraceOpenings {
+        indices,
+        leaves,
+        paths,
+    }
+}
+
+fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<u32> {
+    if domain_size == 0 {
+        return Vec::new();
+    }
+    let mut xof = PseudoBlake3Xof::new(&seed);
+    let target = count.min(domain_size);
+    let mut unique = Vec::with_capacity(target);
+    let mut seen = vec![false; domain_size];
+    while unique.len() < target {
+        let word = xof.next_u64();
+        let position = (word % (domain_size as u64)) as usize;
+        if !seen[position] {
+            seen[position] = true;
+            unique.push(position);
+        }
+    }
+    unique.sort();
+    unique
+        .into_iter()
+        .map(|idx| idx.try_into().unwrap_or(u32::MAX))
         .collect()
 }
 

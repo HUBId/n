@@ -1,3 +1,4 @@
+use std::convert::TryInto;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -15,8 +16,8 @@ use rpp_stark::proof::ser::{
     compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::types::{
-    FriParametersMirror, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    PROOF_VERSION,
+    FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
+    Proof, Telemetry, TraceOpenings, PROOF_VERSION,
 };
 use rpp_stark::utils::serialization::DigestBytes;
 
@@ -185,6 +186,7 @@ fn build_sample_proof(
         integrity_digest: DigestBytes { bytes: [0u8; 32] },
     };
 
+    let trace_openings = build_trace_stub(&fri_proof);
     let mut proof = Proof {
         version: PROOF_VERSION,
         kind: ProofKind::Tx,
@@ -196,6 +198,8 @@ fn build_sample_proof(
         },
         merkle,
         openings: Openings {
+            trace: trace_openings,
+            composition: None,
             out_of_domain: ood_openings,
         },
         fri_proof,
@@ -244,6 +248,21 @@ fn sample_digest(reader: &mut OutputReader) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     reader.fill(&mut bytes);
     bytes
+}
+
+fn build_trace_stub(fri_proof: &FriProof) -> TraceOpenings {
+    let indices: Vec<u32> = fri_proof
+        .queries
+        .iter()
+        .map(|query| query.position.try_into().unwrap_or(u32::MAX))
+        .collect();
+    let leaves = vec![Vec::new(); indices.len()];
+    let paths = vec![MerkleAuthenticationPath { nodes: Vec::new() }; indices.len()];
+    TraceOpenings {
+        indices,
+        leaves,
+        paths,
+    }
 }
 
 fn sample_u64(reader: &mut OutputReader) -> u64 {
