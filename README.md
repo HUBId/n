@@ -105,6 +105,310 @@ changing runtime behaviour:
 
 [![CI status](https://img.shields.io/badge/CI-pending-lightgrey.svg)](#)
 
+## Projekt-Blueprint
+
+Die folgende Spezifikation beschreibt die Zielarchitektur der Bibliothek
+„rpp-stark – vollständige Library (v1.0, Rust stable only)“. Sie dient als
+verbindliche Grundlage für Implementierung, Tests, Serialisierung und
+Fehlermodell der gesamten Codebasis.
+
+### Ziel & Scope
+
+- **Zweck:** Eigenständige, deterministische STARK-Bibliothek mit klaren ABIs,
+  Proof-Envelope, Verifier-API, Merkle/FRI/AIR/Composition, Serialisierung und
+  Tests, kompatibel zur RPP-Chain (STWO-Default).
+- **Rollen:** Wallet = Prover, Node = Verifier.
+- **Ergebnis:** Byte-stabile Proof-Artefakte, präzise Fehlercodes,
+  reproduzierbare Tests/Benches, CI-fähig – ohne nightly.
+
+### Querschnitts-Policies (verbindlich)
+
+- **Sprache/Toolchain:** Rust stable (MSRV festlegen und dokumentieren), keine
+  `#![feature]`.
+- **Safety:** Kein `unsafe`, keine Panics in Bibliothekslogik, keine
+  `unwrap`/`expect`.
+- **Determinismus:** Gleiche Inputs ⇒ bitidentische Outputs (Bytes, Roots,
+  Indizes, Challenges).
+- **Endianness:** Little-Endian für alle Ganzzahlen; Feldelemente als feste
+  LE-Byte-Breite; Digests roh (byte-order-agnostisch).
+- **Randomness:** Ausschließlich via Transcript (Fiat–Shamir); kein OS-RNG,
+  keine Uhrzeit, kein Nonce aus Umgebung.
+- **Fehler:** Wohldefinierte Enums (keine „stringly typed“ Zustände).
+- **Hash & Merkle:** Hashfamilie via Params; STWO-kompatible 32-Byte
+  Blake2s-Digests als Default (Adapter für alternative Hashes zulässig).
+- **Versionierung:** Jede ABI- oder Protokolländerung ⇒ Versionsfeld erhöhen;
+  ältere Verifier müssen deterministisch ablehnen.
+
+### Feature-Flags (opt-in)
+
+- `stark-core` (Standardkern)
+- `parallel` (Rayon optional; muss bitidentische Ergebnisse liefern mit/ohne
+  Parallelisierung)
+- `audit-lde`, `audit-lde-hisec` (zusätzliche Prüfpfade/Assertions)
+- `backend-rpp-stark` (für spätere Integration in chain)
+
+Das Default-Feature-Set ändert kein bestehendes Verhalten außerhalb der
+Library.
+
+### Modulbaum & Dateien (Top-Level)
+
+- `src/params/...` – Parameter, Profile, Hash-Bindings, `params_hash()`.
+- `src/ser/...` – zentrales Serialisierungsschema (LE, Längenfelder,
+  Enum-Tags).
+- `src/transcript/...` – Domain-Separation, Absorb/Challenge, Labels,
+  deterministische Streams.
+- `src/merkle/...` – Tree, Proof, Open/Verify, Arity 2/4,
+  Rightmost-Duplication.
+- `src/fri/...` – Folding, Layer, Proof, Verify, Query-Orchestrierung.
+- `src/air/...` – AIR-Traits, Trace-Schema, Beispiel-AIR, Composition-Builder.
+- `src/proof/...` – Proof-Envelope, Ser/De, Verifier-API, Size-Gates.
+- `tests/...` – Unit, Property, Negativ, Snapshot, E2E.
+- `benches/...` – Criterion-Benches (nur stable-kompatible Messungen; keine
+  nightly-Gates).
+
+### Zentrales Serialisierungsschema (`ser/`)
+
+- Ganzzahlen: `u16`/`u32`/`u64`/`u128` Little-Endian; `bool` als `u8` (0/1).
+- Feldelemente: feste Byte-Länge, LE; keine Varints; keine Längenpräfixe
+  innerhalb eines Felts.
+- Digests: Rohbytes (keine Endianness-Interpretation).
+- `Vec<T>`: `u32`-Elementanzahl als Präfix (Zählung in Elementen, nicht in
+  Bytes).
+- Optionale Felder: `u8`-Flag (0/1) vor dem Feld.
+- Enums: fester Tag-Typ (`u8` oder `u16`), unbekannte Tags ⇒ Fehler.
+- Zusammengesetzte Typen: Reihenfolge „Header → Fixed Fields → Längen →
+  Arrays“; kein Padding.
+- Fehlerbehandlung: `SerError`/`SerKind` → Modul-übergreifend auf
+  `VerifyError::Serialization(SerKind)` mappen.
+- Tests (Pflicht): Roundtrip aller Primitiven, Property-Tests für `Vec<Felt>`
+  (begrenzte Länge), Negativfälle (falsche Längen/Tags), Snapshots für
+  repräsentative Strukturen (MerkleProof, FriProof, Proof).
+
+### Parameter (`params/`)
+
+- Strukturfelder (verbindlich):
+  - `proof`: `version (u16)`, `max_size_kb (u32)`.
+  - `fri`: `domain_log2 (u16)`, `queries (u16)`, optionale zielgerichtete
+    Layer-/Grad-Limits.
+  - `merkle`: `arity (2/4)`, `leaf_width (u8)`, `leaf_encoding (Little; fixed)`,
+    `domain-sep-Tag`.
+  - `transcript`: `protocol_tag (u64)`, `seed ([u8;32])`.
+  - `lde`: `order (RowMajor/ColMajor)`, ggf. Coset-Angaben.
+  - `security`: `target_bits (u16)`, `soundness_slack_bits (u8)`.
+  - `hash`: Familie/Variante, `digest_len` (z. B. 32).
+- Funktion: `params_hash() -> [u8;32]` über kanonisch serialisierte Params.
+- Profile: z. B. `PROFILE_X8`, `PROFILE_HISEC_X16`, dokumentiert mit festen
+  Werten.
+- Tests: Roundtrip & Snapshots der Profile; `params_hash` stabil; Invarianten
+  (z. B. `1 << domain_log2 ≥ Trace-Länge`).
+
+### Transcript (`transcript/`)
+
+- Phasen & Reihenfolge (fix):
+  1. Init: absorb `ParamsHash`, `ProtocolTag` (`u64` LE), `Seed ([32])`.
+  2. Public: absorb `PublicInputsDigest`.
+  3. TraceCommit: absorb `TraceRoot`; ggf. Komposition-Challenge(s).
+  4. CompCommit (optional): absorb `CompRoot`; Challenges `CompChallengeA/B/...`
+     (`α`-Vektor).
+  5. FRI: pro Layer absorb `FriRoot(i)`, dann `FriFoldChallenge(i)`.
+  6. Queries: absorb `QueryCount` (`u16` LE), dann Challenge-Strom
+     `QueryIndexStream`.
+  7. Final: optionale Abschlussbytes (reiner Bindungszweck).
+- API (verbal): Konstruktor mit Params & Kontext; `absorb_*`
+  (Bytes/Digest/Feld); `challenge_field`, `challenge_usize(range)`,
+  `challenge_bytes(n)`; deterministisch, ohne OS-RNG.
+- Tests: Reproduzierbarkeit der Challenge-Sequenzen bei identischen Inputs;
+  Label-Reihenfolge fix.
+
+### Merkle (`merkle/`)
+
+- Leaf-Layout (fix):
+  - `leaf_width` Feldelemente pro Leaf.
+  - Jedes Felt als LE-Bytefolge; Leaves sind simple Konkatenation ohne Präfixe
+    innerhalb des Leafs.
+  - Reihenfolge: an `lde.order` gebunden (Row/ColMajor) – einmal definieren und
+    überall referenzieren.
+  - Domain-Separation: konsistente Tags (z. B. unterschiedlich für Leaves vs.
+    innere Knoten).
+- Baumregeln:
+  - Arity 2 oder 4; Rightmost-Child-Duplication bei ungerader Blattzahl.
+  - Proof: versionierte Struktur; Pfadknoten je Ebene arity-konform.
+  - Batch-Openings: Indices aufsteigend & eindeutig.
+- Fehlerfälle: `leere Leaves`, `LeafWidthMismatch`, `IndexOutOfRange`,
+  `DuplicateIndex`, `ArityMismatch`, `InvalidPathLength`, `VerificationFailed`.
+- Tests: Commit/Open/Verify; Multi-Openings; Negativ (manipulierte Pfade,
+  falsche Root, Arity-Fehler); deterministische Snapshots.
+
+### FRI (`fri/`)
+
+- Spezifikation:
+  - Domain: `N = 2^(domain_log2)`; Coset-Shift (falls verwendet) fix
+    dokumentieren.
+  - Folding (klassisch, arity-2): pro Layer `i` Challenge `βᵢ`; Paarbildungsregel,
+    Abbildung der Indizes und Abbild `φ(x)` (z. B. `x→x²`) präzise festlegen.
+  - Termination: definierte Anzahl Layer oder finaler Low-Degree-Check;
+    Implementationsdetail dokumentieren (z. B. finaler Klein-Layer +
+    Direktprüfung).
+- Proof-Struktur (verbal): Version, `domain_log2`, `num_layers`, `roots[]`,
+  `fold_challenges[]`, `query_proofs[]`, optional `oods`-Block.
+- Verifier: Reproduziert Roots/Challenges via Transcript; generiert
+  Query-Indizes lokal; prüft Merkle-Pfad & Faltungsrelation je Layer; finaler
+  Check.
+- Tests: E2E klein; Negativ (Challenge-Flip, Pfad-Fehler); deterministische
+  Snapshots (Bytes, Roots, Challenges).
+
+### AIR & Composition (`air/`)
+
+- Traits & Rollen (verbal):
+  - `Air`: `id` (stabil), `trace_schema`, `degree_bounds`, `public_spec`,
+    `boundary(builder, first, last, public)`,
+    `transition(evaluator, row, next, public)`.
+  - `TraceBuilder`: deterministischer Witness-Generator aus PublicInputs.
+  - `PublicInputsCodec`: kanonisches Encode/Decode (LE-Schema) + Digest
+    (z. B. Blake2s-256).
+  - `BoundaryBuilder`, `Evaluator`: deklarativ Constraints registrieren; intern
+    polynomiale Ausdrücke.
+  - `compose(...)`: Randomizer-α via Transcript; Gruppierung; Normierung gegen
+    vanishing polynomials; Zielgrad einhalten; liefert Evaluationsvektor(e) +
+    optional Commitment.
+- Beispiel-AIR: LFSR oder MiMC-Round – komplett beschrieben (Rollen/Constraints
+  /Public-Schema/Trace-Gen), um E2E-Tests zu ermöglichen.
+- Tests: Determinismus, Degree-Grenzen, Boundary/Transition-Negativ,
+  E2E-Mini.
+
+### Proof-Envelope & Verifier (`proof/`)
+
+- ABI (binärstabil):
+  - Felder in dieser Reihenfolge:
+    1. `proof_version (u16, =1)`
+    2. `params_hash (32)`
+    3. `public_digest (32)`
+    4. `trace_commit (Digest)`
+    5. Optional `comp_commit (Digest)` mit vorgeschaltetem `has_comp`-Flag (`u8`)
+    6. `fri (FriProof; versioniert; über ser/ serialisiert)`
+    7. `openings (Struktur für Trace/Composition/Aux)`
+    8. Optional `telemetry` mit `has_tel`-Flag (`u8`) – nicht
+       verifikationsrelevant
+  - `openings.trace` muss existieren; `composition`/`aux` optional.
+  - Jedes Merkle-Bundle: `root`, `indices (u32, aufsteigend & eindeutig &
+    identisch zur lokalen Query-Liste)`, `leaves`, `paths`. Längenfelder
+    konsistent.
+- Verifier-Ablauf (fix):
+  - Header-Checks: Version, `params_hash`, `public_digest`, Proof-Größe (echte
+    Serialisierungslänge ≤ `max_size_kb × 1024`).
+  - Transcript-Rebuild: absorb in fester Reihenfolge: `ParamsHash → ProtocolTag →
+    Seed → PublicDigest → TraceRoot → optional CompRoot → alle FRI-Roots` in
+    Proof-Reihenfolge; Challenges ziehen (`Composition-α` falls vorhanden; dann
+    pro FRI-Layer `FriFoldChallenge`).
+  - Query-Indizes lokal erzeugen: `q = params.fri.queries`,
+    `N = 2^(domain_log2)`; via `challenge_usize` exakt `q` Werte; danach
+    aufsteigend sortieren und Duplikate entfernen (deterministisch). Ergebnis
+    muss exakt `openings.trace.indices` entsprechen – andernfalls
+    `IndicesNotSorted`/`IndicesDuplicate`/`IndicesMismatch`.
+  - Merkle-Openings prüfen: Root-Gleichheit (`RootMismatch`), Länge der Vektoren
+    (`Indices`/`Leaves`/`Paths`), Pfad-Verifikation je Index (`MerkleVerifyFailed`).
+  - FRI verifizieren: `fri_verify(...)`; Fehler 1:1 mappen.
+  - Kompositions-Bindung (falls `comp_commit` existiert): Leaves, auf die
+    FRI-Komposition referenziert, müssen bytegenau den `composition`-Leaves an
+    denselben Indizes entsprechen (`CompositionInconsistent` bei Abweichung).
+  - Report: Flags setzen (`params_ok`, `public_ok`, `merkle_ok`, `fri_ok`,
+    `composition_ok`), `total_bytes` als echte Serialisierungslänge.
+- Fehler-Taxonomie (final):
+  - `VersionMismatch { expected, got }`
+  - `ParamsHashMismatch`
+  - `PublicDigestMismatch`
+  - `ProofTooLarge { max_kb, got_kb }`
+  - `EmptyOpenings` (trace fehlt/leer)
+  - `IndicesNotSorted`
+  - `IndicesDuplicate { index }`
+  - `IndicesMismatch`
+  - `RootMismatch { section }`
+  - `MerkleVerifyFailed { section }`
+  - `FriVerifyFailed(FriError)`
+  - `CompositionInconsistent { reason }`
+  - `Serialization(SerKind)`
+  - `Unsupported(&'static str)`
+- Größen-Gate: Proof nicht schätzen – serialisieren und Länge vergleichen.
+
+### Query-Indizes (verbindlich)
+
+- Niemals aus dem Proof übernehmen; immer lokal reproduzieren (Transcript).
+- Nach Generierung: sortieren und deduplizieren (deterministisch).
+- Identität zu `openings.trace.indices` ist Pflicht.
+
+### Hashing & STWO-Adapter
+
+- Default: Blake2s-256 (32 Byte) für maximale STWO-Kompatibilität (Merkle-Root
+  & Public-Digest).
+- Alternative Hashfamilien via Adapter-Hasher möglich (Poseidon/Rescue), sofern
+  Root-Bytes identisch zum STWO-Pfad geliefert werden, falls Interop nötig.
+- Domain-Separation konsistent (Leaf vs. Node; Trace vs. Composition vs. FRI).
+
+### Testsuite (vollständig, stable-kompatibel)
+
+- **Ser/Params:** Roundtrip aller `ser/`-Primitiven; Property-Tests für
+  Felt-Vektoren (kleine Grenzen); Negativfälle (Längen/Tags);
+  Profile-Snapshot-Bytes; `params_hash`-Stabilität.
+- **Merkle:** Commit/Open/Verify (single & batch); Negativ: Pfad manipuliert,
+  Root falsch, Arity-Fehler, unsortierte/duplizierte Indizes; Snapshots.
+- **FRI:** E2E auf kleiner Domain; Negativ: Fold-Challenge flip, Pfad-Fehler;
+  Snapshots von Roots/Challenges/Proof-Bytes.
+- **AIR/Composition:** Beispiel-AIR (LFSR/MiMC): deterministischer Trace;
+  Constraints-Checks; Degree-Grenzen; E2E klein.
+- **Proof/Verifier:** Header-Checks (Positiv + vier Negativfälle
+  Version/Params/Public/Size); Transcript/Queries (lokale Liste ==
+  `openings.trace.indices`); Merkle-Openings (Positiv + unsortiert + Duplikat +
+  Root-Mismatch + Pfad-Fehler); FRI-Glue (Positiv + Fold-Challenge flip ⇒
+  Fehler); Composition-Konsistenz (Positiv + Leaf-Mutation ⇒ Fehler);
+  Report-Flags plausibel; `total_bytes` korrekt.
+- **Property-Tests (stable):** Random kleine Bäume/Indexmengen (engen Rahmen)
+  ⇒ Verify OK. Random kleine Beispiel-AIR-Längen ⇒ Prove/Verify OK.
+- **Snapshots (stabil):** Mini-Proof (z. B. `domain_log2=8`, `queries=2`,
+  `leaf_width=1`, Arity-2, 1–2 FRI-Layer): Proof-Bytes, Roots,
+  Fold-Challenges, Query-Liste, Pfadlängen.
+
+### Performanceziele & Benches (stable-friendly)
+
+- Merkle-Commit: Throughput für 1k/16k/64k Leaves; Verify-Latenz je Pfadlänge.
+- FRI-Folding: Zeit für `N=2^14`, `2^16` (ohne nightly Tricks).
+- Verifier E2E: `queries 8/16/32`, `domain_log2 12/16`.
+- Keine Fail-Gates in CI; Berichte als Artefakte speichern.
+
+### CI-Anforderungen (nur stable)
+
+- Build/Test auf stable; MSRV separat prüfen, falls abweichend.
+- `clippy -D warnings` (sauber).
+- Snapshots deterministisch (keine Umgebungsabhängigkeiten).
+- Artefakte: Bench-Reports, Snapshots.
+
+### Integration in chain (später, optional)
+
+- Adapter-Layer: Typalias für Felt, Digest-Wrapper, Hasher-Bindings zum
+  STWO-Pfad.
+- Feature-Gate `backend-rpp-stark`.
+- Zwei kleine CLI-Binaries (separat) für prove/verify zum manuellen Testen.
+- Proof-Size-Gate direkt an Node-Konfiguration abbilden.
+
+### Milestones & Abnahme (empfohlene Reihenfolge, stable-only)
+
+1. `ser/` (zentrales Schema) mit vollständigen Tests & Snapshots.
+2. `params/` inkl. `params_hash()`, Profile, Snapshots.
+3. `transcript/` mit deterministischen Labels/Challenges; Tests.
+4. `merkle/` (Arity 2/4, RMD) inkl. Roundtrip/Negativ/Snapshots.
+5. `fri/` (Proof & Verify) mit kleinen E2E-Fixtures; Snapshots.
+6. `air/` + Beispiel-AIR + Composition (ohne Node-Anbindung) mit E2E-Mini.
+7. `proof/` (Envelope/Ser + Header-Verifier) mit Header-Tests & Snapshots.
+8. `proof/` (Transcript/Queries/Merkle/FRI/Composition) – komplette
+   Verifier-Orchestrierung; volle Testsuite.
+9. `parallel/` Flag (Rayon) – Beweis der Bit-Gleichheit on/off mit
+   deterministischen Tests.
+
+### Definition of Done
+
+Alle Tests grün, Snapshots stabil, Clippy ohne Warnungen, Benches laufen,
+Doku vollständig (Layouts, Reihenfolgen, Versionierung, Policies). Keine
+nightly-Abhängigkeiten.
+
 ## Canonical STARK parameters
 
 The [`params`](src/params/mod.rs) module defines `StarkParams` as the single
