@@ -212,9 +212,9 @@ pub fn verify_proof<H: MerkleHasher>(
                 group_end += 1;
             }
             let mut children: Vec<Option<H::Digest>> = vec![None; arity as usize];
-            for j in i..group_end {
-                let position = (current[j].0 % arity) as usize;
-                children[position] = Some(current[j].1);
+            for &(child_index, digest) in &current[i..group_end] {
+                let position = (child_index % arity) as usize;
+                children[position] = Some(digest);
             }
             let missing = children.iter().filter(|child| child.is_none()).count();
             if missing > 0 {

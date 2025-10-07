@@ -2,6 +2,7 @@
 //!
 //! Implementors should provide the canonical semantics for transition and
 //! boundary constraints as they become available.
+#![allow(clippy::should_implement_trait)]
 
 use crate::air::types::{
     AirError, BoundaryAt, ColIx, DegreeBounds, PublicSpec, TraceData, TraceRole, TraceSchema,

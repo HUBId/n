@@ -27,9 +27,9 @@
 //! prover and verifier.  Forking via [`Transcript::fork`] produces independent
 //! yet deterministic transcripts that inherit the parent state digest.
 
+mod core;
 mod ser;
-mod transcript;
 mod types;
 
-pub use transcript::Transcript;
+pub use core::Transcript;
 pub use types::{Felt, TranscriptContext, TranscriptError, TranscriptLabel, TranscriptPhase};

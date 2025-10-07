@@ -5,6 +5,7 @@ edition = "2021"
 authors = ["RPP Core Team"]
 description = "Deterministic STARK proof engine for the RPP blockchain."
 license = "MIT"
+rust-version = "1.74"
 
 [lib]
 name = "rpp_stark"

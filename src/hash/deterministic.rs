@@ -2,7 +2,7 @@ use core::convert::TryInto;
 use core::fmt;
 
 /// Internal deterministic hash value produced by the pseudo-BLAKE3 helper.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Hash {
     bytes: [u8; 32],
 }
@@ -38,12 +38,6 @@ impl From<[u8; 32]> for Hash {
 impl From<Hash> for [u8; 32] {
     fn from(hash: Hash) -> Self {
         hash.into_bytes()
-    }
-}
-
-impl Default for Hash {
-    fn default() -> Self {
-        Self { bytes: [0u8; 32] }
     }
 }
 

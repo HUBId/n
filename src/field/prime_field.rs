@@ -4,6 +4,7 @@
 //! contracts that downstream back-ends must satisfy.  No arithmetic logic
 //! is provided here; consumers are expected to supply constant-time
 //! implementations that respect the documented invariants.
+#![allow(clippy::wrong_self_convention)]
 //!
 //! # Security Notes
 //!

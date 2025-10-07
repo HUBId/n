@@ -88,6 +88,7 @@ pub(crate) struct PrecheckedProof {
     pub(crate) security_level: FriSecurityLevel,
 }
 
+#[allow(clippy::result_large_err)]
 fn precheck_decoded_proof(
     proof: Proof,
     declared_kind: ConfigProofKind,
@@ -117,6 +118,7 @@ fn precheck_decoded_proof(
     }
 }
 
+#[allow(dead_code, clippy::result_large_err)]
 pub(crate) fn precheck_proof_bytes(
     declared_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,

@@ -2,6 +2,7 @@
 //!
 //! All items in this module are declarative contracts capturing ordering,
 //! hashing domains and failure signalling for the batch verification API.
+#![allow(dead_code, clippy::too_many_arguments)]
 
 use crate::config::{ProofSystemConfig, VerifierContext};
 use crate::hash::Hasher;

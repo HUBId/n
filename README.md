@@ -103,7 +103,26 @@ changing runtime behaviour:
 
 ## Continuous integration
 
-[![CI status](https://img.shields.io/badge/CI-pending-lightgrey.svg)](#)
+[![CI](https://github.com/rpp-org/rpp-stark/actions/workflows/ci.yml/badge.svg)](https://github.com/rpp-org/rpp-stark/actions/workflows/ci.yml)
+
+## Toolchain & CI
+
+### Minimum Supported Rust Version (MSRV)
+
+This crate targets **Rust 1.74 stable**. Builds are expected to succeed with the
+stable channel at or above this compiler release without relying on nightly
+features.
+
+### CI policy
+
+The GitHub Actions workflow enforces the following gates:
+
+* `cargo build --locked`
+* `cargo test -p rpp-stark -- --nocapture`
+* `cargo clippy --locked -- -D warnings`
+* `cargo run --bin profile_reports -- --output reports --include-throughput`
+
+Pull requests must pass all of these checks before merging.
 
 ## Projekt-Blueprint
 
