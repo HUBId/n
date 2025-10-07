@@ -134,6 +134,7 @@ pub enum MerkleError {
     IncompatibleParams { reason: &'static str },
     ProofVersionMismatch { expected: u16, got: u16 },
     InvalidPathLength,
+    InvalidTreeState { reason: &'static str },
     VerificationFailed,
 }
 
@@ -164,6 +165,9 @@ impl fmt::Display for MerkleError {
                 expected, got
             ),
             MerkleError::InvalidPathLength => write!(f, "invalid path length"),
+            MerkleError::InvalidTreeState { reason } => {
+                write!(f, "invalid tree state: {}", reason)
+            }
             MerkleError::VerificationFailed => write!(f, "verification failed"),
         }
     }

@@ -253,7 +253,7 @@ pub fn verify_proof<H: MerkleHasher>(
         current = next;
     }
 
-    let computed = current.first().expect("non-empty");
+    let computed = current.first().ok_or(MerkleError::InvalidPathLength)?;
     let root_digest = H::from_bytes(root.as_bytes()).ok_or(MerkleError::VerificationFailed)?;
     if computed.1.as_ref() == root_digest.as_ref() {
         Ok(())

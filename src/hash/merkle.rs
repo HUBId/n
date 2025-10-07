@@ -309,15 +309,16 @@ mod tests {
     }
 
     #[test]
-    fn empty_tree_root_is_empty() {
+    fn empty_tree_root_is_empty() -> Result<(), MerkleError> {
         let leaves: Vec<Vec<u8>> = Vec::new();
-        let tree = Blake3MerkleTree::from_leaves(leaves).expect("tree");
+        let tree = Blake3MerkleTree::from_leaves(leaves)?;
         assert_eq!(tree.leaf_count(), 0);
         assert_eq!(tree.root(), EMPTY_DIGEST);
+        Ok(())
     }
 
     #[test]
-    fn build_path_verify_roundtrip_ok() {
+    fn build_path_verify_roundtrip_ok() -> Result<(), MerkleError> {
         let payloads = [
             encode_leaf(&[1, 2, 3]),
             encode_leaf(&[4, 5, 6, 7]),
@@ -326,17 +327,18 @@ mod tests {
             encode_leaf(b"final"),
         ];
 
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter())?;
         let root = tree.root();
 
         for (index, leaf) in payloads.iter().enumerate() {
-            let path = tree.open(index).expect("path");
-            verify_path(leaf, index, tree.leaf_count(), &path, &root).expect("verify");
+            let path = tree.open(index)?;
+            verify_path(leaf, index, tree.leaf_count(), &path, &root)?;
         }
+        Ok(())
     }
 
     #[test]
-    fn verify_fails_on_wrong_sibling_order() {
+    fn verify_fails_on_wrong_sibling_order() -> Result<(), MerkleError> {
         let payloads = [
             encode_leaf(&[1, 2, 3, 4]),
             encode_leaf(&[5, 6, 7, 8]),
@@ -344,24 +346,26 @@ mod tests {
             encode_leaf(&[13, 14, 15, 16]),
         ];
 
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
-        let mut path = tree.open(2).expect("path");
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter())?;
+        let mut path = tree.open(2)?;
         // Corrupt the sibling digest to break the order constraint.
         path[0].siblings[0][0] ^= 0x01;
         let err = verify_path(&payloads[2], 2, tree.leaf_count(), &path, &tree.root()).unwrap_err();
         assert_eq!(err, MerkleError::ErrMerkleSiblingOrder);
         assert_eq!(err.to_string(), "ErrFRIPathInvalid: sibling order");
+        Ok(())
     }
 
     #[test]
-    fn verify_fails_on_bad_index_byte() {
+    fn verify_fails_on_bad_index_byte() -> Result<(), MerkleError> {
         let payloads = [encode_leaf(&[42]), encode_leaf(&[43])];
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
-        let mut path = tree.open(0).expect("path");
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter())?;
+        let mut path = tree.open(0)?;
         path[0].index = MerkleIndex(2);
         let err = verify_path(&payloads[0], 0, tree.leaf_count(), &path, &tree.root()).unwrap_err();
         assert_eq!(err, MerkleError::ErrPathIndexByte);
         assert_eq!(err.to_string(), "ErrFRIPathInvalid: index byte");
+        Ok(())
     }
 
     #[test]
@@ -387,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn right_padding_with_empty_constant_ok() {
+    fn right_padding_with_empty_constant_ok() -> Result<(), MerkleError> {
         assert_eq!(EMPTY_DIGEST, hash(b"RPP-MERKLE-EMPTY\0").into_bytes());
         let payloads = [
             encode_leaf(&[1]),
@@ -396,9 +400,9 @@ mod tests {
             encode_leaf(&[4]),
             encode_leaf(&[5]),
         ];
-        let tree = Blake3MerkleTree::from_leaves(payloads.iter()).expect("tree");
+        let tree = Blake3MerkleTree::from_leaves(payloads.iter())?;
         let index = payloads.len() - 1;
-        let path = tree.open(index).expect("path");
+        let path = tree.open(index)?;
         assert!(path.iter().any(|element| element
             .siblings
             .iter()
@@ -409,7 +413,7 @@ mod tests {
             tree.leaf_count(),
             &path,
             &tree.root(),
-        )
-        .expect("verification");
+        )?;
+        Ok(())
     }
 }
