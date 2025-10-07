@@ -257,6 +257,7 @@ mod tests {
         CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig, ProofVersion,
         PROFILE_STANDARD_CONFIG,
     };
+    use crate::proof::params::canonical_stark_params;
     use crate::proof::public_inputs::{
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     };
@@ -349,6 +350,7 @@ mod tests {
     }
 
     fn dummy_prechecked_proof() -> PrecheckedProof {
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
         PrecheckedProof {
             proof: Proof {
                 version: PROOF_VERSION,
@@ -390,6 +392,7 @@ mod tests {
             },
             fri_seed: [10u8; 32],
             security_level: crate::fri::FriSecurityLevel::Standard,
+            params,
         }
     }
 

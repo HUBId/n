@@ -7,9 +7,12 @@
 
 use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError};
 use crate::field::FieldElement;
-use crate::fri::folding::derive_coset_shift;
-use crate::fri::types::{FriError, FriProofVersion, FriSecurityLevel, FriTranscriptSeed, SerKind};
-use crate::fri::{binary_fold, next_domain_size, parent_index, phi, FriLayer, BINARY_FOLD_ARITY};
+use crate::fri::types::{
+    FriError, FriParamsView, FriProofVersion, FriSecurityLevel, FriTranscriptSeed, SerKind,
+};
+use crate::fri::{
+    binary_fold, coset_shift_schedule, next_domain_size, parent_index, FriLayer, BINARY_FOLD_ARITY,
+};
 use crate::fri::{field_from_hash, field_to_bytes, pseudo_blake3, PseudoBlake3Xof};
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::hash::merkle::{
@@ -546,11 +549,6 @@ fn default_fri_params() -> &'static StarkParams {
     })
 }
 
-/// Maximum degree allowed for the residual polynomial.
-const CAP_DEGREE: usize = 256;
-/// Maximum number of leaf values that can be committed in the final layer.
-const CAP_SIZE: usize = 1024;
-
 impl FriProof {
     /// Generates a FRI proof from the provided LDE evaluations.
     pub fn prove(
@@ -573,15 +571,29 @@ impl FriProof {
             return Err(FriError::EmptyCodeword);
         }
 
-        let mut transcript = FriTranscript::new(seed);
-        let mut layers: Vec<FriLayer> = Vec::new();
-        let mut current = evaluations.to_vec();
-        let mut layer_roots = Vec::new();
-        let mut fold_challenges = Vec::new();
-        let mut layer_index = 0usize;
-        let mut coset_shift = derive_coset_shift(params);
+        let expected_queries = params.fri().queries as usize;
+        if expected_queries != security_level.query_budget() {
+            return Err(FriError::QueryBudgetMismatch {
+                expected: expected_queries,
+                actual: security_level.query_budget(),
+            });
+        }
 
-        while current.len() > 1 && (current.len() > CAP_DEGREE || current.len() > CAP_SIZE) {
+        let query_plan = derive_query_plan_id(security_level, params);
+        let view = FriParamsView::from_params(params, security_level, query_plan);
+        let coset_shifts = coset_shift_schedule(params, view.num_layers());
+
+        let mut transcript = FriTranscript::new(seed);
+        let mut layers: Vec<FriLayer> = Vec::with_capacity(view.num_layers());
+        let mut current = evaluations.to_vec();
+        let mut layer_roots = Vec::with_capacity(view.num_layers());
+        let mut fold_challenges = Vec::with_capacity(view.num_layers());
+
+        for (layer_index, coset_shift) in coset_shifts.into_iter().enumerate() {
+            if current.len() <= 1 {
+                break;
+            }
+
             let layer = FriLayer::new(layer_index, coset_shift, current);
             let root = layer.root();
             transcript.absorb_layer(layer.index(), &root);
@@ -591,8 +603,6 @@ impl FriProof {
 
             let next = binary_fold(layer.evaluations(), eta, layer.coset_shift());
             current = next;
-            coset_shift = phi(layer.coset_shift());
-            layer_index = layer.index() + 1;
             layers.push(layer);
         }
 
@@ -603,7 +613,7 @@ impl FriProof {
         let query_seed = transcript.derive_query_seed();
 
         let query_positions =
-            derive_query_positions(query_seed, security_level.query_budget(), evaluations.len());
+            derive_query_positions(query_seed, view.query_count(), evaluations.len());
 
         let mut queries = Vec::with_capacity(query_positions.len());
         for &position in &query_positions {
@@ -643,8 +653,8 @@ pub fn derive_query_plan_id(level: FriSecurityLevel, params: &StarkParams) -> [u
     let mut payload = Vec::new();
     payload.extend_from_slice(b"FRI-PLAN/BINARY");
     payload.extend_from_slice(&(BINARY_FOLD_ARITY as u32).to_le_bytes());
-    payload.extend_from_slice(&(CAP_DEGREE as u32).to_le_bytes());
-    payload.extend_from_slice(&(CAP_SIZE as u32).to_le_bytes());
+    payload.extend_from_slice(&(params.fri().domain_log2 as u32).to_le_bytes());
+    payload.extend_from_slice(&(params.fri().queries as u32).to_le_bytes());
     payload.extend_from_slice(&(level.query_budget() as u32).to_le_bytes());
     payload.push(params.fri().folding.code());
     payload.extend_from_slice(level.tag().as_bytes());
@@ -676,8 +686,8 @@ impl FriVerifier {
         proof: &FriProof,
         security_level: FriSecurityLevel,
         seed: FriTranscriptSeed,
-        _params: &StarkParams,
-        mut final_value_oracle: F,
+        params: &StarkParams,
+        final_value_oracle: F,
     ) -> Result<(), FriError>
     where
         F: FnMut(usize) -> FieldElement,
@@ -689,15 +699,30 @@ impl FriVerifier {
         if proof.initial_domain_size == 0 {
             return Err(FriError::EmptyCodeword);
         }
-        if proof.queries.len() != security_level.query_budget() {
+        let expected_queries = params.fri().queries as usize;
+        if expected_queries != security_level.query_budget() {
             return Err(FriError::QueryBudgetMismatch {
-                expected: security_level.query_budget(),
+                expected: expected_queries,
+                actual: security_level.query_budget(),
+            });
+        }
+        if proof.queries.len() != expected_queries {
+            return Err(FriError::QueryBudgetMismatch {
+                expected: expected_queries,
                 actual: proof.queries.len(),
             });
         }
 
+        let mut final_value_oracle = final_value_oracle;
+
         if proof.fold_challenges.len() != proof.layer_roots.len() {
             return Err(FriError::InvalidStructure("fold challenge length"));
+        }
+
+        let query_plan = derive_query_plan_id(security_level, params);
+        let view = FriParamsView::from_params(params, security_level, query_plan);
+        if proof.layer_roots.len() > view.num_layers() {
+            return Err(FriError::InvalidStructure("layer count exceeds profile"));
         }
 
         let mut transcript = FriTranscript::new(seed);
@@ -723,11 +748,8 @@ impl FriVerifier {
 
         transcript.absorb_final(&proof.final_polynomial_digest);
         let query_seed = transcript.derive_query_seed();
-        let expected_positions = derive_query_positions(
-            query_seed,
-            security_level.query_budget(),
-            proof.initial_domain_size,
-        );
+        let expected_positions =
+            derive_query_positions(query_seed, view.query_count(), proof.initial_domain_size);
 
         if expected_positions.len() != proof.queries.len() {
             return Err(FriError::InvalidStructure("query count mismatch"));
@@ -832,6 +854,8 @@ fn verify_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{PROFILE_HIGH_SECURITY_CONFIG, PROFILE_STANDARD_CONFIG};
+    use crate::proof::params::canonical_stark_params;
 
     fn sample_evaluations() -> Vec<FieldElement> {
         (0..1024).map(|i| FieldElement(i as u64 + 1)).collect()
@@ -849,9 +873,7 @@ mod tests {
     fn fri_prover_handles_coset_folding() {
         let evaluations = sample_evaluations();
         let seed = sample_seed();
-        let params = StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_HISEC_X16)
-            .build()
-            .expect("coset params");
+        let params = canonical_stark_params(&PROFILE_HIGH_SECURITY_CONFIG);
 
         let proof =
             FriProof::prove_with_params(FriSecurityLevel::HiSec, seed, &evaluations, &params)
@@ -872,19 +894,23 @@ mod tests {
     fn fri_prover_is_deterministic() {
         let evaluations = sample_evaluations();
         let seed = sample_seed();
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
 
         let proof_a =
-            FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("first proof");
+            FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+                .expect("first proof");
         let proof_b =
-            FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("second proof");
+            FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+                .expect("second proof");
 
         assert_eq!(proof_a, proof_b, "proofs must be identical across runs");
 
         let finals = proof_a.final_polynomial.clone();
-        FriVerifier::verify(
+        FriVerifier::verify_with_params(
             &proof_a,
             FriSecurityLevel::Standard,
             seed,
+            &params,
             final_value_oracle(finals),
         )
         .expect("verification");
@@ -894,16 +920,20 @@ mod tests {
     fn fri_verifier_enforces_query_budget() {
         let evaluations = sample_evaluations();
         let seed = sample_seed();
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
 
-        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+        let proof =
+            FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+                .expect("proof");
         let mut tampered = proof.clone();
         tampered.queries.pop();
 
         let finals = tampered.final_polynomial.clone();
-        let err = FriVerifier::verify(
+        let err = FriVerifier::verify_with_params(
             &tampered,
             FriSecurityLevel::Standard,
             seed,
+            &params,
             final_value_oracle(finals),
         )
         .expect_err("query budget mismatch");
@@ -917,7 +947,10 @@ mod tests {
     fn fri_verifier_reports_path_mismatch() {
         let evaluations = sample_evaluations();
         let seed = sample_seed();
-        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+        let proof =
+            FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+                .expect("proof");
 
         let mut tampered = proof.clone();
         if let Some(layer) = tampered
@@ -931,10 +964,11 @@ mod tests {
         }
 
         let finals = tampered.final_polynomial.clone();
-        let err = FriVerifier::verify(
+        let err = FriVerifier::verify_with_params(
             &tampered,
             FriSecurityLevel::Standard,
             seed,
+            &params,
             final_value_oracle(finals),
         )
         .expect_err("path corruption");
@@ -974,8 +1008,11 @@ mod tests {
         )
         .expect("synthetic proof");
 
-        let err = FriVerifier::verify(&proof, security, seed, |_| FieldElement::ZERO)
-            .expect_err("query out of range");
+        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+        let err = FriVerifier::verify_with_params(&proof, security, seed, &params, |_| {
+            FieldElement::ZERO
+        })
+        .expect_err("query out of range");
 
         assert!(matches!(err, FriError::QueryOutOfRange { .. }));
     }

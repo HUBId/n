@@ -1,10 +1,12 @@
 use insta::assert_snapshot;
 use proptest::prelude::*;
+use rpp_stark::config::{PROFILE_HIGH_SECURITY_CONFIG, PROFILE_STANDARD_CONFIG};
 use rpp_stark::field::prime_field::FieldElementOps;
 use rpp_stark::field::FieldElement;
 use rpp_stark::fri::types::FriError;
 use rpp_stark::fri::{DeepOodsProof, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
 use rpp_stark::hash::{pseudo_blake3, FiatShamirChallengeRules, PseudoBlake3Xof};
+use rpp_stark::proof::params::canonical_stark_params;
 
 fn sample_evaluations() -> Vec<FieldElement> {
     (0..512)
@@ -18,6 +20,14 @@ fn sample_seed() -> FriTranscriptSeed {
 
 fn final_value_oracle(values: Vec<FieldElement>) -> impl FnMut(usize) -> FieldElement {
     move |index| values[index]
+}
+
+fn standard_params() -> rpp_stark::params::StarkParams {
+    canonical_stark_params(&PROFILE_STANDARD_CONFIG)
+}
+
+fn hisec_params() -> rpp_stark::params::StarkParams {
+    canonical_stark_params(&PROFILE_HIGH_SECURITY_CONFIG)
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -108,12 +118,16 @@ fn prover_verifier_roundtrip_without_deep() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
 
-    let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+    let params = standard_params();
+    let proof =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
     let finals = proof.final_polynomial.clone();
-    FriVerifier::verify(
+    FriVerifier::verify_with_params(
         &proof,
         FriSecurityLevel::Standard,
         seed,
+        &params,
         final_value_oracle(finals.clone()),
     )
     .expect("verification");
@@ -126,16 +140,19 @@ fn prover_verifier_roundtrip_without_deep() {
 fn prover_verifier_roundtrip_with_deep_payload() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
-    let base = FriProof::prove(FriSecurityLevel::HiSec, seed, &evaluations).expect("base proof");
+    let params = hisec_params();
+    let base = FriProof::prove_with_params(FriSecurityLevel::HiSec, seed, &evaluations, &params)
+        .expect("base proof");
 
     let proof = attach_deep_payload(&base);
     assert!(proof.deep_oods.is_some(), "deep payload must be attached");
 
     let finals = proof.final_polynomial.clone();
-    FriVerifier::verify(
+    FriVerifier::verify_with_params(
         &proof,
         FriSecurityLevel::HiSec,
         seed,
+        &params,
         final_value_oracle(finals.clone()),
     )
     .expect("verification");
@@ -149,8 +166,13 @@ fn proofs_are_deterministic_for_fixed_inputs() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
 
-    let proof_a = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof a");
-    let proof_b = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof b");
+    let params = standard_params();
+    let proof_a =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof a");
+    let proof_b =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof b");
 
     assert_eq!(proof_a, proof_b, "proofs must be identical across runs");
 }
@@ -159,7 +181,10 @@ fn proofs_are_deterministic_for_fixed_inputs() {
 fn tampered_leaf_opening_is_rejected() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
-    let mut proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+    let params = standard_params();
+    let mut proof =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
 
     if let Some(path) = proof
         .queries
@@ -171,10 +196,11 @@ fn tampered_leaf_opening_is_rejected() {
     }
 
     let finals = proof.final_polynomial.clone();
-    let err = FriVerifier::verify(
+    let err = FriVerifier::verify_with_params(
         &proof,
         FriSecurityLevel::Standard,
         seed,
+        &params,
         final_value_oracle(finals),
     )
     .expect_err("tampering should be detected");
@@ -186,20 +212,49 @@ fn tampered_leaf_opening_is_rejected() {
 }
 
 #[test]
+fn profile_query_budget_mismatch_is_detected() {
+    let evaluations = sample_evaluations();
+    let seed = sample_seed();
+    let standard = standard_params();
+    let hisec = hisec_params();
+
+    let err = FriProof::prove_with_params(FriSecurityLevel::HiSec, seed, &evaluations, &standard)
+        .expect_err("security/profile mismatch should be rejected");
+    assert!(matches!(err, FriError::QueryBudgetMismatch { .. }));
+
+    let proof = FriProof::prove_with_params(FriSecurityLevel::HiSec, seed, &evaluations, &hisec)
+        .expect("hi-sec proof");
+    let finals = proof.final_polynomial.clone();
+    let err = FriVerifier::verify_with_params(
+        &proof,
+        FriSecurityLevel::HiSec,
+        seed,
+        &standard,
+        final_value_oracle(finals),
+    )
+    .expect_err("verifier should detect mismatched parameters");
+    assert!(matches!(err, FriError::QueryBudgetMismatch { .. }));
+}
+
+#[test]
 fn tampered_layer_root_is_rejected() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
-    let mut proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+    let params = standard_params();
+    let mut proof =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
 
     if let Some(root) = proof.layer_roots.get_mut(0) {
         root[0] ^= 0x01;
     }
 
     let finals = proof.final_polynomial.clone();
-    let err = FriVerifier::verify(
+    let err = FriVerifier::verify_with_params(
         &proof,
         FriSecurityLevel::Standard,
         seed,
+        &params,
         final_value_oracle(finals),
     )
     .expect_err("tampering should be detected");
@@ -213,17 +268,21 @@ fn tampered_layer_root_is_rejected() {
 fn tampered_fold_challenge_is_rejected() {
     let evaluations = sample_evaluations();
     let seed = sample_seed();
-    let mut proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+    let params = standard_params();
+    let mut proof =
+        FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
 
     if let Some(challenge) = proof.fold_challenges.get_mut(0) {
         *challenge = challenge.add(&FieldElement::ONE);
     }
 
     let finals = proof.final_polynomial.clone();
-    let err = FriVerifier::verify(
+    let err = FriVerifier::verify_with_params(
         &proof,
         FriSecurityLevel::Standard,
         seed,
+        &params,
         final_value_oracle(finals),
     )
     .expect_err("tampering should be detected");
@@ -250,9 +309,18 @@ proptest! {
             })
             .collect();
 
-        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+        let params = standard_params();
+        let proof = FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
         let finals = proof.final_polynomial.clone();
-        FriVerifier::verify(&proof, FriSecurityLevel::Standard, seed, final_value_oracle(finals)).expect("verification");
+        FriVerifier::verify_with_params(
+            &proof,
+            FriSecurityLevel::Standard,
+            seed,
+            &params,
+            final_value_oracle(finals),
+        )
+        .expect("verification");
     }
 }
 
@@ -261,7 +329,9 @@ proptest! {
     fn query_positions_follow_specification(seed in prop::array::uniform32(any::<u8>()),)
     {
         let evaluations = sample_evaluations();
-        let proof = FriProof::prove(FriSecurityLevel::Standard, seed, &evaluations).expect("proof");
+        let params = standard_params();
+        let proof = FriProof::prove_with_params(FriSecurityLevel::Standard, seed, &evaluations, &params)
+            .expect("proof");
 
         let expected_positions = derive_query_positions_from_proof(&proof, seed);
         let actual_positions: Vec<usize> = proof.queries.iter().map(|query| query.position).collect();
