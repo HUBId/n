@@ -1,4 +1,4 @@
-use super::transcript::TranscriptStateView;
+use super::core::TranscriptStateView;
 use super::types::{SerKind, TranscriptError};
 
 #[derive(Debug, Clone, Copy)]
@@ -42,35 +42,35 @@ pub(crate) fn serialize_state(view: &TranscriptStateView) -> Vec<u8> {
     out.extend_from_slice(&view.state);
     out.extend_from_slice(&view.challenge_counter.to_le_bytes());
     match &view.stage {
-        super::transcript::Stage::ExpectPublic => {
+        super::core::Stage::ExpectPublic => {
             out.push(StageTag::ExpectPublic as u8);
             out.push(0);
         }
-        super::transcript::Stage::TraceRoot => {
+        super::core::Stage::TraceRoot => {
             out.push(StageTag::TraceRoot as u8);
             out.push(0);
         }
-        super::transcript::Stage::TraceChallenge => {
+        super::core::Stage::TraceChallenge => {
             out.push(StageTag::TraceChallenge as u8);
             out.push(0);
         }
-        super::transcript::Stage::CompRoot => {
+        super::core::Stage::CompRoot => {
             out.push(StageTag::CompRoot as u8);
             out.push(0);
         }
-        super::transcript::Stage::CompChallenge => {
+        super::core::Stage::CompChallenge => {
             out.push(StageTag::CompChallenge as u8);
             out.push(0);
         }
-        super::transcript::Stage::Fri { layer, expect } => {
+        super::core::Stage::Fri { layer, expect } => {
             let tag = match expect {
-                super::transcript::FriExpectation::Root => StageTag::FriRoot,
-                super::transcript::FriExpectation::Challenge => StageTag::FriChallenge,
+                super::core::FriExpectation::Root => StageTag::FriRoot,
+                super::core::FriExpectation::Challenge => StageTag::FriChallenge,
             };
             out.push(tag as u8);
             out.push(*layer);
         }
-        super::transcript::Stage::Queries { count_absorbed } => {
+        super::core::Stage::Queries { count_absorbed } => {
             if *count_absorbed {
                 out.push(StageTag::QueriesCount as u8);
             } else {
@@ -78,7 +78,7 @@ pub(crate) fn serialize_state(view: &TranscriptStateView) -> Vec<u8> {
             }
             out.push(0);
         }
-        super::transcript::Stage::Finalised => {
+        super::core::Stage::Finalised => {
             out.push(StageTag::Finalised as u8);
             out.push(0);
         }
@@ -118,7 +118,7 @@ pub(crate) fn deserialize_state(bytes: &[u8]) -> Result<TranscriptStateView, Tra
         .ok_or(TranscriptError::Serialization(SerKind::State))?;
     let phase_aux = *bytes.get(43).unwrap_or(&0);
 
-    use super::transcript::{FriExpectation, Stage};
+    use super::core::{FriExpectation, Stage};
     let stage = match StageTag::from_parts(stage_code, stage_aux) {
         Some((StageTag::ExpectPublic, _)) => Stage::ExpectPublic,
         Some((StageTag::TraceRoot, _)) => Stage::TraceRoot,
@@ -166,7 +166,7 @@ pub(crate) fn deserialize_state(bytes: &[u8]) -> Result<TranscriptStateView, Tra
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transcript::transcript::{FriExpectation, Stage, TranscriptStateView};
+    use crate::transcript::core::{FriExpectation, Stage, TranscriptStateView};
     use crate::transcript::types::TranscriptPhase;
 
     #[test]

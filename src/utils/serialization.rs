@@ -34,16 +34,10 @@ pub struct WitnessBlob<'a> {
 }
 
 /// Fixed width digest byte array used throughout the documentation layer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DigestBytes {
     /// Raw digest bytes (e.g. BLAKE3, SHA-256 etc.).
     pub bytes: [u8; 32],
-}
-
-impl Default for DigestBytes {
-    fn default() -> Self {
-        Self { bytes: [0u8; 32] }
-    }
 }
 
 /// Wrapper around field element encodings.

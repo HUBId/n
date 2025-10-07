@@ -115,7 +115,7 @@ impl Blake3MerkleTree {
         let mut current = hashed;
 
         while current.len() > 1 {
-            let mut next = Vec::with_capacity((current.len() + ARITY - 1) / ARITY);
+            let mut next = Vec::with_capacity(current.len().div_ceil(ARITY));
             for chunk in current.chunks(ARITY) {
                 let mut children = [[0u8; DIGEST_SIZE]; ARITY];
                 for (position, child) in children.iter_mut().enumerate() {
@@ -259,7 +259,7 @@ pub fn compute_root_from_path(
         children[expected_position] = hash;
         let sibling = element
             .siblings
-            .get(0)
+            .first()
             .copied()
             .ok_or(MerkleError::ErrPathIndexByte)?;
         let sibling_position = expected_position ^ 1;
@@ -274,7 +274,7 @@ pub fn compute_root_from_path(
 
         hash = hash_internal(&children);
         current_index = parent_index;
-        nodes_in_level = (nodes_in_level + ARITY - 1) / ARITY;
+        nodes_in_level = nodes_in_level.div_ceil(ARITY);
     }
 
     if current_index != 0 {

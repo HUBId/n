@@ -151,6 +151,7 @@ impl FriProof {
     }
 
     /// Constructs a proof with an optional DEEP/OODS payload.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_deep_oods(
         security_level: FriSecurityLevel,
         initial_domain_size: usize,

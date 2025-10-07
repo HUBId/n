@@ -4,6 +4,7 @@
 //! [`crate::verify_proof`] and [`crate::batch_verify`] are documented here in
 //! terms of inputs, outputs and deterministic sequencing. Only the shapes of
 //! the API are provided—no runtime behaviour is implemented.
+#![allow(dead_code)]
 
 use crate::config::{ProofSystemConfig, ProverContext, VerifierContext};
 use crate::utils::serialization::{ProofBytes, WitnessBlob};

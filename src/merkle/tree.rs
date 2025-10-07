@@ -178,7 +178,7 @@ impl<H: MerkleHasher> MerkleTree<H> {
         let mut current = hashed;
 
         while current.len() > 1 {
-            let mut next = Vec::with_capacity((current.len() + arity - 1) / arity);
+            let mut next = Vec::with_capacity(current.len().div_ceil(arity));
             for chunk in current.chunks(arity) {
                 let mut children: Vec<H::Digest> = chunk.to_vec();
                 while children.len() < arity {

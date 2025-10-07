@@ -44,8 +44,7 @@ impl LayerTree {
         levels.push(current.clone());
 
         while current.len() > 1 {
-            let mut next =
-                Vec::with_capacity((current.len() + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY);
+            let mut next = Vec::with_capacity(current.len().div_ceil(BINARY_FOLD_ARITY));
             for chunk in current.chunks(BINARY_FOLD_ARITY) {
                 let mut children = [[0u8; 32]; BINARY_FOLD_ARITY];
                 for (position, slot) in children.iter_mut().enumerate() {

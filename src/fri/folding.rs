@@ -43,7 +43,7 @@ pub fn parent_index(child: usize) -> usize {
 /// ```
 #[inline]
 pub fn next_domain_size(current: usize) -> usize {
-    (current + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY
+    current.div_ceil(BINARY_FOLD_ARITY)
 }
 
 /// Canonical FRI map `φ(x) = x²` describing how coset generators evolve while
@@ -143,7 +143,7 @@ pub fn binary_fold(
     beta: FieldElement,
     coset_shift: FieldElement,
 ) -> Vec<FieldElement> {
-    let mut result = Vec::with_capacity((values.len() + BINARY_FOLD_ARITY - 1) / BINARY_FOLD_ARITY);
+    let mut result = Vec::with_capacity(values.len().div_ceil(BINARY_FOLD_ARITY));
     let mut chunks = values.chunks_exact(BINARY_FOLD_ARITY);
 
     for pair in chunks.by_ref() {
