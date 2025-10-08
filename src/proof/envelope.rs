@@ -18,7 +18,7 @@ use crate::proof::ser::{
 use crate::proof::types::{
     MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, Telemetry, VerifyError,
 };
-use crate::ser::SerKind;
+use crate::ser::{SerError, SerKind};
 use crate::{
     config::{AirSpecId, ParamDigest, ProofKind},
     fri::FriProof,
@@ -228,8 +228,10 @@ fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {
 
 impl Proof {
     /// Serialises the proof into a byte vector using the canonical layout.
-    pub fn to_bytes(&self) -> Vec<u8> {
-        serialize_proof(self).expect("proof serialization should succeed for well-formed envelopes")
+    ///
+    /// Returns an error if canonical serialization fails.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, SerError> {
+        serialize_proof(self)
     }
 
     /// Parses an envelope from a byte slice, validating all length prefixes and
@@ -467,7 +469,7 @@ mod tests {
     #[test]
     fn proof_round_trip() {
         let proof = build_sample_proof();
-        let bytes = proof.to_bytes();
+        let bytes = proof.to_bytes().expect("serialize proof");
         let decoded = Proof::from_bytes(&bytes).expect("decode proof");
         assert_eq!(proof, decoded);
     }

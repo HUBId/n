@@ -29,6 +29,7 @@ use proof::public_inputs::PublicInputs;
 use proof::ser::map_public_to_config_kind;
 use proof::types::{FriVerifyIssue, MerkleSection};
 use proof::ProofKind;
+use ser::{SerError, SerKind as SerializationKind};
 
 pub use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
 pub use proof::types::{Proof, Telemetry, VerifyError, VerifyReport, PROOF_VERSION};
@@ -98,7 +99,8 @@ pub fn generate_proof(
 
     let envelope = prover::build_envelope(public_inputs, witness, config, prover_context)
         .map_err(map_prover_error)?;
-    Ok(ProofBytes::new(envelope.to_bytes()))
+    let bytes = envelope.to_bytes().map_err(map_serialization_error)?;
+    Ok(ProofBytes::new(bytes))
 }
 
 /// Verifies a single proof and returns a [`VerificationVerdict`].
@@ -178,6 +180,20 @@ fn map_prover_error(error: prover::ProverError) -> StarkError {
         ProverError::Merkle(_) => StarkError::SubsystemFailure("prover_merkle_error"),
         ProverError::ProofTooLarge { .. } => StarkError::InvalidInput("proof_too_large"),
     }
+}
+
+fn map_serialization_error(error: SerError) -> StarkError {
+    let reason = match error.kind() {
+        SerializationKind::Proof => "proof_serialization_error",
+        SerializationKind::TraceCommitment => "trace_commitment_serialization_error",
+        SerializationKind::CompositionCommitment => "composition_commitment_serialization_error",
+        SerializationKind::Fri => "fri_serialization_error",
+        SerializationKind::Openings => "openings_serialization_error",
+        SerializationKind::Telemetry => "telemetry_serialization_error",
+        SerializationKind::PublicInputs => "public_inputs_serialization_error",
+        SerializationKind::Params => "params_serialization_error",
+    };
+    StarkError::SubsystemFailure(reason)
 }
 
 fn map_verify_error(error: VerifyError) -> StarkError {

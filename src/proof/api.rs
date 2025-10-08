@@ -132,7 +132,8 @@ pub fn generate_proof(
 
     let proof = prover::build_envelope(public_inputs, witness, config, prover_context)
         .map_err(map_prover_error_to_verify)?;
-    Ok(ProofBytes::new(proof.to_bytes()))
+    let bytes = proof.to_bytes()?;
+    Ok(ProofBytes::new(bytes))
 }
 
 /// Forward declaration of the verify_proof function (no implementation).
