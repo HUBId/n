@@ -637,6 +637,169 @@ nightly-Abhängigkeiten.
 - Zwei CLI-Binaries (`prove`, `verify`) für manuelle Tests.
 - Proof-Size-Gate an Node-Config mappen.
 
+### Roadmap-Erweiterung – Kette komplett (Integration & Betriebsreife)
+
+**Leitplanken:** MSRV 1.79, kein nightly, kein `unsafe`, keine `unwrap`/`expect` in
+der Lib-Logik. Integration erfolgt additiv (keine Refactors im `chain`-Repo),
+das Feature `backend-rpp-stark` ist standardmäßig deaktiviert.
+
+**A1 – Adapter-Layer & Feature-Gate**
+
+- Neue Adapter-Typen für Felt, 32-Byte-Digest-Wrapper sowie Hasher-Trait-
+  Implementierungen bereitstellen.
+- Feature `backend-rpp-stark` im `chain`-Workspace verdrahten (Dependency &
+  Exports), ohne bestehende Dateien umzubenennen.
+- **DoD:** Build mit und ohne Feature bleibt grün, der Default-Pfad bleibt
+  unverändert.
+
+**A2 – Public-Inputs-ABI & Digest-Kontrakt**
+
+- Kanonische Reihenfolge und LE-Kodierung der Public Inputs festschreiben.
+- Blake2s-256 als Default-Hashfamilie fixieren bzw. Adapter anlegen.
+- Mini-Vektor mit `public_inputs.bin` und erwartetem Digest als Snapshot
+  einfrieren.
+- **DoD:** `public_digest` reproduzierbar, Snapshot stabil.
+
+**A3 – Proof-Size-Gate-Mapping**
+
+- `max_size_kb` in den Params verankern und der Verifier misst reale Proof-Bytes.
+- Mapping auf `max_proof_size_bytes` der Node-Konfiguration dokumentieren.
+- Testfall: Proof knapp unter/über Limit ⇒ OK/Fail.
+- **DoD:** Limits greifen identisch in Library und Node.
+
+**A4 – CLI-Brücken (optional, isoliert)**
+
+- Zwei kleine Binaries außerhalb des Node-Main-Pfads:
+  `wallet_stark_prove`, `node_stark_verify`.
+- I/O via Dateien für Public Inputs und Proof, Ausgabe als JSON-Report.
+- **DoD:** End-to-End-Probelauf ohne Node-Umbau möglich.
+
+**A5 – CI-Erweiterungen (additiv)**
+
+- Zusätzliche Jobs: `build-rpp-stark`, `test-rpp-stark`, `clippy-rpp-stark`.
+- Artefakte sammeln: Snapshot-Files, Test-Logs.
+- **DoD:** Pipeline grün, bestehende Jobs unverändert.
+
+**A6 – Doku & Releasefluss**
+
+- `docs/INTEGRATION.md`: Feature-Flag, Adapter, Limits, CLI-Kommandos,
+  Troubleshooting.
+- `CHANGELOG.md`: `PROOF_VERSION`-Regeln, ABI-Änderungen.
+- Release-Tag-Schema (z. B. `rpp-stark-v1.0.0`).
+- **DoD:** Doku vollständig, Tags & SemVer definiert.
+
+**PR-Reihenfolge:** A1 → A2 → A3 → A4 → A5 → A6.
+
+**Quality Gates:** Build/Test/Clippy (1.79), Snapshot-Stabilität, kein `unsafe`/
+`unwrap`.
+
+### Roadmap-Erweiterung – Fail-Matrix & Snapshot-Hardening
+
+**Leitplanken:** Jeder Negativtest mutiert genau eine Ursache. Snapshots frieren
+Bytes und Ordnungen (Proof, Params, Roots, Indizes, Challenges) ein. Tests
+bleiben klein und deterministisch.
+
+**B1 – Fixtures & Mutations-Infra**
+
+- Mini-Params (z. B. `domain_log2=8`, `queries=2`, `leaf_width=1`).
+- Datencontainer für Proof und Sektionen; Mutations-Helper (Byte flippen,
+  Indizes permutieren usw.).
+- **DoD:** Fixture-Erzeugung in 1–2 Zeilen pro Test.
+
+**B2 – Header-Fehler (4 Fälle)**
+
+- `VersionMismatch`: Versionsfeld +1.
+- `ParamsHashMismatch`: 1 Byte im Hash flippen.
+- `PublicDigestMismatch`: 1 Byte im Digest flippen.
+- `ProofTooLarge`: Proof seriell über Limit aufblasen.
+- **DoD:** Richtige Fehler-Variante, klare Asserts.
+
+**B3 – Indices-Disziplin (3 Fälle)**
+
+- `IndicesNotSorted`: Zwei Einträge vertauschen.
+- `IndicesDuplicate`: Zwei gleiche Werte setzen.
+- `IndicesMismatch`: Einen Wert außerhalb der lokalen Liste ändern.
+- **DoD:** Eindeutige Fehlerdiagnosen.
+
+**B4 – Merkle-Fehler (3 Fälle)**
+
+- `RootMismatch`: Root-Bytes ändern.
+- `MerkleVerifyFailed`: Pfadknoten korrumpieren.
+- Vektor-Längeninkonsistenz: Leaves/Paths asynchron halten.
+- **DoD:** Passender Fehlerpfad, keine Panics.
+
+**B5 – FRI-Fehler (1 Fall)**
+
+- `FoldChallenge[0]` mutieren ⇒ Verifier endet mit `FriVerifyFailed`.
+- **DoD:** Exakter Fehler, keine Merkle-Verwechslung.
+
+**B6 – Composition-Fehler (1 Fall)**
+
+- In `composition.leaves[0]` ein Felt-Byte flippen ⇒ `CompositionInconsistent`.
+- **DoD:** Exakte Fehlermeldung.
+
+**B7 – Snapshot-Freeze**
+
+- Snapshots: Proof-Bytes, Params-Bytes (Profile), Roots-Listen,
+  Challenges-Listen, Query-Indizes, Pfadlängen.
+- CI-Guard: Snapshot-Diffs nur erlaubt, wenn `PROOF_VERSION` erhöht wird.
+- **DoD:** Snapshot-Stabilität als Gate.
+
+**PR-Reihenfolge:** B1 → (B2, B3, B4, B5, B6) → B7.
+
+**Quality Gates:** Determinismus, präzise Fehlervarianten, Snapshot-Artefakte.
+
+### Roadmap-Erweiterung – STWO-Interop-Haken
+
+**Leitplanken:** Ziel sind identische Root- und Digest-Bytes wie im STWO-Pfad
+(oder dokumentierte Adapter). Keine Seiteneffekte für bestehende Backends.
+
+**C1 – Hashfamilie & Digest-Länge**
+
+- Hash-Trait mit Familie/Variante, `digest_len=32` (Blake2s-Default).
+- Adapter-Hasher für alternative interne Backends (Poseidon/Rescue).
+- Test: Gleicher Input ⇒ gleiche Root-Bytes wie STWO-Referenz.
+- **DoD:** Byte-genaue Kompatibilität.
+
+**C2 – Merkle-Parameter & Domain-Separation**
+
+- Arity-2 als Default, Arity-4 nur bei belegter Kompatibilität.
+- Domain-Tags (Leaf/Node) dokumentieren und anwenden.
+- Test: Bekannte Leaf-Menge ⇒ Root exakt wie Referenz.
+- **DoD:** Root-Gleichheit, Pfad-Verify deckungsgleich.
+
+**C3 – Public-Inputs-Digest**
+
+- Fixe Reihenfolge/Kodierung (LE) der Public-Felder; keine dynamischen Sorts.
+- Hashfamilie identisch zur Merkle- oder dokumentiert.
+- Test: `public_inputs.bin` ⇒ Digest-Fixture reproduzieren.
+- **DoD:** Deterministischer Digest, Snapshot vorhanden.
+
+**C4 – Params-Mapping & Profile-Gleichklang**
+
+- `PROFILE_X8`, `PROFILE_HISEC_X16` spiegeln Node-Erwartungen (domain_log2,
+  queries, leaf_width).
+- `params_hash()`-Snapshot, Node-Seite nachrechenbar.
+- **DoD:** `params_hash` stabil, Profile deckungsgleich.
+
+**C5 – Size-Gate-Kontrakt**
+
+- Library misst reale Bytes und vergleicht mit `max_size_kb`.
+- Node-Konfig `max_proof_size_bytes` dokumentiert mappen.
+- Test: Proof knapp unter/über Grenze ⇒ erwartetes Verhalten.
+- **DoD:** Identische Entscheidungen in Lib und Node.
+
+**C6 – Interop-Protokolltests**
+
+- Golden-Vector-Set mit kleinem Proof (Roots, Indizes, Challenges, Bytes).
+- Verifier-Report-Vergleich: Flags und `total_bytes` identisch.
+- **DoD:** Vollständiger Roundtrip kompatibel.
+
+**PR-Reihenfolge:** C1 → C2 → C3 → C4 → C5 → C6.
+
+**Quality Gates:** Byte-Identität bei Hash/Merkle/PublicDigest;
+Profile/Snapshots stabil.
+
 ## Canonical STARK parameters
 
 The [`params`](src/params/mod.rs) module defines `StarkParams` as the single
