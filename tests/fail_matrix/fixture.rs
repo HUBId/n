@@ -290,6 +290,29 @@ where
     }
 }
 
+/// Flips the first byte of the leading composition opening leaf (if present).
+pub fn flip_composition_leaf_byte(proof: &Proof) -> Option<MutatedProof> {
+    let Some(composition) = proof.openings.composition.as_ref() else {
+        return None;
+    };
+    let Some(leaf) = composition.leaves.first() else {
+        return None;
+    };
+    if leaf.is_empty() {
+        return None;
+    }
+
+    Some(mutate_proof(proof, |proof| {
+        if let Some(composition) = proof.openings.composition.as_mut() {
+            if let Some(leaf) = composition.leaves.first_mut() {
+                if let Some(byte) = leaf.first_mut() {
+                    *byte ^= 0x01;
+                }
+            }
+        }
+    }))
+}
+
 /// Swaps the first two trace query indices.
 pub fn swap_trace_indices(proof: &Proof) -> MutatedProof {
     mutate_trace_indices_with(proof, |indices| {
