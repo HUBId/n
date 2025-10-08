@@ -98,6 +98,42 @@ The resulting challenge stream (`TraceChallengeA`, `CompChallengeA`, successive
 `FriFoldChallenge(i)`, then `QueryIndexStream`) is highlighted in Kap. 7’s
 worked example.
 
+### Proof layout checkpoints
+
+The execution-proof fixture emitted in `tests/proof_artifacts.rs` is frozen with
+[`insta`](https://insta.rs/) to keep the ABI stable. The snapshot
+`tests/snapshots/proof_artifacts__execution_proof_artifacts.snap` records the
+most relevant artefacts:
+
+| Artefakt | Quelle | Beschreibung |
+|----------|--------|--------------|
+| Trace-/Composition-Root | `proof_artifacts__execution_proof_artifacts.snap` (`trace_root`/`composition_root`) | Verankert die Merkle-Wurzeln des Ausführungsnachweises. |
+| FRI-Layer-Roots | Snapshot-Feld `fri_roots` | Bewahrt die Layer-Sequenz für Fiat–Shamir & FRI-Sampling. |
+| Sortierte Query-Indizes | Snapshot-Felder `trace_query_indices`, `composition_query_indices`, `fri_query_positions` | Überprüft deterministische Query-Schedules. |
+| Pfadlängen-Histogramme | Snapshot-Felder `trace_path_lengths`, `composition_path_lengths`, `fri_path_lengths` | Machen Drift bei Merkle-Arity bzw. Bundle-Längen sofort sichtbar. |
+
+Das Snapshot-Artefakt dient als Referenz für jede Änderung am Proof-Layout – bei
+Abweichungen schlägt der zugehörige Test fehl und fordert eine bewusste
+Aktualisierung.
+
+### Negative-Matrix-Checkliste
+
+Die Fehlerklassen des Verifiers werden durch gerichtete Tests in
+`tests/proof_lifecycle.rs` abgedeckt. Wichtige Negativfälle:
+
+| Szenario | Testfall | Erwarteter `VerifyError` |
+|----------|----------|--------------------------|
+| ParamDigest-Byte-Flip | `verification_report_flags_param_digest_flip` | `ParamsHashMismatch` |
+| PublicDigest-Verfälschung | `proof_decode_rejects_public_digest_tampering` | `PublicDigestMismatch` |
+| Header-Trace-Root-Mismatch | `verification_report_flags_header_trace_root_mismatch` | `RootMismatch::TraceCommit` |
+| Header-Composition-Root-Mismatch | `verification_report_flags_header_composition_root_mismatch` | `RootMismatch::CompositionCommit` |
+| FRI-Challenge-Flip | `verification_report_flags_fri_challenge_flip` | `MerkleVerifyFailed::FriPath` |
+| Composition-Inkonsistenz | `verification_rejects_composition_leaf_misalignment_with_fri` | `CompositionInconsistent` |
+| Proof-Größenüberschreitung | `verification_report_flags_proof_size_overflow` | `ProofTooLarge` |
+
+Die Tabelle fungiert als „Negative Matrix“ und dokumentiert, welche Fehlerpfade
+im Rahmen der Regressionstests zwingend aktiv bleiben.
+
 ## Low-degree extension profiles
 
 Low-degree extension (LDE) configuration lives in [`src/fft/lde.rs`](src/fft/lde.rs).
