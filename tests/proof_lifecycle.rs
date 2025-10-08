@@ -515,7 +515,7 @@ fn verification_rejects_trace_indices_duplicate() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::IndicesDuplicate)
+        VerificationVerdict::Reject(VerifyError::IndicesDuplicate { .. })
     ));
 }
 

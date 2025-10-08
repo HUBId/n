@@ -14,8 +14,8 @@ use crate::proof::public_inputs::{
 };
 use crate::proof::types::{
     CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
-    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings, VerifyError,
-    PROOF_VERSION,
+    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, Telemetry,
+    TraceOpenings, VerifyError, PROOF_VERSION,
 };
 use crate::ser::{
     ensure_consumed, ensure_u32, read_digest, read_u16, read_u32, read_u8, write_bytes,
@@ -199,11 +199,45 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         ));
     }
 
-    if proof.has_composition_commit != proof.openings.composition.is_some() {
+    if proof.trace_commit.bytes != proof.merkle.core_root {
         return Err(SerError::invalid_value(
-            SerKind::CompositionCommitment,
-            "flag_mismatch",
+            SerKind::TraceCommitment,
+            "trace_root_mismatch",
         ));
+    }
+
+    match (
+        proof.composition_commit.as_ref(),
+        proof.openings.composition.as_ref(),
+    ) {
+        (Some(commit), Some(_)) => {
+            if commit.bytes != proof.merkle.aux_root {
+                return Err(SerError::invalid_value(
+                    SerKind::CompositionCommitment,
+                    "composition_root_mismatch",
+                ));
+            }
+        }
+        (Some(_), None) => {
+            return Err(SerError::invalid_value(
+                SerKind::CompositionCommitment,
+                "commit_without_openings",
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(SerError::invalid_value(
+                SerKind::CompositionCommitment,
+                "openings_without_commit",
+            ));
+        }
+        (None, None) => {
+            if proof.merkle.aux_root != [0u8; 32] {
+                return Err(SerError::invalid_value(
+                    SerKind::CompositionCommitment,
+                    "aux_root_without_commit",
+                ));
+            }
+        }
     }
 
     let merkle_bytes = serialize_merkle_bundle(&proof.merkle)?;
@@ -259,7 +293,14 @@ fn serialize_proof_header_from_lengths(
     write_bytes(&mut buffer, &proof.public_inputs);
 
     write_digest(&mut buffer, &proof.public_digest.bytes);
-    write_digest(&mut buffer, &proof.commitment_digest.bytes);
+    write_digest(&mut buffer, &proof.trace_commit.bytes);
+    match &proof.composition_commit {
+        Some(digest) => {
+            write_u8(&mut buffer, 1);
+            write_digest(&mut buffer, &digest.bytes);
+        }
+        None => write_u8(&mut buffer, 0),
+    }
 
     let merkle_len = ensure_u32(merkle_len, SerKind::TraceCommitment, "len")?;
     write_u32(&mut buffer, merkle_len);
@@ -268,10 +309,6 @@ fn serialize_proof_header_from_lengths(
     let openings_len = ensure_u32(openings_len, SerKind::Openings, "len")?;
     write_u32(&mut buffer, openings_len);
 
-    write_u8(
-        &mut buffer,
-        if proof.has_composition_commit { 1 } else { 0 },
-    );
     write_u8(&mut buffer, if proof.has_telemetry { 1 } else { 0 });
 
     if proof.has_telemetry {
@@ -318,9 +355,20 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     let public_digest_bytes =
         read_digest(&mut cursor, SerKind::PublicInputs, "digest").map_err(VerifyError::from)?;
 
-    let commitment_digest = DigestBytes {
-        bytes: read_digest(&mut cursor, SerKind::TraceCommitment, "commitment_digest")
+    let trace_commit = DigestBytes {
+        bytes: read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit")
             .map_err(VerifyError::from)?,
+    };
+
+    let composition_commit = match read_u8(&mut cursor, SerKind::CompositionCommitment, "flag")
+        .map_err(VerifyError::from)?
+    {
+        0 => None,
+        1 => Some(DigestBytes {
+            bytes: read_digest(&mut cursor, SerKind::CompositionCommitment, "digest")
+                .map_err(VerifyError::from)?,
+        }),
+        _ => return Err(VerifyError::Serialization(SerKind::CompositionCommitment)),
     };
 
     let merkle_len =
@@ -328,14 +376,6 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").map_err(VerifyError::from)? as usize;
     let openings_len =
         read_u32(&mut cursor, SerKind::Openings, "len").map_err(VerifyError::from)? as usize;
-
-    let has_composition_commit = match read_u8(&mut cursor, SerKind::CompositionCommitment, "flag")
-        .map_err(VerifyError::from)?
-    {
-        0 => false,
-        1 => true,
-        _ => return Err(VerifyError::Serialization(SerKind::CompositionCommitment)),
-    };
 
     let has_telemetry =
         match read_u8(&mut cursor, SerKind::Telemetry, "flag").map_err(VerifyError::from)? {
@@ -366,10 +406,6 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         .map_err(VerifyError::from)?;
     let openings = deserialize_openings(&openings_bytes).map_err(VerifyError::from)?;
 
-    if has_composition_commit != openings.composition.is_some() {
-        return Err(VerifyError::Serialization(SerKind::CompositionCommitment));
-    }
-
     let telemetry = if let Some(len) = telemetry_len {
         let telemetry_bytes = cursor
             .read_vec(SerKind::Telemetry, "bytes", len)
@@ -382,7 +418,40 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     ensure_consumed(&cursor, SerKind::Proof).map_err(VerifyError::from)?;
 
     if compute_public_digest(&public_inputs) != public_digest_bytes {
-        return Err(VerifyError::Serialization(SerKind::PublicInputs));
+        return Err(VerifyError::PublicDigestMismatch);
+    }
+
+    if trace_commit.bytes != merkle.core_root {
+        return Err(VerifyError::RootMismatch {
+            section: MerkleSection::TraceCommit,
+        });
+    }
+
+    match (&composition_commit, openings.composition.as_ref()) {
+        (Some(commit), Some(_)) => {
+            if commit.bytes != merkle.aux_root {
+                return Err(VerifyError::RootMismatch {
+                    section: MerkleSection::CompositionCommit,
+                });
+            }
+        }
+        (Some(_), None) => {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_openings".to_string(),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_commit".to_string(),
+            });
+        }
+        (None, None) => {
+            if merkle.aux_root != [0u8; 32] {
+                return Err(VerifyError::RootMismatch {
+                    section: MerkleSection::CompositionCommit,
+                });
+            }
+        }
     }
 
     Ok(Proof {
@@ -394,8 +463,8 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         public_digest: DigestBytes {
             bytes: public_digest_bytes,
         },
-        commitment_digest,
-        has_composition_commit,
+        trace_commit,
+        composition_commit,
         merkle,
         openings,
         fri_proof,
@@ -745,8 +814,6 @@ mod tests {
         let fri_layer_roots = fri_proof.layer_roots.clone();
         let core_root = fri_layer_roots.first().copied().unwrap_or([0u8; 32]);
         let aux_root = [1u8; 32];
-        let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
-
         let header = ExecutionHeaderV1 {
             version: PublicInputVersion::V1,
             program_digest: DigestBytes { bytes: [2u8; 32] },
@@ -809,10 +876,12 @@ mod tests {
             public_digest: DigestBytes {
                 bytes: public_digest,
             },
-            commitment_digest: DigestBytes {
-                bytes: commitment_digest,
+            trace_commit: DigestBytes {
+                bytes: merkle.core_root,
             },
-            has_composition_commit: true,
+            composition_commit: Some(DigestBytes {
+                bytes: merkle.aux_root,
+            }),
             merkle,
             openings,
             fri_proof,
@@ -872,14 +941,20 @@ mod tests {
             .unwrap();
         assert_eq!(public_bytes, proof.public_inputs);
         read_digest(&mut cursor, SerKind::PublicInputs, "public_digest").unwrap();
-        read_digest(&mut cursor, SerKind::TraceCommitment, "commitment_digest").unwrap();
-        let merkle_len = read_u32(&mut cursor, SerKind::TraceCommitment, "len").unwrap() as usize;
-        let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").unwrap() as usize;
-        let openings_len = read_u32(&mut cursor, SerKind::Openings, "len").unwrap() as usize;
+        read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit").unwrap();
         assert_eq!(
             read_u8(&mut cursor, SerKind::CompositionCommitment, "flag").unwrap(),
             1
         );
+        read_digest(
+            &mut cursor,
+            SerKind::CompositionCommitment,
+            "composition_commit",
+        )
+        .unwrap();
+        let merkle_len = read_u32(&mut cursor, SerKind::TraceCommitment, "len").unwrap() as usize;
+        let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").unwrap() as usize;
+        let openings_len = read_u32(&mut cursor, SerKind::Openings, "len").unwrap() as usize;
         let has_telemetry = read_u8(&mut cursor, SerKind::Telemetry, "flag").unwrap();
         let telemetry_len = if has_telemetry == 1 {
             read_u32(&mut cursor, SerKind::Telemetry, "len").unwrap() as usize

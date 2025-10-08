@@ -13,8 +13,7 @@ use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
-    serialize_public_inputs,
+    compute_integrity_digest, compute_public_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::types::{
     FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
@@ -137,10 +136,7 @@ fn build_sample_proof(
     reader
         .fill(&mut core_root)
         .expect("profile sampler XOF should not fail");
-    let mut aux_root = [0u8; 32];
-    reader
-        .fill(&mut aux_root)
-        .expect("profile sampler XOF should not fail");
+    let aux_root = [0u8; 32];
 
     let mut fri_layer_roots = Vec::new();
     for _ in 0..2 {
@@ -165,7 +161,6 @@ fn build_sample_proof(
     )
     .expect("sample fri proof");
 
-    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
     let public_inputs = sample_public_inputs(profile, run_label);
 
     let merkle = MerkleProofBundle {
@@ -198,10 +193,10 @@ fn build_sample_proof(
         public_digest: DigestBytes {
             bytes: public_digest,
         },
-        commitment_digest: DigestBytes {
-            bytes: commitment_digest,
+        trace_commit: DigestBytes {
+            bytes: merkle.core_root,
         },
-        has_composition_commit: false,
+        composition_commit: None,
         merkle,
         openings: Openings {
             trace: trace_openings,

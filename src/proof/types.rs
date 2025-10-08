@@ -67,10 +67,10 @@ pub struct Proof {
     pub public_inputs: Vec<u8>,
     /// Digest binding the canonical public-input payload.
     pub public_digest: DigestBytes,
-    /// Digest binding commitments prior to parsing the body.
-    pub commitment_digest: DigestBytes,
-    /// Flag signalling whether the composition commitment segment is present.
-    pub has_composition_commit: bool,
+    /// Digest mirroring the declared trace commitment.
+    pub trace_commit: DigestBytes,
+    /// Optional digest mirroring the declared composition commitment.
+    pub composition_commit: Option<DigestBytes>,
     /// Merkle commitment bundle for core, auxiliary and FRI layers.
     pub merkle: MerkleProofBundle,
     /// Out-of-domain opening payloads.
@@ -223,8 +223,6 @@ pub struct VerifyReport {
 /// Errors surfaced while decoding or validating a proof envelope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MerkleSection {
-    /// Commitment digest derived from advertised roots mismatched expectations.
-    CommitmentDigest,
     /// FRI layer roots emitted by the prover did not line up with the Merkle bundle.
     FriRoots,
     /// Authentication path validation failed while replaying FRI queries.
@@ -283,12 +281,16 @@ pub enum VerifyError {
     ParamsHashMismatch,
     /// Public inputs failed decoding or did not match the expected layout.
     PublicInputMismatch,
+    /// Digest derived from the public-input section mismatched the advertised digest.
+    PublicDigestMismatch,
     /// Transcript phases were emitted out of order or with missing tags.
     TranscriptOrder,
     /// Out-of-domain openings were malformed or contained inconsistent values.
     OutOfDomainInvalid,
     /// Proof declared a Merkle scheme unsupported by the verifier.
     UnsupportedMerkleScheme,
+    /// Merkle roots decoded from the payload disagreed with the header.
+    RootMismatch { section: MerkleSection },
     /// Merkle verification failed for a specific section.
     MerkleVerifyFailed { section: MerkleSection },
     /// Trace leaf payload did not match the expected evaluation.
@@ -299,18 +301,20 @@ pub enum VerifyError {
     TraceOodMismatch,
     /// Composition out-of-domain evaluation disagreed with the Merkle/Fri binding.
     CompositionOodMismatch,
+    /// Composition openings disagreed with the commitments advertised in the header.
+    CompositionInconsistent { reason: String },
     /// FRI verification rejected the envelope.
     FriVerifyFailed { issue: FriVerifyIssue },
     /// Composition polynomial exceeded declared degree bounds.
     DegreeBoundExceeded,
-    /// Proof exceeded the configured maximum proof size.
-    ProofTooLarge,
+    /// Proof exceeded the configured maximum proof size (values measured in kibibytes).
+    ProofTooLarge { max_kb: u32, got_kb: u32 },
     /// Proof declared openings but none were provided in the payload.
     EmptyOpenings,
     /// Query indices were not strictly increasing.
     IndicesNotSorted,
     /// Query indices contained duplicates.
-    IndicesDuplicate,
+    IndicesDuplicate { index: u32 },
     /// Query indices disagreed with the locally derived transcript indices.
     IndicesMismatch,
     /// Aggregated digest did not match the recomputed digest during batching.

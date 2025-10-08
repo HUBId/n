@@ -376,8 +376,8 @@ mod tests {
                 public_digest: DigestBytes {
                     bytes: crate::proof::ser::compute_public_digest(&[]),
                 },
-                commitment_digest: DigestBytes { bytes: [8u8; 32] },
-                has_composition_commit: false,
+                trace_commit: DigestBytes { bytes: [0u8; 32] },
+                composition_commit: None,
                 merkle: MerkleProofBundle {
                     core_root: [0u8; 32],
                     aux_root: [0u8; 32],

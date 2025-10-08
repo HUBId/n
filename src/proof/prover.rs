@@ -31,8 +31,8 @@ use crate::params::StarkParams;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
-    map_public_to_config_kind, serialize_public_inputs,
+    compute_integrity_digest, compute_public_digest, map_public_to_config_kind,
+    serialize_public_inputs,
 };
 use crate::proof::transcript::{
     Transcript as ProofTranscript, TranscriptBlockContext, TranscriptHeader,
@@ -246,7 +246,6 @@ pub fn build_envelope(
         &sampled_composition_values,
     )?;
     let fri_layer_roots = fri_proof.layer_roots.clone();
-    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
     let fri_parameters = FriParametersMirror {
         fold: 2,
@@ -280,10 +279,12 @@ pub fn build_envelope(
         public_digest: DigestBytes {
             bytes: public_digest,
         },
-        commitment_digest: DigestBytes {
-            bytes: commitment_digest,
+        trace_commit: DigestBytes {
+            bytes: merkle.core_root,
         },
-        has_composition_commit: true,
+        composition_commit: Some(DigestBytes {
+            bytes: merkle.aux_root,
+        }),
         merkle,
         openings: Openings {
             trace: trace_openings,
@@ -840,7 +841,11 @@ impl From<ProverError> for VerifyError {
             ProverError::Merkle(_) => VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriPath,
             },
-            ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
+            ProverError::ProofTooLarge { actual, limit } => {
+                let got_kb = actual.div_ceil(1024).min(u32::MAX as usize) as u32;
+                let max_kb = (limit as usize).div_ceil(1024) as u32;
+                VerifyError::ProofTooLarge { max_kb, got_kb }
+            }
             ProverError::Serialization(kind) => VerifyError::Serialization(kind),
             ProverError::FieldConstraint(context, _) => {
                 VerifyError::UnexpectedEndOfBuffer(context.to_string())

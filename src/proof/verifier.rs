@@ -24,8 +24,8 @@ use crate::params::{MerkleArity, StarkParams};
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, compute_public_digest, encode_proof_kind,
-    map_public_to_config_kind, serialize_public_inputs,
+    compute_integrity_digest, compute_public_digest, encode_proof_kind, map_public_to_config_kind,
+    serialize_public_inputs,
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
@@ -34,7 +34,6 @@ use crate::proof::types::{
     PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
     PROOF_VERSION,
 };
-use crate::ser::SerKind;
 use crate::utils::serialization::ProofBytes;
 use std::collections::BTreeMap;
 use std::convert::TryInto;
@@ -265,21 +264,46 @@ fn precheck_body(
         }
     }
 
-    let commitment_digest = compute_commitment_digest(
-        &proof.merkle.core_root,
-        &proof.merkle.aux_root,
-        &proof.merkle.fri_layer_roots,
-    );
-    if proof.commitment_digest.bytes != commitment_digest {
-        return Err(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::CommitmentDigest,
-        });
-    }
-
     if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
         });
+    }
+
+    if proof.trace_commit.bytes != proof.merkle.core_root {
+        return Err(VerifyError::RootMismatch {
+            section: MerkleSection::TraceCommit,
+        });
+    }
+
+    match (
+        &proof.composition_commit,
+        proof.openings.composition.as_ref(),
+    ) {
+        (Some(commit), Some(_)) => {
+            if commit.bytes != proof.merkle.aux_root {
+                return Err(VerifyError::RootMismatch {
+                    section: MerkleSection::CompositionCommit,
+                });
+            }
+        }
+        (Some(_), None) => {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_openings".to_string(),
+            });
+        }
+        (None, Some(_)) => {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_commit".to_string(),
+            });
+        }
+        (None, None) => {
+            if proof.merkle.aux_root != [0u8; 32] {
+                return Err(VerifyError::RootMismatch {
+                    section: MerkleSection::CompositionCommit,
+                });
+            }
+        }
     }
 
     stages.merkle_ok = true;
@@ -353,15 +377,18 @@ fn precheck_body(
         &proof.openings.trace,
     )?;
 
-    if proof.has_composition_commit {
-        let composition_openings = proof
-            .openings
-            .composition
-            .as_ref()
-            .ok_or(VerifyError::EmptyOpenings)?;
+    if let Some(composition_commit) = &proof.composition_commit {
+        let composition_openings =
+            proof
+                .openings
+                .composition
+                .as_ref()
+                .ok_or(VerifyError::CompositionInconsistent {
+                    reason: "missing_composition_openings".to_string(),
+                })?;
         let composition_values = verify_composition_commitment(
             &stark_params,
-            &proof.merkle.aux_root,
+            &composition_commit.bytes,
             composition_openings,
         )?;
 
@@ -380,8 +407,10 @@ fn precheck_body(
         )?;
         stages.composition_ok = true;
     } else {
-        if proof.openings.composition.is_some() || !proof.openings.out_of_domain.is_empty() {
-            return Err(VerifyError::Serialization(SerKind::CompositionCommitment));
+        if proof.openings.composition.is_some() {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_commit".to_string(),
+            });
         }
         stages.composition_ok = true;
     }
@@ -430,8 +459,11 @@ fn precheck_body(
         }
     }
 
-    if proof_size_exceeds_limit(proof, context)? {
-        return Err(VerifyError::ProofTooLarge);
+    let total_bytes = compute_proof_size(proof, context)?;
+    if total_bytes > context.limits.max_proof_size_bytes as usize {
+        let got_kb = total_bytes.div_ceil(1024) as u32;
+        let max_kb = (context.limits.max_proof_size_bytes as usize).div_ceil(1024) as u32;
+        return Err(VerifyError::ProofTooLarge { max_kb, got_kb });
     }
 
     enforce_resource_limits(proof.kind, public_inputs, context, proof)?;
@@ -530,7 +562,7 @@ fn validate_trace_indices(provided: &[u32], expected: &[u32]) -> Result<(), Veri
                 return Err(VerifyError::IndicesNotSorted);
             }
             if value == prev {
-                return Err(VerifyError::IndicesDuplicate);
+                return Err(VerifyError::IndicesDuplicate { index: value });
             }
         }
         previous = Some(value);
@@ -937,13 +969,12 @@ fn field_from_fixed_bytes(bytes: &[u8; 32]) -> Result<FieldElement, VerifyError>
     FieldElement::from_bytes(&buf).map_err(|_| VerifyError::NonCanonicalFieldElement)
 }
 
-fn proof_size_exceeds_limit(proof: &Proof, context: &VerifierContext) -> Result<bool, VerifyError> {
+fn compute_proof_size(proof: &Proof, _context: &VerifierContext) -> Result<usize, VerifyError> {
     let payload = proof.serialize_payload().map_err(VerifyError::from)?;
     let header_bytes = proof
         .serialize_header(&payload)
         .map_err(VerifyError::from)?;
-    let total = header_bytes.len() + payload.len() + 32;
-    Ok(total > context.limits.max_proof_size_bytes as usize)
+    Ok(header_bytes.len() + payload.len() + 32)
 }
 
 fn resolve_air_spec_id(
