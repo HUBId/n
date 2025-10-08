@@ -7,7 +7,7 @@
 
 use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
-    MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
+    MERKLE_SCHEME_ID_BLAKE3_2ARY_V1, MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
 };
 use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
@@ -20,7 +20,7 @@ use crate::merkle::verify_proof as verify_merkle_proof;
 use crate::merkle::{
     DeterministicMerkleHasher, Digest as MerkleDigest, Leaf, MerkleProof, ProofNode,
 };
-use crate::params::StarkParams;
+use crate::params::{MerkleArity, StarkParams};
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
@@ -36,6 +36,8 @@ use crate::proof::types::{
 };
 use crate::ser::SerKind;
 use crate::utils::serialization::ProofBytes;
+use std::collections::BTreeMap;
+use std::convert::TryInto;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct VerificationStages {
@@ -440,9 +442,11 @@ fn ensure_merkle_scheme(
     config: &ProofSystemConfig,
     context: &VerifierContext,
 ) -> Result<(), VerifyError> {
-    if config.profile.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
-        || context.common_ids.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
-    {
+    let scheme = &config.profile.merkle_scheme_id;
+    if scheme != &context.common_ids.merkle_scheme_id {
+        return Err(VerifyError::UnsupportedMerkleScheme);
+    }
+    if scheme != &MERKLE_SCHEME_ID_BLAKE3_2ARY_V1 && scheme != &MERKLE_SCHEME_ID_BLAKE3_4ARY_V1 {
         return Err(VerifyError::UnsupportedMerkleScheme);
     }
 
@@ -607,16 +611,13 @@ fn verify_merkle_section(
         return Err(VerifyError::EmptyOpenings);
     }
 
-    if params.merkle().arity != crate::params::MerkleArity::Binary {
-        return Err(VerifyError::UnsupportedMerkleScheme);
-    }
-
     if params.merkle().leaf_width != 1 {
         return Err(VerifyError::UnsupportedMerkleScheme);
     }
 
     let element_size = FieldElement::ZERO.to_bytes().len();
     let expected_leaf_bytes = element_size * params.merkle().leaf_width as usize;
+    let arity = params.merkle().arity;
     let root_digest = MerkleDigest::new(root.to_vec());
     let mut values = Vec::with_capacity(indices.len());
 
@@ -630,9 +631,9 @@ fn verify_merkle_section(
 
         let proof = MerkleProof {
             version: 1,
-            arity: crate::params::MerkleArity::Binary,
+            arity,
             leaf_encoding: params.merkle().leaf_encoding,
-            path: convert_path(path, section)?,
+            path: convert_path(path, section, arity)?,
             indices: vec![index],
             leaf_width: params.merkle().leaf_width,
             domain_sep: params.merkle().domain_sep,
@@ -663,17 +664,106 @@ fn verify_merkle_section(
 fn convert_path(
     path: &crate::proof::types::MerkleAuthenticationPath,
     section: MerkleSection,
+    arity: MerkleArity,
 ) -> Result<Vec<ProofNode>, VerifyError> {
     if path.nodes.is_empty() {
         return Err(VerifyError::MerkleVerifyFailed { section });
     }
-    let mut nodes = Vec::with_capacity(path.nodes.len());
-    for node in &path.nodes {
-        nodes.push(ProofNode::Arity2([MerkleDigest::new(
-            node.sibling.to_vec(),
-        )]));
+
+    match arity {
+        MerkleArity::Binary => {
+            let mut nodes = Vec::with_capacity(path.nodes.len());
+            for node in &path.nodes {
+                if node.index > 1 {
+                    return Err(VerifyError::MerkleVerifyFailed { section });
+                }
+                nodes.push(ProofNode::Arity2([MerkleDigest::new(
+                    node.sibling.to_vec(),
+                )]));
+            }
+            Ok(nodes)
+        }
+        MerkleArity::Quaternary => {
+            let mut nodes = Vec::new();
+            let branching = 4u8;
+            let mut cursor = 0usize;
+
+            while cursor < path.nodes.len() {
+                let first = &path.nodes[cursor];
+                if first.index >= branching {
+                    return Err(VerifyError::MerkleVerifyFailed { section });
+                }
+
+                let missing_positions: Vec<u8> =
+                    (0..branching).filter(|pos| *pos != first.index).collect();
+                if missing_positions.is_empty() {
+                    return Err(VerifyError::MerkleVerifyFailed { section });
+                }
+
+                let additional_count = missing_positions.len().saturating_sub(1);
+                let required = 1 + additional_count;
+                if cursor + required > path.nodes.len() {
+                    return Err(VerifyError::MerkleVerifyFailed { section });
+                }
+
+                let additional_slice = &path.nodes[cursor + 1..cursor + required];
+                let mut seen = [false; 4];
+                let mut digest_map = BTreeMap::new();
+
+                for node in additional_slice {
+                    if node.index >= branching || node.index == first.index {
+                        return Err(VerifyError::MerkleVerifyFailed { section });
+                    }
+                    if !missing_positions.iter().any(|&pos| pos == node.index) {
+                        return Err(VerifyError::MerkleVerifyFailed { section });
+                    }
+                    if seen[node.index as usize] {
+                        return Err(VerifyError::MerkleVerifyFailed { section });
+                    }
+                    seen[node.index as usize] = true;
+                    if digest_map
+                        .insert(node.index, MerkleDigest::new(node.sibling.to_vec()))
+                        .is_some()
+                    {
+                        return Err(VerifyError::MerkleVerifyFailed { section });
+                    }
+                }
+
+                let leftover_position = missing_positions
+                    .iter()
+                    .find(|pos| !seen[**pos as usize])
+                    .copied()
+                    .ok_or(VerifyError::MerkleVerifyFailed { section })?;
+                seen[leftover_position as usize] = true;
+                if digest_map
+                    .insert(leftover_position, MerkleDigest::new(first.sibling.to_vec()))
+                    .is_some()
+                {
+                    return Err(VerifyError::MerkleVerifyFailed { section });
+                }
+
+                let mut siblings = Vec::with_capacity(missing_positions.len());
+                for pos in missing_positions.iter() {
+                    let digest = digest_map
+                        .remove(pos)
+                        .ok_or(VerifyError::MerkleVerifyFailed { section })?;
+                    siblings.push(digest);
+                }
+
+                let siblings: [MerkleDigest; 3] = siblings
+                    .try_into()
+                    .map_err(|_| VerifyError::MerkleVerifyFailed { section })?;
+                nodes.push(ProofNode::Arity4(siblings));
+                cursor += required;
+            }
+
+            if nodes.is_empty() {
+                return Err(VerifyError::MerkleVerifyFailed { section });
+            }
+
+            Ok(nodes)
+        }
     }
-    Ok(nodes)
 }
 
 fn verify_composition_alignment(

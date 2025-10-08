@@ -55,6 +55,16 @@ fn roundtrip_quaternary_multi_index() {
 }
 
 #[test]
+fn roundtrip_quaternary_single_index() {
+    let params = build_params(MerkleArity::Quaternary, 4);
+    let leaves = make_leaves(16, params.merkle().leaf_width);
+    let (root, aux) = commit_aux(&params, leaves.clone());
+    let proof = MerkleTree::<DeterministicMerkleHasher>::open(&params, &aux, &[5]).unwrap();
+    MerkleTree::<DeterministicMerkleHasher>::verify(&params, &root, &proof, &[leaves[5].clone()])
+        .unwrap();
+}
+
+#[test]
 fn determinism_snapshot() {
     let params = build_params(MerkleArity::Binary, 4);
     let leaves = make_leaves(8, params.merkle().leaf_width);
@@ -125,6 +135,28 @@ fn tampered_proof_fails() {
         &root,
         &proof,
         &[leaves[2].clone()],
+    )
+    .unwrap_err();
+    assert!(matches!(err, MerkleError::VerificationFailed));
+}
+
+#[test]
+fn tampered_quaternary_proof_fails() {
+    let params = build_params(MerkleArity::Quaternary, 4);
+    let leaves = make_leaves(16, params.merkle().leaf_width);
+    let (root, aux) = commit_aux(&params, leaves.clone());
+    let mut proof = MerkleTree::<DeterministicMerkleHasher>::open(&params, &aux, &[3]).unwrap();
+    if let Some(first) = proof.path.first_mut() {
+        if let Some(sibling) = first.siblings_mut().first_mut() {
+            let bytes = sibling.as_bytes_mut();
+            bytes[0] ^= 0x02;
+        }
+    }
+    let err = MerkleTree::<DeterministicMerkleHasher>::verify(
+        &params,
+        &root,
+        &proof,
+        &[leaves[3].clone()],
     )
     .unwrap_err();
     assert!(matches!(err, MerkleError::VerificationFailed));
