@@ -440,7 +440,8 @@ fn proof_decode_rejects_public_digest_tampering() {
     .expect("proof generation succeeds");
 
     let mutated = mutate_public_digest(&proof_bytes);
-    let decode_error = rpp_stark::Proof::from_bytes(mutated.as_slice()).expect_err("decode must fail");
+    let decode_error =
+        rpp_stark::Proof::from_bytes(mutated.as_slice()).expect_err("decode must fail");
     assert!(matches!(decode_error, VerifyError::PublicDigestMismatch));
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);

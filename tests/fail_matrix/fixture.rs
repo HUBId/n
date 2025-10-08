@@ -1,0 +1,214 @@
+use rpp_stark::config::{
+    build_proof_system_config, build_prover_context, build_verifier_context, compute_param_digest,
+    ChunkingPolicy, ProfileConfig, ProofSystemConfig, ProverContext, ThreadPoolProfile,
+    VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
+};
+use rpp_stark::field::prime_field::{CanonicalSerialize, FieldElementOps};
+use rpp_stark::field::FieldElement;
+use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs};
+use rpp_stark::proof::ser::{compute_integrity_digest, serialize_proof};
+use rpp_stark::proof::types::Proof;
+use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
+use rpp_stark::generate_proof;
+
+const LFSR_ALPHA: u64 = 5;
+const LFSR_BETA: u64 = 7;
+const TRACE_LENGTH: usize = 128;
+const TRACE_WIDTH: u32 = 1;
+const SEED_VALUE: u64 = 3;
+
+/// Fixture assembling a miniature execution proof tailored for failure matrix tests.
+pub struct FailMatrixFixture {
+    proof_bytes: ProofBytes,
+    proof: Proof,
+    config: ProofSystemConfig,
+    prover_context: ProverContext,
+    verifier_context: VerifierContext,
+    header: ExecutionHeaderV1,
+    body: Vec<u8>,
+    witness: Vec<u8>,
+}
+
+impl FailMatrixFixture {
+    /// Builds a new fixture with a minimal profile configuration.
+    pub fn new() -> Self {
+        let mut profile: ProfileConfig = PROFILE_STANDARD_CONFIG.clone();
+        profile.fri_queries = 2;
+        profile.fri_depth_range.min = 8;
+        profile.fri_depth_range.max = 8;
+
+        let common = COMMON_IDENTIFIERS.clone();
+        let param_digest = compute_param_digest(&profile, &common);
+        let config = build_proof_system_config(&profile, &param_digest);
+        let prover_context = build_prover_context(
+            &profile,
+            &common,
+            &param_digest,
+            ThreadPoolProfile::SingleThread,
+            ChunkingPolicy {
+                min_chunk_items: 4,
+                max_chunk_items: 32,
+                stride: 1,
+            },
+        );
+        let verifier_context = build_verifier_context(&profile, &common, &param_digest, None);
+
+        let header = ExecutionHeaderV1 {
+            version: PublicInputVersion::V1,
+            program_digest: DigestBytes { bytes: [0u8; 32] },
+            trace_length: TRACE_LENGTH as u32,
+            trace_width: TRACE_WIDTH,
+        };
+        let seed = FieldElement::from(SEED_VALUE);
+        let body = seed
+            .to_bytes()
+            .expect("fixture seed must encode")
+            .to_vec();
+        let witness = build_witness(seed, TRACE_LENGTH);
+
+        let public_inputs = PublicInputs::Execution {
+            header: header.clone(),
+            body: &body,
+        };
+        let witness_blob = WitnessBlob { bytes: &witness };
+        let proof_bytes = generate_proof(
+            ProofKind::Execution,
+            &public_inputs,
+            witness_blob,
+            &config,
+            &prover_context,
+        )
+        .expect("fixture proof generation succeeds");
+        let proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode fixture proof");
+
+        Self {
+            proof_bytes,
+            proof,
+            config,
+            prover_context,
+            verifier_context,
+            header,
+            body,
+            witness,
+        }
+    }
+
+    /// Returns the serialized proof bytes.
+    pub fn proof_bytes(&self) -> ProofBytes {
+        self.proof_bytes.clone()
+    }
+
+    /// Returns the decoded proof container.
+    pub fn proof(&self) -> Proof {
+        self.proof.clone()
+    }
+
+    /// Returns the configured proof system configuration.
+    pub fn config(&self) -> ProofSystemConfig {
+        self.config.clone()
+    }
+
+    /// Returns the prover context bound to the mini profile.
+    pub fn prover_context(&self) -> ProverContext {
+        self.prover_context.clone()
+    }
+
+    /// Returns the verifier context bound to the mini profile.
+    pub fn verifier_context(&self) -> VerifierContext {
+        self.verifier_context.clone()
+    }
+
+    /// Returns the canonical public inputs for the fixture.
+    pub fn public_inputs(&self) -> PublicInputs<'_> {
+        PublicInputs::Execution {
+            header: self.header.clone(),
+            body: &self.body,
+        }
+    }
+
+    /// Returns the witness blob consumed by the prover.
+    pub fn witness(&self) -> WitnessBlob<'_> {
+        WitnessBlob {
+            bytes: &self.witness,
+        }
+    }
+}
+
+fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
+    let alpha = FieldElement::from(LFSR_ALPHA);
+    let beta = FieldElement::from(LFSR_BETA);
+    let mut column = Vec::with_capacity(rows);
+    let mut state = seed;
+    column.push(state);
+    for _ in 1..rows {
+        state = state.mul(&alpha).add(&beta);
+        column.push(state);
+    }
+
+    let mut bytes = Vec::with_capacity(20 + rows * 8);
+    bytes.extend_from_slice(&(rows as u32).to_le_bytes());
+    bytes.extend_from_slice(&TRACE_WIDTH.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    for value in column {
+        let encoded = value.to_bytes().expect("fixture witness must encode");
+        bytes.extend_from_slice(&encoded);
+    }
+    bytes
+}
+
+fn reencode_proof(proof: &mut Proof) -> ProofBytes {
+    if proof.has_telemetry {
+        let mut canonical = proof.clone();
+        canonical.telemetry.header_length = 0;
+        canonical.telemetry.body_length = 0;
+        canonical.telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+        let payload = canonical
+            .serialize_payload()
+            .expect("serialize canonical payload");
+        let header = canonical
+            .serialize_header(&payload)
+            .expect("serialize canonical header");
+        let integrity = compute_integrity_digest(&header, &payload);
+        proof.telemetry.header_length = header.len() as u32;
+        proof.telemetry.body_length = (payload.len() + 32) as u32;
+        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    }
+
+    ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
+}
+
+/// Flips the proof header version field.
+pub fn flip_header_version(proof: &Proof) -> ProofBytes {
+    let mut mutated = proof.clone();
+    mutated.version = mutated.version ^ 1;
+    reencode_proof(&mut mutated)
+}
+
+/// Corrupts a single byte inside the parameter digest.
+pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
+    let mut mutated = proof.clone();
+    mutated.param_digest.0.bytes[0] ^= 0x01;
+    reencode_proof(&mut mutated)
+}
+
+/// Swaps the first two trace query indices.
+pub fn swap_trace_indices(proof: &Proof) -> ProofBytes {
+    let mut mutated = proof.clone();
+    if mutated.openings.trace.indices.len() >= 2 {
+        mutated.openings.trace.indices.swap(0, 1);
+    }
+    reencode_proof(&mut mutated)
+}
+
+/// Corrupts the leading sibling digest within the first trace Merkle path.
+pub fn corrupt_merkle_path(proof: &Proof) -> ProofBytes {
+    let mut mutated = proof.clone();
+    if let Some(path) = mutated.openings.trace.paths.first_mut() {
+        if let Some(node) = path.nodes.first_mut() {
+            node.sibling[0] ^= 0xFF;
+        }
+    }
+    reencode_proof(&mut mutated)
+}
