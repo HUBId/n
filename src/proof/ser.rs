@@ -276,7 +276,10 @@ fn serialize_proof_header_from_lengths(
     let openings_len = ensure_u32(openings_len, SerKind::Openings, "len")?;
     write_u32(&mut buffer, openings_len);
 
-    write_u8(&mut buffer, if proof.has_composition_commit { 1 } else { 0 });
+    write_u8(
+        &mut buffer,
+        if proof.has_composition_commit { 1 } else { 0 },
+    );
     write_u8(&mut buffer, if proof.has_telemetry { 1 } else { 0 });
 
     if proof.has_telemetry {
@@ -320,18 +323,17 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     let public_inputs = cursor
         .read_vec(SerKind::PublicInputs, "bytes", public_len)
         .map_err(VerifyError::from)?;
-    let public_digest_bytes = read_digest(&mut cursor, SerKind::PublicInputs, "digest")
-        .map_err(VerifyError::from)?;
+    let public_digest_bytes =
+        read_digest(&mut cursor, SerKind::PublicInputs, "digest").map_err(VerifyError::from)?;
 
     let commitment_digest = DigestBytes {
         bytes: read_digest(&mut cursor, SerKind::TraceCommitment, "commitment_digest")
             .map_err(VerifyError::from)?,
     };
 
-    let merkle_len = read_u32(&mut cursor, SerKind::TraceCommitment, "len")
-        .map_err(VerifyError::from)? as usize;
-    let fri_len =
-        read_u32(&mut cursor, SerKind::Fri, "len").map_err(VerifyError::from)? as usize;
+    let merkle_len =
+        read_u32(&mut cursor, SerKind::TraceCommitment, "len").map_err(VerifyError::from)? as usize;
+    let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").map_err(VerifyError::from)? as usize;
     let openings_len =
         read_u32(&mut cursor, SerKind::Openings, "len").map_err(VerifyError::from)? as usize;
 
@@ -343,19 +345,15 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         _ => return Err(VerifyError::Serialization(SerKind::CompositionCommitment)),
     };
 
-    let has_telemetry = match read_u8(&mut cursor, SerKind::Telemetry, "flag")
-        .map_err(VerifyError::from)?
-    {
-        0 => false,
-        1 => true,
-        _ => return Err(VerifyError::Serialization(SerKind::Telemetry)),
-    };
+    let has_telemetry =
+        match read_u8(&mut cursor, SerKind::Telemetry, "flag").map_err(VerifyError::from)? {
+            0 => false,
+            1 => true,
+            _ => return Err(VerifyError::Serialization(SerKind::Telemetry)),
+        };
 
     let telemetry_len = if has_telemetry {
-        Some(
-            read_u32(&mut cursor, SerKind::Telemetry, "len")
-                .map_err(VerifyError::from)? as usize,
-        )
+        Some(read_u32(&mut cursor, SerKind::Telemetry, "len").map_err(VerifyError::from)? as usize)
     } else {
         None
     };
@@ -709,28 +707,19 @@ pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Vec<u8> {
         merkle_len + fri_len + openings_len + telemetry_len.unwrap_or(0)
     );
 
-    serialize_proof_header_from_lengths(
-        proof,
-        merkle_len,
-        fri_len,
-        openings_len,
-        telemetry_len,
-    )
-    .expect("proof header serialization should succeed")
+    serialize_proof_header_from_lengths(proof, merkle_len, fri_len, openings_len, telemetry_len)
+        .expect("proof header serialization should succeed")
 }
 
 /// Serialises the proof payload (body) without the integrity digest.
 pub fn serialize_proof_payload(proof: &Proof) -> Vec<u8> {
-    let merkle_bytes = serialize_merkle_bundle(&proof.merkle)
-        .expect("merkle bundle serialization should succeed");
+    let merkle_bytes =
+        serialize_merkle_bundle(&proof.merkle).expect("merkle bundle serialization should succeed");
     let fri_bytes = serialize_fri_proof(&proof.fri_proof);
-    let openings_bytes = encode_openings(&proof.openings)
-        .expect("openings serialization should succeed");
+    let openings_bytes =
+        encode_openings(&proof.openings).expect("openings serialization should succeed");
     let telemetry_bytes = if proof.has_telemetry {
-        Some(
-            serialize_telemetry_frame(proof)
-                .expect("telemetry serialization should succeed"),
-        )
+        Some(serialize_telemetry_frame(proof).expect("telemetry serialization should succeed"))
     } else {
         None
     };
@@ -917,9 +906,7 @@ mod tests {
         cursor
             .read_vec(SerKind::TraceCommitment, "merkle_bytes", merkle_len)
             .unwrap();
-        cursor
-            .read_vec(SerKind::Fri, "fri_bytes", fri_len)
-            .unwrap();
+        cursor.read_vec(SerKind::Fri, "fri_bytes", fri_len).unwrap();
         cursor
             .read_vec(SerKind::Openings, "openings_bytes", openings_len)
             .unwrap();

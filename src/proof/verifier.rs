@@ -22,8 +22,8 @@ use crate::params::StarkParams;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
-    encode_proof_kind, map_public_to_config_kind, serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest, encode_proof_kind,
+    map_public_to_config_kind, serialize_public_inputs,
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{

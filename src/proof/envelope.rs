@@ -179,7 +179,9 @@ impl ProofBuilder {
             param_digest: header.param_digest,
             air_spec_id: header.air_spec_id,
             public_inputs: header.public_inputs,
-            public_digest: DigestBytes { bytes: public_digest },
+            public_digest: DigestBytes {
+                bytes: public_digest,
+            },
             commitment_digest,
             has_composition_commit: openings.composition.is_some(),
             merkle,
@@ -274,6 +276,7 @@ mod tests {
         ProofSystemConfig, ThreadPoolProfile, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
         PROOF_VERSION_V1,
     };
+    use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
     use crate::field::FieldElement;
     use crate::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
     use crate::hash::merkle::{MerkleIndex, MerklePathElement, DIGEST_SIZE};
@@ -303,17 +306,45 @@ mod tests {
         }
     }
 
+    const LFSR_ALPHA: u64 = 5;
+    const LFSR_BETA: u64 = 7;
+
+    fn lfsr_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
+        let alpha = FieldElement::from(LFSR_ALPHA);
+        let beta = FieldElement::from(LFSR_BETA);
+        let mut column = Vec::with_capacity(rows);
+        let mut state = seed;
+        column.push(state);
+        for _ in 1..rows {
+            state = state.mul(&alpha).add(&beta);
+            column.push(state);
+        }
+
+        let mut bytes = Vec::with_capacity(20 + rows * 8);
+        bytes.extend_from_slice(&(rows as u32).to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        for value in column {
+            bytes.extend_from_slice(&value.to_bytes());
+        }
+        bytes
+    }
+
     fn sample_public_inputs() -> Vec<u8> {
+        let seed = FieldElement::from(11u64);
+        let body_bytes = seed.to_bytes();
         let header = ExecutionHeaderV1 {
             version: PublicInputVersion::V1,
             program_digest: DigestBytes { bytes: [2u8; 32] },
-            trace_length: 1024,
-            trace_width: 16,
+            trace_length: 64,
+            trace_width: 1,
         };
-        let body_bytes: Vec<u8> = Vec::new();
+        let body_vec = body_bytes.to_vec();
         let public_inputs = PublicInputs::Execution {
             header,
-            body: &body_bytes,
+            body: &body_vec,
         };
         crate::proof::ser::serialize_public_inputs(&public_inputs)
     }
@@ -574,24 +605,18 @@ mod tests {
             },
         );
 
+        let seed = FieldElement::from(13u64);
+        let seed_bytes = seed.to_bytes();
         let public_inputs = PublicInputs::Execution {
             header: ExecutionHeaderV1 {
                 version: PublicInputVersion::V1,
                 program_digest: DigestBytes { bytes: [10u8; 32] },
-                trace_length: 1024,
-                trace_width: 16,
+                trace_length: 64,
+                trace_width: 1,
             },
-            body: &[],
+            body: &seed_bytes,
         };
-        let witness_bytes = {
-            let mut bytes = Vec::new();
-            let count = 8u32;
-            bytes.extend_from_slice(&count.to_le_bytes());
-            for value in 1u64..=count as u64 {
-                bytes.extend_from_slice(&value.to_le_bytes());
-            }
-            bytes
-        };
+        let witness_bytes = lfsr_witness(seed, 64);
 
         let envelope = build_proof_envelope(
             &public_inputs,

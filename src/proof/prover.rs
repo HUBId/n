@@ -9,15 +9,13 @@
 //! 5. Assemble the envelope header/body, compute digests and enforce size limits.
 
 use crate::air::composition::{compose, CompositionParams, ConstraintGroup};
-use crate::air::trace::Trace;
+use crate::air::example::{LfsrAir, LfsrPublicInputs};
+use crate::air::trace::{NextRowView, Trace};
 use crate::air::traits::{
-    Air as AirContract, BoundaryBuilder as AirBoundaryBuilder,
-    BoundaryConstraint as AirBoundaryConstraint, Evaluator as AirEvaluator,
-    PublicInputsCodec as AirPublicInputsCodec, TraceBuilder as AirTraceBuilder,
+    Air as AirContract, BoundaryBuilder as AirBoundaryBuilder, Evaluator as AirEvaluator, PolyExpr,
+    TraceBuilder as AirTraceBuilder,
 };
-use crate::air::types::{
-    AirError as AirLayerError, DegreeBounds, LdeOrder, TraceColMeta, TraceRole, TraceSchema,
-};
+use crate::air::types::{AirError as AirLayerError, ColIx, TraceRole, TraceSchema};
 use crate::config::{
     AirSpecId, ProfileConfig, ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig,
     ProverContext,
@@ -46,10 +44,10 @@ use crate::proof::types::{
 };
 use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
-use core::cmp::min;
+use core::cmp::{max, min};
 use core::convert::TryInto;
 
-use crate::field::prime_field::CanonicalSerialize;
+use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError, FieldElementOps};
 
 use super::types::{FriVerifyIssue, MerkleSection, VerifyError};
 
@@ -118,44 +116,58 @@ pub fn build_envelope(
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, proof_kind);
     let security_level = map_security_level(&context.profile);
 
-    let evaluations = parse_witness(witness)?;
-    if evaluations.is_empty() {
-        return Err(ProverError::MalformedWitness("empty_evaluations"));
-    }
+    let public_inputs_bytes = serialize_public_inputs(public_inputs);
+    let public_digest = compute_public_digest(&public_inputs_bytes);
 
-    let trace_schema = build_trace_schema(&evaluations, context.profile.lde_factor as usize)?;
-    let trace = Trace::from_columns(trace_schema.clone(), vec![evaluations.clone()])?;
+    let lfsr_inputs = map_lfsr_public_inputs(public_inputs)?;
+    let air = LfsrAir::new(lfsr_inputs.clone());
+    let trace_schema = air.trace_schema()?;
+
+    let witness_columns = parse_witness(witness)?;
+    let columns = map_witness_to_schema(&witness_columns, &trace_schema, lfsr_inputs.length)?;
+
+    let mut trace_builder = air.new_trace_builder()?;
+    for (meta, column) in trace_schema.columns.iter().zip(columns.iter()) {
+        trace_builder.add_column(meta.role, column.clone())?;
+    }
+    let trace_data = trace_builder.build(trace_schema.degree_bounds)?;
+    let mut trace_columns = Vec::with_capacity(trace_schema.columns.len());
+    for (index, _) in trace_schema.columns.iter().enumerate() {
+        trace_columns.push(trace_data.column(ColIx::new(index))?.to_vec());
+    }
+    let trace = Trace::from_columns(trace_schema.clone(), trace_columns.clone())?;
+
+    let mut boundary_builder = air.new_boundary_builder()?;
+    for (index, meta) in trace_schema.columns.iter().enumerate() {
+        for boundary in &meta.boundaries {
+            let value = trace_data.boundary_value(ColIx::new(index), *boundary)?;
+            boundary_builder.set(ColIx::new(index), *boundary, value)?;
+        }
+    }
+    let _boundary_constraints = boundary_builder.build()?;
+
     let lde_params = map_lde_profile(context.profile.lde_factor as usize);
     let lde_values = trace.lde_evaluations(lde_params)?;
 
     let stark_params = canonical_stark_params(&context.profile);
     let (core_root, core_aux, trace_leaves) = commit_evaluations(&stark_params, &lde_values)?;
 
-    let mut air_transcript = prepare_air_transcript(&stark_params, &core_root)?;
-    let degree_bounds = DegreeBounds::new(
-        trace.length().saturating_sub(1).max(1),
-        trace.length().saturating_sub(1).max(1),
-    )?;
-    let composition_groups = vec![ConstraintGroup::new(
-        "trace",
-        TraceRole::Main,
-        trace.length().saturating_sub(1).max(1),
-        vec![lde_values.clone()],
-    )];
+    let mut air_transcript = prepare_air_transcript(&stark_params, &public_digest, &core_root)?;
+    let degree_bounds = trace_schema.degree_bounds;
+    let constraint_groups = build_constraint_groups(&air, &trace, lde_params)?;
     let (composition_values, composition_commitment) = compose(
-        &DummyAir,
+        &air,
         CompositionParams {
             stark: &stark_params,
             transcript: &mut air_transcript,
             degree_bounds,
-            groups: &composition_groups,
+            groups: &constraint_groups,
         },
     )?;
     let aux_root = digest_to_array(composition_commitment.root.as_bytes());
     let composition_aux = composition_commitment.aux;
     let composition_leaves = evaluations_to_leaves(&composition_values)?;
 
-    let public_inputs_bytes = serialize_public_inputs(public_inputs);
     let mut transcript = ProofTranscript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
         poseidon_param_id: context.profile.poseidon_param_id.clone(),
@@ -246,8 +258,6 @@ pub fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
-    let public_digest = compute_public_digest(&public_inputs_bytes);
-
     let mut proof = Proof {
         version: PROOF_VERSION,
         kind: proof_kind,
@@ -293,25 +303,241 @@ pub fn build_envelope(
     Ok(proof)
 }
 
-fn parse_witness(witness: WitnessBlob<'_>) -> Result<Vec<FieldElement>, ProverError> {
-    if witness.bytes.len() < 4 {
-        return Err(ProverError::MalformedWitness("length_prefix"));
-    }
-    let mut len_bytes = [0u8; 4];
-    len_bytes.copy_from_slice(&witness.bytes[..4]);
-    let count = u32::from_le_bytes(len_bytes) as usize;
-    let expected_len = 4 + count * 8;
-    if witness.bytes.len() != expected_len {
-        return Err(ProverError::MalformedWitness("trace_length"));
+#[derive(Debug, Clone, Default)]
+struct WitnessColumns {
+    rows: usize,
+    main: Vec<Vec<FieldElement>>,
+    auxiliary: Vec<Vec<FieldElement>>,
+    permutation: Vec<Vec<FieldElement>>,
+    lookup: Vec<Vec<FieldElement>>,
+}
+
+fn parse_witness(witness: WitnessBlob<'_>) -> Result<WitnessColumns, ProverError> {
+    const HEADER_FIELDS: usize = 5;
+    const FIELD_BYTES: usize = 8;
+    if witness.bytes.len() < HEADER_FIELDS * 4 {
+        return Err(ProverError::MalformedWitness("witness_header"));
     }
 
-    let mut values = Vec::with_capacity(count);
-    for chunk in witness.bytes[4..].chunks_exact(8) {
-        let mut field_bytes = [0u8; 8];
-        field_bytes.copy_from_slice(chunk);
-        values.push(FieldElement(u64::from_le_bytes(field_bytes)));
+    let mut cursor = 0usize;
+    let take_u32 = |bytes: &[u8], offset: &mut usize| -> Result<u32, ProverError> {
+        let end = offset
+            .checked_add(4)
+            .ok_or(ProverError::MalformedWitness("witness_overflow"))?;
+        let slice = bytes
+            .get(*offset..end)
+            .ok_or(ProverError::MalformedWitness("witness_header"))?;
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(slice);
+        *offset = end;
+        Ok(u32::from_le_bytes(buf))
+    };
+
+    let rows = take_u32(witness.bytes, &mut cursor)? as usize;
+    if rows == 0 {
+        return Err(ProverError::MalformedWitness("trace_rows"));
     }
-    Ok(values)
+    let main_cols = take_u32(witness.bytes, &mut cursor)? as usize;
+    let aux_cols = take_u32(witness.bytes, &mut cursor)? as usize;
+    let perm_cols = take_u32(witness.bytes, &mut cursor)? as usize;
+    let lookup_cols = take_u32(witness.bytes, &mut cursor)? as usize;
+
+    let total_columns = main_cols
+        .checked_add(aux_cols)
+        .and_then(|v| v.checked_add(perm_cols))
+        .and_then(|v| v.checked_add(lookup_cols))
+        .ok_or(ProverError::MalformedWitness("column_overflow"))?;
+    let expected = HEADER_FIELDS * 4 + total_columns * rows * FIELD_BYTES;
+    if witness.bytes.len() != expected {
+        return Err(ProverError::MalformedWitness("witness_size"));
+    }
+
+    let parse_segment = |count: usize,
+                         data: &[u8],
+                         offset: &mut usize,
+                         label: &'static str|
+     -> Result<Vec<Vec<FieldElement>>, ProverError> {
+        let mut segment = Vec::with_capacity(count);
+        for _ in 0..count {
+            let mut column = Vec::with_capacity(rows);
+            for _ in 0..rows {
+                let end = offset
+                    .checked_add(FIELD_BYTES)
+                    .ok_or(ProverError::MalformedWitness("witness_overflow"))?;
+                let slice = data
+                    .get(*offset..end)
+                    .ok_or(ProverError::MalformedWitness(label))?;
+                let mut buf = [0u8; FIELD_BYTES];
+                buf.copy_from_slice(slice);
+                let value = FieldElement::from_bytes(&buf).map_err(|err| match err {
+                    FieldDeserializeError::FieldDeserializeNonCanonical => {
+                        ProverError::MalformedWitness("non_canonical_field")
+                    }
+                })?;
+                column.push(value);
+                *offset = end;
+            }
+            segment.push(column);
+        }
+        Ok(segment)
+    };
+
+    let main = parse_segment(main_cols, witness.bytes, &mut cursor, "main_columns")?;
+    let auxiliary = parse_segment(aux_cols, witness.bytes, &mut cursor, "aux_columns")?;
+    let permutation = parse_segment(perm_cols, witness.bytes, &mut cursor, "perm_columns")?;
+    let lookup = parse_segment(lookup_cols, witness.bytes, &mut cursor, "lookup_columns")?;
+
+    Ok(WitnessColumns {
+        rows,
+        main,
+        auxiliary,
+        permutation,
+        lookup,
+    })
+}
+
+fn map_witness_to_schema(
+    witness: &WitnessColumns,
+    schema: &TraceSchema,
+    expected_rows: usize,
+) -> Result<Vec<Vec<FieldElement>>, ProverError> {
+    if witness.rows != expected_rows {
+        return Err(ProverError::MalformedWitness("trace_length"));
+    }
+    if !witness.permutation.is_empty() || !witness.lookup.is_empty() {
+        return Err(ProverError::MalformedWitness("unsupported_witness_segment"));
+    }
+
+    let mut main_ix = 0usize;
+    let mut aux_ix = 0usize;
+    let mut columns = Vec::with_capacity(schema.columns.len());
+    for meta in &schema.columns {
+        let source = match meta.role {
+            TraceRole::Main => {
+                let column = witness
+                    .main
+                    .get(main_ix)
+                    .ok_or(ProverError::MalformedWitness("main_columns"))?;
+                main_ix += 1;
+                column
+            }
+            TraceRole::Auxiliary => {
+                let column = witness
+                    .auxiliary
+                    .get(aux_ix)
+                    .ok_or(ProverError::MalformedWitness("aux_columns"))?;
+                aux_ix += 1;
+                column
+            }
+        };
+        if source.len() != witness.rows {
+            return Err(ProverError::MalformedWitness("column_length"));
+        }
+        columns.push(source.clone());
+    }
+
+    if main_ix != witness.main.len() || aux_ix != witness.auxiliary.len() {
+        return Err(ProverError::MalformedWitness("column_count_mismatch"));
+    }
+
+    Ok(columns)
+}
+
+fn map_lfsr_public_inputs(
+    public_inputs: &PublicInputs<'_>,
+) -> Result<LfsrPublicInputs, ProverError> {
+    match public_inputs {
+        PublicInputs::Execution { header, body } => {
+            if body.len() != 8 {
+                return Err(ProverError::MalformedWitness("lfsr_seed_length"));
+            }
+            let mut seed_bytes = [0u8; 8];
+            seed_bytes.copy_from_slice(body);
+            let seed = FieldElement::from_bytes(&seed_bytes).map_err(|err| match err {
+                FieldDeserializeError::FieldDeserializeNonCanonical => {
+                    ProverError::MalformedWitness("lfsr_seed")
+                }
+            })?;
+            if header.trace_width != 1 {
+                return Err(ProverError::MalformedWitness("trace_width"));
+            }
+            LfsrPublicInputs::new(seed, header.trace_length as usize).map_err(ProverError::Air)
+        }
+        _ => Err(ProverError::MalformedWitness("unsupported_public_inputs")),
+    }
+}
+
+fn build_constraint_groups<A: AirContract>(
+    air: &A,
+    trace: &Trace,
+    lde_params: &'static LowDegreeExtensionParameters,
+) -> Result<Vec<ConstraintGroup>, ProverError> {
+    let evaluator = air.new_evaluator()?;
+    let constraints = evaluator.constraints()?;
+    let domain_size = trace
+        .length()
+        .checked_mul(lde_params.blowup_factor)
+        .ok_or(ProverError::MalformedWitness("domain_size"))?;
+
+    if constraints.is_empty() {
+        let zeros = vec![FieldElement::ZERO; domain_size];
+        return Ok(vec![ConstraintGroup::new(
+            "transition",
+            TraceRole::Main,
+            1,
+            vec![zeros],
+        )]);
+    }
+
+    let mut evaluations = Vec::with_capacity(constraints.len());
+    let mut max_degree = 0usize;
+    let trace_length = trace.length();
+    for constraint in constraints {
+        max_degree = max(max_degree, constraint.degree);
+        let mut column = vec![FieldElement::ZERO; domain_size];
+        for (step, value) in column.iter_mut().take(trace_length).enumerate() {
+            let view = trace.row_pair(step)?;
+            *value = evaluate_poly_expr(&constraint.expr, view)?;
+        }
+        evaluations.push(column);
+    }
+
+    Ok(vec![ConstraintGroup::new(
+        "transition",
+        TraceRole::Main,
+        max_degree.max(1),
+        evaluations,
+    )])
+}
+
+fn evaluate_poly_expr(expr: &PolyExpr, row: NextRowView<'_>) -> Result<FieldElement, ProverError> {
+    match expr {
+        PolyExpr::Const(value) => Ok(*value),
+        PolyExpr::Column { column } => {
+            let (current, _) = row.get(*column)?;
+            Ok(current)
+        }
+        PolyExpr::Next { column } => {
+            let (_, next) = row.get(*column)?;
+            Ok(next)
+        }
+        PolyExpr::Neg(inner) => Ok(evaluate_poly_expr(inner, row)?.neg()),
+        PolyExpr::Add(lhs, rhs) => {
+            let left = evaluate_poly_expr(lhs, row)?;
+            let right = evaluate_poly_expr(rhs, row)?;
+            Ok(left.add(&right))
+        }
+        PolyExpr::Sub(lhs, rhs) => {
+            let left = evaluate_poly_expr(lhs, row)?;
+            let right = evaluate_poly_expr(rhs, row)?;
+            Ok(left.sub(&right))
+        }
+        PolyExpr::Mul(lhs, rhs) => {
+            let left = evaluate_poly_expr(lhs, row)?;
+            let right = evaluate_poly_expr(rhs, row)?;
+            Ok(left.mul(&right))
+        }
+    }
 }
 
 fn resolve_air_spec_id(layout: &ProofKindLayout<AirSpecId>, kind: ConfigProofKind) -> AirSpecId {
@@ -339,19 +565,6 @@ fn map_security_level(profile: &ProfileConfig) -> FriSecurityLevel {
     }
 }
 
-fn build_trace_schema(
-    values: &[FieldElement],
-    lde_factor: usize,
-) -> Result<TraceSchema, ProverError> {
-    let mut column = TraceColMeta::new("witness", TraceRole::Main);
-    column = column.with_boundary(crate::air::types::BoundaryAt::First);
-    column = column.with_boundary(crate::air::types::BoundaryAt::Last);
-    let lde_order = LdeOrder::new(lde_factor).map_err(ProverError::Air)?;
-    let degree = values.len().saturating_sub(1).max(1);
-    let degree_bounds = DegreeBounds::new(degree, degree).map_err(ProverError::Air)?;
-    TraceSchema::new(vec![column], lde_order, degree_bounds).map_err(ProverError::Air)
-}
-
 fn map_lde_profile(factor: usize) -> &'static LowDegreeExtensionParameters {
     match factor {
         16 => &PROFILE_HISEC_X16,
@@ -373,11 +586,16 @@ fn commit_evaluations(
 
 fn prepare_air_transcript(
     params: &StarkParams,
+    public_digest: &[u8; 32],
     trace_root: &[u8; 32],
 ) -> Result<AirTranscript, ProverError> {
     let mut transcript = AirTranscript::new(params, TranscriptContext::StarkMain);
+    let mut digest_bytes = [0u8; 8];
+    digest_bytes.copy_from_slice(&public_digest[..8]);
+    let digest_felt = FieldElement::from_bytes(&digest_bytes)
+        .map_err(|_| ProverError::MalformedWitness("transcript_public_digest"))?;
     transcript
-        .absorb_field_elements(TranscriptLabel::PublicInputsDigest, &[FieldElement::ZERO])
+        .absorb_field_elements(TranscriptLabel::PublicInputsDigest, &[digest_felt])
         .map_err(|_| ProverError::MalformedWitness("transcript_public"))?;
     transcript
         .absorb_digest(
@@ -527,112 +745,6 @@ fn digest_to_array(bytes: &[u8]) -> [u8; 32] {
     let len = bytes.len().min(32);
     out[..len].copy_from_slice(&bytes[..len]);
     out
-}
-
-struct DummyAir;
-
-impl AirContract for DummyAir {
-    type TraceBuilder = NoopTraceBuilder;
-    type BoundaryBuilder = NoopBoundaryBuilder;
-    type Evaluator = NoopEvaluator;
-    type PublicInputsCodec = NoopPublicInputsCodec;
-
-    fn trace_schema(&self) -> Result<TraceSchema, AirLayerError> {
-        Err(AirLayerError::LayoutViolation(
-            "dummy air schema unavailable",
-        ))
-    }
-
-    fn public_spec(&self) -> Result<crate::air::types::PublicSpec, AirLayerError> {
-        Err(AirLayerError::LayoutViolation(
-            "dummy air public spec unavailable",
-        ))
-    }
-
-    fn new_trace_builder(&self) -> Result<Self::TraceBuilder, AirLayerError> {
-        Ok(NoopTraceBuilder)
-    }
-
-    fn new_boundary_builder(&self) -> Result<Self::BoundaryBuilder, AirLayerError> {
-        Ok(NoopBoundaryBuilder)
-    }
-
-    fn new_evaluator(&self) -> Result<Self::Evaluator, AirLayerError> {
-        Ok(NoopEvaluator)
-    }
-
-    fn public_inputs_codec(&self) -> Result<Self::PublicInputsCodec, AirLayerError> {
-        Ok(NoopPublicInputsCodec)
-    }
-}
-
-struct NoopTraceBuilder;
-
-impl AirTraceBuilder for NoopTraceBuilder {
-    fn add_column(
-        &mut self,
-        _role: TraceRole,
-        _values: Vec<FieldElement>,
-    ) -> Result<crate::air::types::ColIx, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy trace builder"))
-    }
-
-    fn build(
-        self,
-        _degree_bounds: DegreeBounds,
-    ) -> Result<crate::air::types::TraceData, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy trace builder"))
-    }
-}
-
-struct NoopBoundaryBuilder;
-
-impl AirBoundaryBuilder for NoopBoundaryBuilder {
-    fn set(
-        &mut self,
-        _column: crate::air::types::ColIx,
-        _at: crate::air::types::BoundaryAt,
-        _value: FieldElement,
-    ) -> Result<(), AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy boundary builder"))
-    }
-
-    fn build(self) -> Result<Vec<AirBoundaryConstraint>, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy boundary builder"))
-    }
-}
-
-struct NoopEvaluator;
-
-impl AirEvaluator for NoopEvaluator {
-    fn enforce_zero(&mut self, _expr: crate::air::traits::PolyExpr) -> Result<(), AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy evaluator"))
-    }
-
-    fn constraints(&self) -> Result<Vec<crate::air::traits::Constraint>, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy evaluator"))
-    }
-}
-
-#[derive(Clone, Copy)]
-struct NoopPublicInputsCodec;
-
-impl AirPublicInputsCodec for NoopPublicInputsCodec {
-    type Value = ();
-
-    fn encode(
-        &self,
-        _value: &Self::Value,
-    ) -> Result<Vec<crate::utils::serialization::FieldElementBytes>, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy codec"))
-    }
-
-    fn decode(
-        &self,
-        _bytes: &[crate::utils::serialization::FieldElementBytes],
-    ) -> Result<Self::Value, AirLayerError> {
-        Err(AirLayerError::LayoutViolation("dummy codec"))
-    }
 }
 
 /// Helper converting prover errors into verification failures when the prover
