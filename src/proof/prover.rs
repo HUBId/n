@@ -707,33 +707,57 @@ fn convert_tree_proof(proof: &MerkleProof, index: u32) -> MerkleAuthenticationPa
 
 fn derive_ood_openings(
     points: &[[u8; 32]],
-    _alpha_vector: &[[u8; 32]],
+    alpha_vector: &[[u8; 32]],
     trace_values: &[FieldElement],
     composition_values: &[FieldElement],
 ) -> Vec<OutOfDomainOpening> {
-    if composition_values.is_empty() || trace_values.is_empty() {
+    if composition_values.is_empty() || trace_values.is_empty() || points.is_empty() {
         return Vec::new();
     }
-    let trace_len = trace_values.len();
-    let comp_len = composition_values.len();
+
+    let alphas: Vec<FieldElement> = alpha_vector
+        .iter()
+        .map(FieldElement::from_transcript_bytes)
+        .collect();
+
     points
         .iter()
-        .map(|point| {
-            let comp_index = (point[0] as usize) % comp_len;
-            let trace_index = comp_index % trace_len;
-            let core_value = field_to_bytes(trace_values[trace_index]);
-            let comp_value = field_to_bytes(composition_values[comp_index]);
+        .map(|point_bytes| {
+            let point = FieldElement::from_transcript_bytes(point_bytes);
+            let core_evaluation = evaluate_ood_samples(trace_values, &alphas, point);
+            let composition_evaluation = evaluate_ood_samples(composition_values, &alphas, point);
+
             OutOfDomainOpening {
-                point: *point,
-                core_values: vec![core_value],
+                point: *point_bytes,
+                core_values: vec![field_to_fixed_bytes(core_evaluation)],
                 aux_values: Vec::new(),
-                composition_value: comp_value,
+                composition_value: field_to_fixed_bytes(composition_evaluation),
             }
         })
         .collect()
 }
 
-fn field_to_bytes(value: FieldElement) -> [u8; 32] {
+fn evaluate_ood_samples(
+    samples: &[FieldElement],
+    alphas: &[FieldElement],
+    point: FieldElement,
+) -> FieldElement {
+    if samples.is_empty() || alphas.is_empty() {
+        return FieldElement::ZERO;
+    }
+
+    let mut acc = FieldElement::ZERO;
+    let mut power = FieldElement::ONE;
+    for (sample, alpha) in samples.iter().zip(alphas.iter().cycle()) {
+        let weighted = sample.mul(alpha);
+        let term = weighted.mul(&power);
+        acc = acc.add(&term);
+        power = power.mul(&point);
+    }
+    acc
+}
+
+fn field_to_fixed_bytes(value: FieldElement) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     let le = value.to_bytes();
     bytes[..le.len()].copy_from_slice(&le);
