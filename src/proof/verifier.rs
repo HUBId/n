@@ -253,17 +253,6 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    let payload = proof.serialize_payload().map_err(VerifyError::from)?;
-    if proof.has_telemetry {
-        let expected_body_length = payload.len() as u32 + 32;
-        if proof.telemetry.body_length != expected_body_length {
-            return Err(VerifyError::BodyLengthMismatch {
-                declared: proof.telemetry.body_length,
-                actual: expected_body_length,
-            });
-        }
-    }
-
     if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
@@ -323,8 +312,10 @@ fn precheck_body(
     transcript
         .absorb_public_inputs(&public_inputs_bytes)
         .map_err(|_| VerifyError::TranscriptOrder)?;
+    let trace_commit = proof.trace_commit.bytes;
+    let composition_commit = proof.composition_commit.as_ref().map(|commit| commit.bytes);
     transcript
-        .absorb_commitment_roots(proof.merkle.core_root, Some(proof.merkle.aux_root))
+        .absorb_commitment_roots(trace_commit, composition_commit)
         .map_err(|_| VerifyError::TranscriptOrder)?;
     transcript
         .absorb_air_spec_id(air_spec_id)
@@ -369,7 +360,10 @@ fn precheck_body(
         proof.fri_proof.initial_domain_size,
     )?;
 
-    validate_trace_indices(&proof.openings.trace.indices, &expected_indices)?;
+    validate_query_indices(&proof.openings.trace.indices, &expected_indices)?;
+    if let Some(composition_openings) = proof.openings.composition.as_ref() {
+        validate_query_indices(&composition_openings.indices, &expected_indices)?;
+    }
 
     let trace_values = verify_trace_commitment(
         &stark_params,
@@ -422,6 +416,15 @@ fn precheck_body(
         });
     }
     if proof.has_telemetry {
+        let payload = proof.serialize_payload().map_err(VerifyError::from)?;
+        let expected_body_length = payload.len() as u32 + 32;
+        if proof.telemetry.body_length != expected_body_length {
+            return Err(VerifyError::BodyLengthMismatch {
+                declared: proof.telemetry.body_length,
+                actual: expected_body_length,
+            });
+        }
+
         if proof.telemetry.fri_parameters.fold != 2
             || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
         {
@@ -550,7 +553,7 @@ fn derive_trace_query_indices(
     Ok(indices)
 }
 
-fn validate_trace_indices(provided: &[u32], expected: &[u32]) -> Result<(), VerifyError> {
+fn validate_query_indices(provided: &[u32], expected: &[u32]) -> Result<(), VerifyError> {
     if provided.is_empty() {
         return Err(VerifyError::EmptyOpenings);
     }
