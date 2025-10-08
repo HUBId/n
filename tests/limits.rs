@@ -6,7 +6,7 @@ use rpp_stark::config::{
 };
 use rpp_stark::field::prime_field::CanonicalSerialize;
 use rpp_stark::field::FieldElement;
-use rpp_stark::hash::PseudoBlake3Xof;
+use rpp_stark::hash::{pseudo_blake3, FiatShamirChallengeRules, PseudoBlake3Xof};
 use rpp_stark::merkle::{
     CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleProof,
     MerkleTree, ProofNode,
@@ -256,33 +256,33 @@ fn build_envelope(
     let core_root = digest_to_array(core_digest.as_bytes());
     let aux_root = digest_to_array(aux_digest.as_bytes());
 
-    let (ood_openings, derived_indices) = build_ood_openings(
+    let (ood_openings, fri_seed) = build_ood_openings(
         context,
         proof_kind,
         &public_inputs,
         &core_root,
         &aux_root,
-        security_level,
         &fri_layer_roots,
+    );
+    let final_polynomial_digest = hash_final_layer(&final_polynomial);
+    let fri_query_seed =
+        derive_fri_query_seed(fri_seed, &fri_layer_roots, &final_polynomial_digest);
+    let trace_indices = derive_query_indices(
+        fri_query_seed,
+        security_level.query_budget(),
         initial_domain_size,
     );
-    let queries = build_queries(layer_count, &derived_indices);
+    let queries = build_queries(layer_count, &trace_indices);
     let fri_proof = FriProof::new(
         security_level,
         initial_domain_size,
         fri_layer_roots.clone(),
         fold_challenges,
         final_polynomial,
-        [0x33; 32],
+        final_polynomial_digest,
         queries,
     )
     .expect("synthetic fri proof");
-
-    let trace_indices: Vec<u32> = fri_proof
-        .queries
-        .iter()
-        .map(|query| query.position as u32)
-        .collect();
 
     let (trace_leaf_bytes, trace_paths) =
         build_opening_artifacts(&params, &core_aux, &trace_leaves, &trace_indices);
@@ -379,10 +379,8 @@ fn build_ood_openings(
     public_inputs: &PublicInputs<'_>,
     core_root: &[u8; 32],
     aux_root: &[u8; 32],
-    security_level: FriSecurityLevel,
     layer_roots: &[[u8; 32]],
-    initial_domain_size: usize,
-) -> (Vec<OutOfDomainOpening>, Vec<u32>) {
+) -> (Vec<OutOfDomainOpening>, [u8; 32]) {
     let air_spec_id = context.profile.air_spec_ids.tx.clone();
     let mut transcript = Transcript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
@@ -427,20 +425,14 @@ fn build_ood_openings(
         })
         .collect();
 
-    let _ = challenges.draw_fri_seed().expect("fri seed");
+    let fri_seed = challenges.draw_fri_seed().expect("fri seed");
     for (layer_index, _) in layer_roots.iter().enumerate() {
         challenges
             .draw_fri_eta(layer_index)
             .expect("fri eta challenge");
     }
-    let query_seed = challenges.draw_query_seed().expect("query seed");
-    let indices = derive_query_indices(
-        query_seed,
-        security_level.query_budget(),
-        initial_domain_size,
-    );
 
-    (ood_values, indices)
+    (ood_values, fri_seed)
 }
 
 fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec<u32> {
@@ -464,6 +456,51 @@ fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec
         .into_iter()
         .map(|idx| idx.try_into().unwrap_or(u32::MAX))
         .collect()
+}
+
+fn derive_fri_query_seed(
+    fri_seed: [u8; 32],
+    layer_roots: &[[u8; 32]],
+    final_polynomial_digest: &[u8; 32],
+) -> [u8; 32] {
+    let mut state = fri_seed;
+
+    for (layer_index, root) in layer_roots.iter().enumerate() {
+        let mut payload = Vec::with_capacity(state.len() + 8 + root.len());
+        payload.extend_from_slice(&state);
+        payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
+        payload.extend_from_slice(root);
+        state = pseudo_blake3(&payload);
+
+        let label = format!("{}ETA-{layer_index}", FiatShamirChallengeRules::SALT_PREFIX);
+        let mut eta_payload = Vec::with_capacity(state.len() + label.len());
+        eta_payload.extend_from_slice(&state);
+        eta_payload.extend_from_slice(label.as_bytes());
+        let challenge = pseudo_blake3(&eta_payload);
+        state = pseudo_blake3(&challenge);
+    }
+
+    let mut final_payload =
+        Vec::with_capacity(state.len() + b"RPP-FS/FINAL".len() + final_polynomial_digest.len());
+    final_payload.extend_from_slice(&state);
+    final_payload.extend_from_slice(b"RPP-FS/FINAL");
+    final_payload.extend_from_slice(final_polynomial_digest);
+    state = pseudo_blake3(&final_payload);
+
+    let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
+    query_payload.extend_from_slice(&state);
+    query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
+    pseudo_blake3(&query_payload)
+}
+
+fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
+    let mut payload = Vec::with_capacity(4 + values.len() * 8);
+    payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
+    for value in values {
+        let bytes = value.to_bytes();
+        payload.extend_from_slice(&bytes);
+    }
+    pseudo_blake3(&payload)
 }
 
 fn build_opening_artifacts(

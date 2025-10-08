@@ -383,9 +383,7 @@ fn verification_rejects_trace_indices_not_sorted() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::TraceCommit
-        })
+        VerificationVerdict::Reject(VerifyError::IndicesNotSorted)
     ));
 }
 
@@ -424,9 +422,7 @@ fn verification_rejects_trace_indices_duplicate() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::TraceCommit
-        })
+        VerificationVerdict::Reject(VerifyError::IndicesDuplicate)
     ));
 }
 
@@ -464,9 +460,7 @@ fn verification_rejects_trace_indices_mismatch() {
 
     assert!(matches!(
         verdict,
-        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::TraceCommit
-        })
+        VerificationVerdict::Reject(VerifyError::IndicesMismatch)
     ));
 }
 
