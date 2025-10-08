@@ -179,6 +179,9 @@ fn map_prover_error(error: prover::ProverError) -> StarkError {
         ProverError::Air(_) => StarkError::SubsystemFailure("prover_air_error"),
         ProverError::Merkle(_) => StarkError::SubsystemFailure("prover_merkle_error"),
         ProverError::ProofTooLarge { .. } => StarkError::InvalidInput("proof_too_large"),
+        ProverError::Serialization(kind) => {
+            map_serialization_error(SerError::invalid_value(kind, "prover_serialization"))
+        }
     }
 }
 

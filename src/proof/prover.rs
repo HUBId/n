@@ -42,6 +42,7 @@ use crate::proof::types::{
     MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings,
     PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
+use crate::ser::{SerError, SerKind};
 use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 use core::cmp::{max, min};
@@ -70,6 +71,8 @@ pub enum ProverError {
     Merkle(MerkleError),
     /// The resulting proof exceeded the configured size limit.
     ProofTooLarge { actual: usize, limit: u32 },
+    /// Serialization failure while assembling the proof envelope.
+    Serialization(SerKind),
 }
 
 impl From<crate::proof::transcript::TranscriptError> for ProverError {
@@ -96,6 +99,12 @@ impl From<MerkleError> for ProverError {
     }
 }
 
+impl From<SerError> for ProverError {
+    fn from(err: SerError) -> Self {
+        ProverError::Serialization(err.kind())
+    }
+}
+
 /// Builds a [`Proof`] from public inputs and witness data.
 pub fn build_envelope(
     public_inputs: &PublicInputs<'_>,
@@ -116,7 +125,7 @@ pub fn build_envelope(
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, proof_kind);
     let security_level = map_security_level(&context.profile);
 
-    let public_inputs_bytes = serialize_public_inputs(public_inputs);
+    let public_inputs_bytes = serialize_public_inputs(public_inputs).map_err(ProverError::from)?;
     let public_digest = compute_public_digest(&public_inputs_bytes);
 
     let lfsr_inputs = map_lfsr_public_inputs(public_inputs)?;
@@ -282,8 +291,10 @@ pub fn build_envelope(
         telemetry,
     };
 
-    let body_payload = proof.serialize_payload();
-    let header_bytes = proof.serialize_header(&body_payload);
+    let body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+    let header_bytes = proof
+        .serialize_header(&body_payload)
+        .map_err(ProverError::from)?;
     proof.telemetry.body_length = (body_payload.len() + 32) as u32;
     proof.telemetry.header_length = header_bytes.len() as u32;
 
@@ -818,6 +829,7 @@ impl From<ProverError> for VerifyError {
                 section: MerkleSection::FriPath,
             },
             ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
+            ProverError::Serialization(kind) => VerifyError::Serialization(kind),
         }
     }
 }

@@ -61,7 +61,8 @@ fn sample_proof() -> Proof {
         header: header.clone(),
         body: &body_bytes,
     };
-    let public_input_bytes = rpp_stark::proof::ser::serialize_public_inputs(&public_inputs);
+    let public_input_bytes = rpp_stark::proof::ser::serialize_public_inputs(&public_inputs)
+        .expect("public inputs serialization");
     let public_digest = rpp_stark::proof::ser::compute_public_digest(&public_input_bytes);
 
     let merkle = MerkleProofBundle {
@@ -133,8 +134,9 @@ fn sample_proof() -> Proof {
         },
     };
 
-    let payload = serialize_proof_payload(&proof);
-    let header_bytes = serialize_proof_header(&proof, &payload);
+    let payload = serialize_proof_payload(&proof).expect("proof payload serialization");
+    let header_bytes =
+        serialize_proof_header(&proof, &payload).expect("proof header serialization");
     let integrity = compute_integrity_digest(&header_bytes, &payload);
     proof.telemetry.header_length = header_bytes.len() as u32;
     proof.telemetry.body_length = (payload.len() + 32) as u32;
