@@ -650,6 +650,14 @@ profiles:
 | `PROFILE_X8` | Goldilocks | Poseidon2 (set 0) | 8 | 30 | Binary | 96 |
 | `PROFILE_HISEC_X16` | BN254 | Rescue (set 1) | 16 | 48 | Quaternary | 128 |
 
+In addition to the builder presets, the proof system exposes deterministic
+`ProfileConfig` descriptors.  The default rollup pipeline now ships with both a
+binary and a quaternary Merkle configuration: `PROFILE_STANDARD_CONFIG`
+(`COMMON_IDENTIFIERS`) and `PROFILE_STANDARD_ARITY4_CONFIG`
+(`COMMON_IDENTIFIERS_ARITY4`).  Switching between them adjusts the Merkle
+branching factor without affecting the transcript, hashing backend or AIR
+parameters.
+
 ### Canonical byte layout
 
 The binary format is free of padding and all integers are little-endian:

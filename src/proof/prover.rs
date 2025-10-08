@@ -689,13 +689,29 @@ fn convert_tree_proof(proof: &MerkleProof, index: u32) -> MerkleAuthenticationPa
             }
             ProofNode::Arity4(digests) => {
                 let position = (current % arity) as u8;
-                let sibling_index = (position as usize)
-                    .saturating_sub(1)
-                    .min(digests.len().saturating_sub(1));
-                nodes.push(MerklePathNode {
-                    index: position,
-                    sibling: digest_to_array(digests[sibling_index].as_bytes()),
-                });
+                let branching = proof.arity.as_usize() as u8;
+                let missing_positions: Vec<u8> =
+                    (0..branching).filter(|pos| *pos != position).collect();
+                let mut digest_iter = digests.iter();
+
+                if let Some(first_digest) = digest_iter.next() {
+                    nodes.push(MerklePathNode {
+                        index: position,
+                        sibling: digest_to_array(first_digest.as_bytes()),
+                    });
+                } else {
+                    nodes.push(MerklePathNode {
+                        index: position,
+                        sibling: [0u8; 32],
+                    });
+                }
+
+                for (pos, digest) in missing_positions.iter().skip(1).zip(digest_iter) {
+                    nodes.push(MerklePathNode {
+                        index: *pos,
+                        sibling: digest_to_array(digest.as_bytes()),
+                    });
+                }
             }
         }
         if arity > 0 {

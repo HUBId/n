@@ -46,6 +46,9 @@ pub const PROFILE_HISEC: ProfileId = ProfileId(2);
 /// queries. Integrators **must** benchmark before enabling it.
 pub const PROFILE_THROUGHPUT: ProfileId = ProfileId(3);
 
+/// Standard proving profile using quaternary Merkle trees.
+pub const PROFILE_STD_ARITY4: ProfileId = ProfileId(4);
+
 /// Identifier describing the base field of the AIR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldId(pub u8);
@@ -492,6 +495,12 @@ pub const MERKLE_SCHEME_ID_BLAKE3_2ARY_V1: MerkleSchemeId = MerkleSchemeId(diges
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 ]));
 
+/// Canonical Merkle scheme identifier (`BLAKE3_4ARY_V1`).
+pub const MERKLE_SCHEME_ID_BLAKE3_4ARY_V1: MerkleSchemeId = MerkleSchemeId(digest([
+    b'B', b'L', b'A', b'K', b'E', b'3', b'_', b'4', b'A', b'R', b'Y', b'_', b'V', b'1', 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+]));
+
 /// Canonical transcript identifier (`RPP_FS_V1`).
 pub const TRANSCRIPT_VERSION_ID_RPP_FS_V1: TranscriptVersionId = TranscriptVersionId(digest([
     b'R', b'P', b'P', b'_', b'F', b'S', b'_', b'V', b'1', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -560,6 +569,14 @@ pub const COMMON_IDENTIFIERS: CommonIdentifiers = CommonIdentifiers {
     fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
 };
 
+/// Common identifiers variant using quaternary Merkle commitments.
+pub const COMMON_IDENTIFIERS_ARITY4: CommonIdentifiers = CommonIdentifiers {
+    field_id: FIELD_ID_GOLDILOCKS_64,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
+};
+
 /// Standard profile configuration (`PROFILE_STD`).
 pub const PROFILE_STANDARD_CONFIG: ProfileConfig = ProfileConfig {
     id: PROFILE_STD,
@@ -574,6 +591,52 @@ pub const PROFILE_STANDARD_CONFIG: ProfileConfig = ProfileConfig {
     },
     poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
     merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
+    transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
+    fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
+    batch_verification_enabled: true,
+    max_threads: 8,
+    limits: ResourceLimits {
+        max_proof_size_bytes: 1_500_000,
+        max_layers: 16,
+        max_queries: 96,
+        per_proof_max_trace_width: ProofKindLayout {
+            tx: 64,
+            state: 128,
+            pruning: 96,
+            uptime: 48,
+            consensus: 96,
+            identity: 64,
+            aggregation: 160,
+            vrf: 48,
+        },
+        per_proof_max_trace_steps: ProofKindLayout {
+            tx: 1_048_576,
+            state: 4_194_304,
+            pruning: 2_097_152,
+            uptime: 524_288,
+            consensus: 1_048_576,
+            identity: 262_144,
+            aggregation: 1_048_576,
+            vrf: 131_072,
+        },
+    },
+    air_spec_ids: AIR_SPEC_IDS_V1,
+};
+
+/// Standard profile using the quaternary Merkle commitment scheme.
+pub const PROFILE_STANDARD_ARITY4_CONFIG: ProfileConfig = ProfileConfig {
+    id: PROFILE_STD_ARITY4,
+    name: "standard-arity4",
+    security_goal: "80-bit query soundness with quaternary Merkle commitments",
+    lde_factor: 8,
+    fri_queries: 64,
+    fri_depth_range: FriDepthRange { min: 8, max: 12 },
+    poseidon_rounds: PoseidonRoundConfiguration {
+        full_rounds: 8,
+        partial_rounds: 56,
+    },
+    poseidon_param_id: POSEIDON_PARAM_ID_STANDARD,
+    merkle_scheme_id: MERKLE_SCHEME_ID_BLAKE3_4ARY_V1,
     transcript_version_id: TRANSCRIPT_VERSION_ID_RPP_FS_V1,
     fri_plan_id: FRI_PLAN_ID_FOLD2_V1,
     batch_verification_enabled: true,
