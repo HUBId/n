@@ -11,7 +11,7 @@ use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::proof::ser::serialize_proof;
-use rpp_stark::proof::types::{MerkleSection, Proof, VerifyError, PROOF_VERSION};
+use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, Proof, VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
@@ -178,7 +178,24 @@ fn decode_proof(bytes: &ProofBytes) -> Proof {
     Proof::from_bytes(bytes.as_slice()).expect("decode proof")
 }
 
-fn reencode_proof(proof: &Proof) -> ProofBytes {
+fn reencode_proof(proof: &mut Proof) -> ProofBytes {
+    if proof.has_telemetry {
+        let mut canonical = proof.clone();
+        canonical.telemetry.header_length = 0;
+        canonical.telemetry.body_length = 0;
+        canonical.telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+        let payload = canonical
+            .serialize_payload()
+            .expect("serialize canonical payload");
+        let header = canonical
+            .serialize_header(&payload)
+            .expect("serialize canonical header");
+        let integrity = rpp_stark::proof::ser::compute_integrity_digest(&header, &payload);
+        proof.telemetry.header_length = header.len() as u32;
+        proof.telemetry.body_length = (payload.len() + 32) as u32;
+        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    }
+
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
 }
 
@@ -239,7 +256,7 @@ fn verification_rejects_tampered_ood_core_value() {
     let value = ood.core_values.first_mut().expect("core value present");
     value[0] ^= 0x1;
 
-    let tampered_bytes = reencode_proof(&proof);
+    let tampered_bytes = reencode_proof(&mut proof);
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);
     let verdict = verify_proof(
         ProofKind::Execution,
@@ -279,7 +296,7 @@ fn verification_rejects_tampered_ood_composition_value() {
         .expect("ood payload present");
     ood.composition_value[0] ^= 0x1;
 
-    let tampered_bytes = reencode_proof(&proof);
+    let tampered_bytes = reencode_proof(&mut proof);
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);
     let verdict = verify_proof(
         ProofKind::Execution,
@@ -431,6 +448,118 @@ fn verification_rejects_tampered_composition_leaf() {
     match verdict {
         VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed { section }) => {
             assert_eq!(section, MerkleSection::CompositionCommit);
+        }
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_tampered_fri_fold_challenge() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    assert!(
+        !proof.fri_proof.fold_challenges.is_empty(),
+        "expected fold challenges"
+    );
+    proof.fri_proof.final_polynomial[0] = proof
+        .fri_proof
+        .final_polynomial[0]
+        .add(&FieldElement::from(1u64));
+    let mutated_bytes = reencode_proof(&mut proof);
+
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::FriVerifyFailed { issue }) => {
+            assert_eq!(issue, FriVerifyIssue::LayerMismatch);
+        }
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_composition_leaf_misalignment_with_fri() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    let composition_index = {
+        let composition = proof
+            .openings
+            .composition
+            .as_ref()
+            .expect("composition openings present");
+        assert!(
+            !composition.indices.is_empty(),
+            "expected composition indices"
+        );
+        composition.indices[0]
+    };
+    let target_index = composition_index as usize;
+    let query_position = proof
+        .fri_proof
+        .queries
+        .iter()
+        .position(|query| query.position == target_index)
+        .expect("matching FRI query");
+    let query = proof
+        .fri_proof
+        .queries
+        .get_mut(query_position)
+        .expect("query index");
+    let first_layer = query.layers.first_mut().expect("fri first layer");
+    first_layer.value = first_layer.value.add(&FieldElement::from(1u64));
+    let mutated_bytes = reencode_proof(&mut proof);
+
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+
+    let expected_reason = format!(
+        "fri_value_mismatch:pos={}:index={}",
+        query_position, composition_index
+    );
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::CompositionInconsistent { reason }) => {
+            assert_eq!(reason, expected_reason);
         }
         other => panic!("unexpected verdict: {other:?}"),
     }

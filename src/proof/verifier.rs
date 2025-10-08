@@ -13,7 +13,7 @@ use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
 use crate::fri::pseudo_blake3;
 use crate::fri::types::{FriError, FriSecurityLevel};
-use crate::fri::{FriVerifier, PseudoBlake3Xof};
+use crate::fri::{field_to_bytes, FriVerifier, PseudoBlake3Xof};
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::merkle::traits::MerkleHasher;
 use crate::merkle::verify_proof as verify_merkle_proof;
@@ -388,6 +388,7 @@ fn precheck_body(
 
         verify_composition_alignment(
             &composition_values,
+            &composition_openings.leaves,
             &proof.openings.trace.indices,
             &proof.fri_proof,
         )?;
@@ -808,29 +809,70 @@ fn convert_path(
 
 fn verify_composition_alignment(
     composition_values: &[FieldElement],
+    composition_leaves: &[Vec<u8>],
     indices: &[u32],
     fri_proof: &crate::fri::FriProof,
 ) -> Result<(), VerifyError> {
-    if composition_values.len() != fri_proof.queries.len()
-        || indices.len() != fri_proof.queries.len()
+    let expected = indices.len();
+    if composition_values.len() != expected
+        || composition_leaves.len() != expected
+        || fri_proof.queries.len() != expected
     {
-        return Err(VerifyError::CompositionLeafMismatch);
+        return Err(VerifyError::CompositionInconsistent {
+            reason: format!(
+                "fri_query_count_mismatch:indices={},values={},leaves={},fri={}",
+                expected,
+                composition_values.len(),
+                composition_leaves.len(),
+                fri_proof.queries.len()
+            ),
+        });
     }
 
-    for ((value, &index), query) in composition_values
+    for (position, (((value, leaf_bytes), &index), query)) in composition_values
         .iter()
+        .zip(composition_leaves.iter())
         .zip(indices.iter())
         .zip(fri_proof.queries.iter())
+        .enumerate()
     {
         if query.position != index as usize {
-            return Err(VerifyError::CompositionLeafMismatch);
+            return Err(VerifyError::CompositionInconsistent {
+                reason: format!(
+                    "fri_index_mismatch:pos={position}:expected={},actual={}",
+                    index, query.position
+                ),
+            });
         }
-        let first_layer = query
-            .layers
-            .first()
-            .ok_or(VerifyError::CompositionLeafMismatch)?;
+        let first_layer =
+            query
+                .layers
+                .first()
+                .ok_or_else(|| VerifyError::CompositionInconsistent {
+                    reason: format!("fri_first_layer_missing:pos={position}:index={index}"),
+                })?;
         if *value != first_layer.value {
-            return Err(VerifyError::CompositionLeafMismatch);
+            return Err(VerifyError::CompositionInconsistent {
+                reason: format!("fri_value_mismatch:pos={position}:index={index}"),
+            });
+        }
+        let fri_bytes = field_to_bytes(&first_layer.value).map_err(|_| {
+            VerifyError::CompositionInconsistent {
+                reason: format!("fri_value_encoding:pos={position}:index={index}"),
+            }
+        })?;
+        if leaf_bytes.len() < fri_bytes.len() {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: format!(
+                    "composition_leaf_truncated:pos={position}:index={index}:leaf_bytes={}",
+                    leaf_bytes.len()
+                ),
+            });
+        }
+        if &leaf_bytes[..fri_bytes.len()] != fri_bytes {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: format!("composition_leaf_bytes_mismatch:pos={position}:index={index}"),
+            });
         }
     }
 
