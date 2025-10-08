@@ -491,12 +491,13 @@ fn build_constraint_groups<A: AirContract>(
 
     let mut evaluations = Vec::with_capacity(constraints.len());
     let mut max_degree = 0usize;
+    let trace_length = trace.length();
     for constraint in constraints {
         max_degree = max(max_degree, constraint.degree);
         let mut column = vec![FieldElement::ZERO; domain_size];
-        for step in 0..trace.length() {
+        for (step, value) in column.iter_mut().take(trace_length).enumerate() {
             let view = trace.row_pair(step)?;
-            column[step] = evaluate_poly_expr(&constraint.expr, view)?;
+            *value = evaluate_poly_expr(&constraint.expr, view)?;
         }
         evaluations.push(column);
     }
