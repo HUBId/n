@@ -1,3 +1,5 @@
+use std::convert::TryInto;
+
 use rpp_stark::config::{
     build_proof_system_config, build_prover_context, build_verifier_context, compute_param_digest,
     ChunkingPolicy, CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig,
@@ -178,6 +180,38 @@ fn decode_proof(bytes: &ProofBytes) -> Proof {
 
 fn reencode_proof(proof: &Proof) -> ProofBytes {
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
+}
+
+fn mutate_header_trace_root(bytes: &ProofBytes) -> ProofBytes {
+    let mut mutated = bytes.as_slice().to_vec();
+    let offset = header_trace_root_offset(&mutated);
+    mutated[offset] ^= 0x1;
+    ProofBytes::new(mutated)
+}
+
+fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
+    let mut mutated = bytes.as_slice().to_vec();
+    let trace_offset = header_trace_root_offset(&mutated);
+    let mut cursor = trace_offset + 32;
+    let flag = mutated[cursor];
+    assert_eq!(flag, 1, "expected composition commit to be present");
+    cursor += 1;
+    mutated[cursor] ^= 0x1;
+    ProofBytes::new(mutated)
+}
+
+fn header_trace_root_offset(bytes: &[u8]) -> usize {
+    let mut cursor = 0usize;
+    cursor += 2; // version
+    cursor += 1; // kind
+    cursor += 32; // param digest
+    cursor += 32; // air spec id
+    let public_len =
+        u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().expect("len")) as usize;
+    cursor += 4;
+    cursor += public_len; // public inputs
+    cursor += 32; // public digest
+    cursor
 }
 
 #[test]
@@ -398,6 +432,86 @@ fn verification_rejects_tampered_composition_leaf() {
         VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed { section }) => {
             assert_eq!(section, MerkleSection::CompositionCommit);
         }
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_tampered_header_trace_root() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let tampered_bytes = mutate_header_trace_root(&proof_bytes);
+    let decode_err =
+        rpp_stark::Proof::from_bytes(tampered_bytes.as_slice()).expect_err("decode must fail");
+    assert!(matches!(
+        decode_err,
+        VerifyError::RootMismatch {
+            section: MerkleSection::TraceCommit
+        }
+    ));
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &tampered_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    );
+
+    match verdict {
+        Err(StarkError::InvalidInput(reason)) => assert_eq!(reason, "root_mismatch"),
+        other => panic!("unexpected verdict: {other:?}"),
+    }
+}
+
+#[test]
+fn verification_rejects_tampered_header_composition_root() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let tampered_bytes = mutate_header_composition_root(&proof_bytes);
+    let decode_err =
+        rpp_stark::Proof::from_bytes(tampered_bytes.as_slice()).expect_err("decode must fail");
+    assert!(matches!(
+        decode_err,
+        VerifyError::RootMismatch {
+            section: MerkleSection::CompositionCommit
+        }
+    ));
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &tampered_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    );
+
+    match verdict {
+        Err(StarkError::InvalidInput(reason)) => assert_eq!(reason, "root_mismatch"),
         other => panic!("unexpected verdict: {other:?}"),
     }
 }

@@ -253,12 +253,6 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
-        return Err(VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::FriRoots,
-        });
-    }
-
     if proof.trace_commit.bytes != proof.merkle.core_root {
         return Err(VerifyError::RootMismatch {
             section: MerkleSection::TraceCommit,
@@ -293,6 +287,12 @@ fn precheck_body(
                 });
             }
         }
+    }
+
+    if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
+        return Err(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriRoots,
+        });
     }
 
     stages.merkle_ok = true;
@@ -367,7 +367,7 @@ fn precheck_body(
 
     let trace_values = verify_trace_commitment(
         &stark_params,
-        &proof.merkle.core_root,
+        &proof.trace_commit.bytes,
         &proof.openings.trace,
     )?;
 
