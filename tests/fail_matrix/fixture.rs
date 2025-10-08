@@ -217,6 +217,35 @@ pub fn flip_public_digest_byte(bytes: &ProofBytes) -> ProofBytes {
     ProofBytes::new(mutated)
 }
 
+/// Corrupts the trace commitment digest advertised in the header.
+pub fn mismatch_trace_root(bytes: &ProofBytes) -> ProofBytes {
+    let mut mutated = bytes.as_slice().to_vec();
+
+    // Header layout mirrors `serialize_proof_header_from_lengths`.
+    let mut cursor = 0usize;
+    cursor += 2; // version
+    cursor += 1; // kind
+    cursor += 32; // param digest
+    cursor += 32; // air spec identifier
+
+    let public_len_start = cursor;
+    let public_len_end = public_len_start + 4;
+    let public_len = u32::from_le_bytes(
+        mutated[public_len_start..public_len_end]
+            .try_into()
+            .expect("public length slice"),
+    ) as usize;
+    cursor += 4; // public length prefix
+    cursor += public_len; // public input bytes
+
+    cursor += 32; // public digest
+
+    // Flip the leading byte of the declared trace commitment digest.
+    mutated[cursor] ^= 0x01;
+
+    ProofBytes::new(mutated)
+}
+
 /// Helper bundling mutated proof bytes with their decoded representation.
 #[derive(Debug, Clone)]
 pub struct MutatedProof {
@@ -317,13 +346,23 @@ pub fn mismatch_composition_indices(proof: &Proof) -> Option<MutatedProof> {
     })
 }
 
-/// Corrupts the leading sibling digest within the first trace Merkle path.
-pub fn corrupt_merkle_path(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone();
-    if let Some(path) = mutated.openings.trace.paths.first_mut() {
-        if let Some(node) = path.nodes.first_mut() {
-            node.sibling[0] ^= 0xFF;
+/// Corrupts the leading node within the first trace Merkle authentication path.
+pub fn corrupt_merkle_path(proof: &Proof) -> MutatedProof {
+    mutate_proof(proof, |proof| {
+        if let Some(path) = proof.openings.trace.paths.first_mut() {
+            if let Some(node) = path.nodes.first_mut() {
+                node.index = u8::MAX;
+                node.sibling[0] ^= 0xFF;
+            }
         }
-    }
-    reencode_proof(&mut mutated)
+    })
+}
+
+/// Shortens the trace authentication paths, creating a vector length mismatch.
+pub fn truncate_trace_paths(proof: &Proof) -> MutatedProof {
+    mutate_proof(proof, |proof| {
+        if !proof.openings.trace.paths.is_empty() {
+            proof.openings.trace.paths.pop();
+        }
+    })
 }

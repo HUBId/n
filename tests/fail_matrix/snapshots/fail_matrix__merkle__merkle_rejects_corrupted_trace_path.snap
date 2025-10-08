@@ -1,0 +1,47 @@
+---
+source: tests/fail_matrix/merkle.rs
+assertion_line: 148
+expression: nodes
+---
+[
+    (
+        255,
+        "f78b450b068e17e9b8a47651e46f8e445c8d025a7cafd8f83e5f478906a15edc",
+    ),
+    (
+        1,
+        "1c8e136ca8da158260dc8e6da5ecb4f8a5a80595292a16d4af132c3b6e6881f2",
+    ),
+    (
+        0,
+        "dc888fe995fbb7f849c748e1f171664b4de9a6fcc701fdcb72be5650d2f84531",
+    ),
+    (
+        0,
+        "df2279957edfe7c23cab8b60afba6154508c2fe1a0cbbb48e739253162feee18",
+    ),
+    (
+        0,
+        "0294313fb859e71e22585950eddfe9b470fc943630f5520aa579d3331b8e6b05",
+    ),
+    (
+        0,
+        "ea8f2298344e24b167521f7d9527629f2260508946abe084395a5a76ed7f9270",
+    ),
+    (
+        0,
+        "897263e93d8db4310396c4994dd893e984a2cf653191a5c15e09900fe114055b",
+    ),
+    (
+        0,
+        "7a66bf0c5618fbffe44a5a07ac0365ef3de0bc300c85966c03f3565ece9c26c4",
+    ),
+    (
+        0,
+        "df0316cd74b9788f0c11a93a1b69798b88a05b43c4c4eb0d35dd2d50b7145f0c",
+    ),
+    (
+        0,
+        "d27317a42c5c7fd77f93e3b7063579abfd306dffc24b2d85c214e4725c1218e1",
+    ),
+]
