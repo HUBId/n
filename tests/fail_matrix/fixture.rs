@@ -5,11 +5,14 @@ use rpp_stark::config::{
 };
 use rpp_stark::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use rpp_stark::field::FieldElement;
-use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs};
+use rpp_stark::generate_proof;
+use rpp_stark::proof::public_inputs::{
+    ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
+};
 use rpp_stark::proof::ser::{compute_integrity_digest, serialize_proof};
 use rpp_stark::proof::types::Proof;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
-use rpp_stark::generate_proof;
+use std::convert::TryInto;
 
 const LFSR_ALPHA: u64 = 5;
 const LFSR_BETA: u64 = 7;
@@ -32,10 +35,7 @@ pub struct FailMatrixFixture {
 impl FailMatrixFixture {
     /// Builds a new fixture with a minimal profile configuration.
     pub fn new() -> Self {
-        let mut profile: ProfileConfig = PROFILE_STANDARD_CONFIG.clone();
-        profile.fri_queries = 2;
-        profile.fri_depth_range.min = 8;
-        profile.fri_depth_range.max = 8;
+        let profile: ProfileConfig = PROFILE_STANDARD_CONFIG.clone();
 
         let common = COMMON_IDENTIFIERS.clone();
         let param_digest = compute_param_digest(&profile, &common);
@@ -60,10 +60,7 @@ impl FailMatrixFixture {
             trace_width: TRACE_WIDTH,
         };
         let seed = FieldElement::from(SEED_VALUE);
-        let body = seed
-            .to_bytes()
-            .expect("fixture seed must encode")
-            .to_vec();
+        let body = seed.to_bytes().expect("fixture seed must encode").to_vec();
         let witness = build_witness(seed, TRACE_LENGTH);
 
         let public_inputs = PublicInputs::Execution {
@@ -191,6 +188,33 @@ pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
     let mut mutated = proof.clone();
     mutated.param_digest.0.bytes[0] ^= 0x01;
     reencode_proof(&mut mutated)
+}
+
+/// Corrupts the public digest advertised in the header.
+pub fn flip_public_digest_byte(bytes: &ProofBytes) -> ProofBytes {
+    let mut mutated = bytes.as_slice().to_vec();
+
+    // Header layout mirrors `serialize_proof_header_from_lengths`.
+    let mut cursor = 0usize;
+    cursor += 2; // version
+    cursor += 1; // kind
+    cursor += 32; // param digest
+    cursor += 32; // air spec identifier
+
+    let public_len_start = cursor;
+    let public_len_end = public_len_start + 4;
+    let public_len = u32::from_le_bytes(
+        mutated[public_len_start..public_len_end]
+            .try_into()
+            .expect("public length slice"),
+    ) as usize;
+    cursor += 4; // public length prefix
+    cursor += public_len; // public input bytes
+
+    // Flip the leading byte of the canonical public digest.
+    mutated[cursor] ^= 0x01;
+
+    ProofBytes::new(mutated)
 }
 
 /// Swaps the first two trace query indices.
