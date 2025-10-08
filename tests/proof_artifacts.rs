@@ -1,5 +1,4 @@
 use insta::assert_json_snapshot;
-use std::collections::BTreeMap;
 use rpp_stark::config::{
     build_proof_system_config, build_prover_context, compute_param_digest, ChunkingPolicy,
     CommonIdentifiers, ProfileConfig, ProofSystemConfig, ProverContext, ThreadPoolProfile,
@@ -11,6 +10,7 @@ use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::utils::serialization::{ProofBytes, WitnessBlob};
+use std::collections::BTreeMap;
 
 fn hex<const N: usize>(bytes: &[u8; N]) -> String {
     bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
@@ -139,15 +139,11 @@ fn snapshot_execution_proof_artifacts() {
         indices.sort_unstable();
         indices
     };
-    let composition_indices = decoded
-        .openings
-        .composition
-        .as_ref()
-        .map(|comp| {
-            let mut indices = comp.indices.clone();
-            indices.sort_unstable();
-            indices
-        });
+    let composition_indices = decoded.openings.composition.as_ref().map(|comp| {
+        let mut indices = comp.indices.clone();
+        indices.sort_unstable();
+        indices
+    });
     let fri_positions: Vec<usize> = decoded
         .fri_proof
         .queries
