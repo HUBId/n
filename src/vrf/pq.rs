@@ -1,4 +1,4 @@
-use crate::hash::{hash, Hash, Hasher, OutputReader};
+use crate::hash::{deterministic::DeterministicHashError, hash, Hash, Hasher, OutputReader};
 
 use super::{VrfVerificationFailure, OUTPUT_XOF_PREFIX};
 
@@ -82,7 +82,7 @@ impl RlweParameters {
         if degree < 2 {
             return Err(VrfVerificationFailure::ErrVrfParamMismatch);
         }
-        let omega = select_primitive_root(degree as u32);
+        let omega = select_primitive_root(degree as u32)?;
         let omega_sq = mod_mul(omega, omega);
         let psi_powers = compute_psi_powers(omega, degree);
         let psi_inv_powers = compute_psi_inv_powers(omega, degree);
@@ -153,7 +153,10 @@ pub fn compute_vrf_param_id(params: &RlweParameters) -> super::VrfParamId {
 }
 
 /// Derives the deterministic public polynomial `a(x)` from the VRF input bytes.
-pub fn derive_public_polynomial(params: &RlweParameters, input: &[u8]) -> Vec<u64> {
+pub fn derive_public_polynomial(
+    params: &RlweParameters,
+    input: &[u8],
+) -> Result<Vec<u64>, VrfVerificationFailure> {
     let mut hasher = Hasher::new();
     hasher.update(AX_SALT.as_bytes());
     hasher.update(&(params.degree as u32).to_le_bytes());
@@ -162,17 +165,23 @@ pub fn derive_public_polynomial(params: &RlweParameters, input: &[u8]) -> Vec<u6
     let mut coefficients = vec![0u64; params.degree];
     for coeff in &mut coefficients {
         let mut buf = [0u8; 8];
-        reader.fill(&mut buf);
+        reader
+            .fill(&mut buf)
+            .map_err(VrfVerificationFailure::from)?;
         *coeff = u64::from_le_bytes(buf) % GOLDILOCKS_MODULUS;
     }
-    coefficients
+    Ok(coefficients)
 }
 
 /// Evaluates the RLWE-based PRF `y = a(x) ⋆ s mod (X^n + 1, p)`.
-pub fn evaluate_prf(params: &RlweParameters, input: &[u8], secret_key: &SecretKey) -> Vec<u64> {
+pub fn evaluate_prf(
+    params: &RlweParameters,
+    input: &[u8],
+    secret_key: &SecretKey,
+) -> Result<Vec<u64>, VrfVerificationFailure> {
     assert_eq!(secret_key.coefficients().len(), params.degree);
 
-    let mut a_poly = derive_public_polynomial(params, input);
+    let mut a_poly = derive_public_polynomial(params, input)?;
     let mut s_poly = secret_key.coefficients().to_vec();
     params.forward_ntt(&mut a_poly);
     params.forward_ntt(&mut s_poly);
@@ -181,7 +190,7 @@ pub fn evaluate_prf(params: &RlweParameters, input: &[u8], secret_key: &SecretKe
         product[i] = mod_mul(a_poly[i], s_poly[i]);
     }
     params.inverse_ntt(&mut product);
-    product
+    Ok(product)
 }
 
 /// Computes the canonical serialization of a polynomial (little-endian coefficients).
@@ -219,26 +228,26 @@ pub fn derive_public_key(secret_key: &SecretKey) -> Hash {
 }
 
 /// Normalizes the RLWE output coefficients into a 32-byte VRF output.
-pub fn normalize_output(coeffs: &[u64]) -> [u8; 32] {
+pub fn normalize_output(coeffs: &[u64]) -> Result<[u8; 32], VrfVerificationFailure> {
     let serialized = serialize_polynomial(coeffs);
     let mut hasher = Hasher::new();
     hasher.update(OUTPUT_XOF_PREFIX.as_bytes());
     hasher.update(&(coeffs.len() as u32).to_le_bytes());
     hasher.update(&serialized);
     let mut reader = hasher.finalize_xof();
-    rejection_sample_32(&mut reader)
+    rejection_sample_32(&mut reader).map_err(VrfVerificationFailure::from)
 }
 
-fn rejection_sample_32(reader: &mut OutputReader) -> [u8; 32] {
+fn rejection_sample_32(reader: &mut OutputReader) -> Result<[u8; 32], DeterministicHashError> {
     // Target space is 2^256; every 32-byte value is currently accepted. The helper
     // retains the structure described in the specification but avoids the degenerate
     // loop that never iterated.
     let mut candidate = [0u8; 32];
-    reader.fill(&mut candidate);
-    candidate
+    reader.fill(&mut candidate)?;
+    Ok(candidate)
 }
 
-fn select_primitive_root(degree: u32) -> u64 {
+fn select_primitive_root(degree: u32) -> Result<u64, VrfVerificationFailure> {
     let mut seed_hasher = Hasher::new();
     seed_hasher.update(ROOT_SELECTION_PREFIX.as_bytes());
     seed_hasher.update(&degree.to_le_bytes());
@@ -253,7 +262,9 @@ fn select_primitive_root(degree: u32) -> u64 {
 
     loop {
         let mut buf = [0u8; 8];
-        reader.fill(&mut buf);
+        reader
+            .fill(&mut buf)
+            .map_err(VrfVerificationFailure::from)?;
         let raw = u64::from_le_bytes(buf) % GOLDILOCKS_MODULUS;
         if raw == 0 {
             continue;
@@ -268,7 +279,7 @@ fn select_primitive_root(degree: u32) -> u64 {
         if mod_pow(candidate, (degree / 2) as u64) == GOLDILOCKS_MODULUS - 1 {
             continue;
         }
-        return candidate;
+        return Ok(candidate);
     }
 }
 
@@ -408,12 +419,12 @@ mod tests {
         let secret = sample_secret(&params);
         let input = b"deterministic-input";
 
-        let y1 = evaluate_prf(&params, input, &secret);
-        let y2 = evaluate_prf(&params, input, &secret);
+        let y1 = evaluate_prf(&params, input, &secret).expect("prf evaluation");
+        let y2 = evaluate_prf(&params, input, &secret).expect("prf evaluation");
         assert_eq!(y1, y2);
 
-        let output1 = normalize_output(&y1);
-        let output2 = normalize_output(&y2);
+        let output1 = normalize_output(&y1).expect("normalize output");
+        let output2 = normalize_output(&y2).expect("normalize output");
         assert_eq!(output1, output2);
     }
 
@@ -425,8 +436,8 @@ mod tests {
 
         for i in 0..8 {
             let input = format!("input-{i}");
-            let y = evaluate_prf(&params, input.as_bytes(), &secret);
-            let output = normalize_output(&y);
+            let y = evaluate_prf(&params, input.as_bytes(), &secret).expect("prf");
+            let output = normalize_output(&y).expect("normalize");
             histogram[output[0] as usize] += 1;
         }
 
@@ -464,15 +475,15 @@ mod tests {
         let params = RlweParameters::new(32).expect("params");
         let secret = sample_secret(&params);
 
-        let empty_poly = derive_public_polynomial(&params, b"");
-        let zero_poly = derive_public_polynomial(&params, &[0]);
+        let empty_poly = derive_public_polynomial(&params, b"").expect("empty poly");
+        let zero_poly = derive_public_polynomial(&params, &[0]).expect("zero poly");
         assert_ne!(
             empty_poly, zero_poly,
             "transcript salt failed to separate inputs"
         );
 
-        let y_empty = evaluate_prf(&params, b"", &secret);
-        let y_zero = evaluate_prf(&params, &[0], &secret);
+        let y_empty = evaluate_prf(&params, b"", &secret).expect("empty prf");
+        let y_zero = evaluate_prf(&params, &[0], &secret).expect("zero prf");
         assert_ne!(
             y_empty, y_zero,
             "PRF outputs must reflect transcript distinctions"

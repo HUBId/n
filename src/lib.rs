@@ -268,5 +268,8 @@ fn map_verify_error(error: VerifyError) -> StarkError {
             StarkError::InvalidInput("aggregation_digest_mismatch")
         }
         VerifyError::Serialization(_) => StarkError::InvalidInput("serialization_error"),
+        VerifyError::DeterministicHash(_) => {
+            StarkError::SubsystemFailure("deterministic_hash_error")
+        }
     }
 }

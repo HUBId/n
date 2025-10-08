@@ -15,6 +15,7 @@ fn map_transcript_error(err: TranscriptError) -> FriError {
         TranscriptError::Serialization(_) => FriError::InvalidStructure("transcript-ser"),
         TranscriptError::BoundsViolation => FriError::InvalidStructure("transcript-bounds"),
         TranscriptError::Unsupported => FriError::InvalidStructure("transcript-unsupported"),
+        TranscriptError::DeterministicHash(err) => FriError::DeterministicHash(err),
     }
 }
 
@@ -88,7 +89,7 @@ pub fn fri_prove(
     let mut query_seed = [0u8; 32];
     query_seed.copy_from_slice(&query_seed_bytes);
 
-    let positions = derive_query_positions(query_seed, view.query_count(), evaluations.len());
+    let positions = derive_query_positions(query_seed, view.query_count(), evaluations.len())?;
     let mut queries = Vec::with_capacity(positions.len());
 
     for &position in &positions {

@@ -1,6 +1,7 @@
 use core::fmt;
 
 use crate::field::FieldElement;
+use crate::hash::deterministic::DeterministicHashError;
 
 /// Canonical field element type absorbed by the transcript.
 pub type Felt = FieldElement;
@@ -152,6 +153,8 @@ pub enum TranscriptError {
     BoundsViolation,
     /// Feature not supported by the deterministic transcript.
     Unsupported,
+    /// Deterministic hashing helper failed.
+    DeterministicHash(DeterministicHashError),
 }
 
 impl fmt::Display for TranscriptError {
@@ -165,8 +168,17 @@ impl fmt::Display for TranscriptError {
             TranscriptError::Unsupported => {
                 write!(f, "feature unsupported in deterministic transcript")
             }
+            TranscriptError::DeterministicHash(err) => {
+                write!(f, "deterministic hash error: {err}")
+            }
         }
     }
 }
 
 impl core::error::Error for TranscriptError {}
+
+impl From<DeterministicHashError> for TranscriptError {
+    fn from(err: DeterministicHashError) -> Self {
+        TranscriptError::DeterministicHash(err)
+    }
+}

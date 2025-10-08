@@ -331,7 +331,7 @@ impl Transcript {
         seed.extend_from_slice(&label.domain_tag());
         seed.extend_from_slice(&self.challenge_counter.to_le_bytes());
         let mut reader = PseudoBlake3Xof::new(&seed);
-        reader.squeeze(output);
+        reader.squeeze(output).map_err(TranscriptError::from)?;
         self.state = mix(self.state, label, output);
         self.xof = PseudoBlake3Xof::from_state(self.state);
         Ok(())

@@ -9,7 +9,7 @@
 pub mod pq;
 
 use crate::config::TranscriptVersionId;
-use crate::hash::Hash;
+use crate::hash::{deterministic::DeterministicHashError, Hash};
 use crate::proof::public_inputs::ProofKind;
 
 /// Canonical domain separation tag absorbed into the transcript.
@@ -346,6 +346,14 @@ pub enum VrfVerificationFailure {
     ErrVrfLegacyRejected,
     /// PQ-VRF attempted before the cutover point when disallowed.
     ErrVrfCutoverNotReached,
+    /// Deterministic hashing helper failed.
+    ErrDeterministicHash(DeterministicHashError),
+}
+
+impl From<DeterministicHashError> for VrfVerificationFailure {
+    fn from(err: DeterministicHashError) -> Self {
+        VrfVerificationFailure::ErrDeterministicHash(err)
+    }
 }
 
 /// Test plan covering determinism, bias checks and cutover enforcement.

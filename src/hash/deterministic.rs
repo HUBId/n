@@ -1,6 +1,30 @@
 use core::convert::TryInto;
 use core::fmt;
 
+use serde::{Deserialize, Serialize};
+
+/// Error surfaced by deterministic hashing helpers when slice conversions fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeterministicHashError {
+    /// Conversion from a slice into a fixed-size array failed.
+    SliceConversion {
+        /// Length expected by the conversion routine.
+        expected: usize,
+    },
+}
+
+impl fmt::Display for DeterministicHashError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeterministicHashError::SliceConversion { expected } => {
+                write!(f, "failed to convert slice into array of length {expected}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DeterministicHashError {}
+
 /// Internal deterministic hash value produced by the pseudo-BLAKE3 helper.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Hash {
@@ -104,8 +128,10 @@ pub struct OutputReader {
 
 impl OutputReader {
     /// Fills the provided buffer with deterministic bytes from the XOF stream.
-    pub fn fill(&mut self, output: &mut [u8]) {
-        self.xof.squeeze(output);
+    ///
+    /// Returns an error if the underlying slice conversion fails.
+    pub fn fill(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
+        self.xof.squeeze(output)
     }
 }
 
@@ -173,23 +199,32 @@ impl PseudoBlake3Xof {
     }
 
     /// Returns the next 64 bits from the deterministic stream.
-    pub fn next_u64(&mut self) -> u64 {
+    ///
+    /// This operation is infallible for well-formed inputs but returns an error if the
+    /// pseudo-BLAKE3 block cannot be converted into an 8-byte array.
+    pub fn next_u64(&mut self) -> Result<u64, DeterministicHashError> {
         let mut data = Vec::with_capacity(40);
         data.extend_from_slice(&self.state);
         data.extend_from_slice(&self.counter.to_le_bytes());
         let block = pseudo_blake3(&data);
         self.state = block;
         self.counter = self.counter.wrapping_add(1);
-        u64::from_le_bytes(block[0..8].try_into().expect("slice length"))
+        let bytes: [u8; 8] = block[0..8]
+            .try_into()
+            .map_err(|_| DeterministicHashError::SliceConversion { expected: 8 })?;
+        Ok(u64::from_le_bytes(bytes))
     }
 
     /// Fills the provided buffer with bytes from the stream.
-    pub fn squeeze(&mut self, output: &mut [u8]) {
+    ///
+    /// Returns an error if the next word cannot be produced.
+    pub fn squeeze(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
         for chunk in output.chunks_mut(8) {
-            let word = self.next_u64();
+            let word = self.next_u64()?;
             let bytes = word.to_le_bytes();
             let len = chunk.len();
             chunk.copy_from_slice(&bytes[..len]);
         }
+        Ok(())
     }
 }
