@@ -71,12 +71,14 @@ pub fn verify_proof_bytes(
     let mut stages = VerificationStages::default();
     match precheck_decoded_proof(
         proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
-        total_len,
-        None,
+        DecodedProofEnv {
+            declared_kind,
+            public_inputs,
+            config,
+            context,
+            total_bytes: total_len,
+            block_context: None,
+        },
         &mut stages,
     ) {
         Ok(prechecked) => match execute_fri_stage(&prechecked) {
@@ -103,34 +105,38 @@ pub(crate) struct PrecheckedProof {
     pub(crate) params: StarkParams,
 }
 
+struct DecodedProofEnv<'ctx, 'pi> {
+    declared_kind: ConfigProofKind,
+    public_inputs: &'pi PublicInputs<'pi>,
+    config: &'ctx ProofSystemConfig,
+    context: &'ctx VerifierContext,
+    total_bytes: usize,
+    block_context: Option<&'ctx TranscriptBlockContext>,
+}
+
 #[allow(clippy::result_large_err)]
 fn precheck_decoded_proof(
     proof: Proof,
-    declared_kind: ConfigProofKind,
-    public_inputs: &PublicInputs<'_>,
-    config: &ProofSystemConfig,
-    context: &VerifierContext,
-    total_bytes: usize,
-    block_context: Option<&TranscriptBlockContext>,
+    env: DecodedProofEnv<'_, '_>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedProof, (Proof, VerifyError)> {
     if let Err(error) = validate_header(
         &proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
+        env.declared_kind,
+        env.public_inputs,
+        env.config,
+        env.context,
         stages,
     ) {
         return Err((proof, error));
     }
     match precheck_body(
         &proof,
-        public_inputs,
-        config,
-        context,
-        total_bytes,
-        block_context,
+        env.public_inputs,
+        env.config,
+        env.context,
+        env.total_bytes,
+        env.block_context,
         stages,
     ) {
         Ok(prechecked) => Ok(PrecheckedProof {
@@ -166,12 +172,14 @@ pub(crate) fn precheck_proof_bytes(
     let mut stages = VerificationStages::default();
     precheck_decoded_proof(
         proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
-        total_len,
-        block_context,
+        DecodedProofEnv {
+            declared_kind,
+            public_inputs,
+            config,
+            context,
+            total_bytes: total_len,
+            block_context,
+        },
         &mut stages,
     )
     .map_err(|(_, err)| err)
