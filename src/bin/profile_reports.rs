@@ -121,7 +121,7 @@ fn sample_hash(
     run_label: &str,
 ) -> (String, usize) {
     let proof = build_sample_proof(profile, param_digest, run_label);
-    let bytes = proof.to_bytes();
+    let bytes = proof.to_bytes().expect("serialize proof");
     let digest = hash(&bytes);
     (format!("{}", digest.to_hex()), bytes.len())
 }

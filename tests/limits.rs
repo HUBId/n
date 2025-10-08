@@ -351,7 +351,7 @@ fn build_envelope(
     let integrity = compute_integrity_digest(&header_bytes, &payload);
     proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
 
-    ProofBytes::new(proof.to_bytes())
+    ProofBytes::new(proof.to_bytes().expect("serialize proof"))
 }
 
 fn build_queries(layer_count: usize, indices: &[u32]) -> Vec<FriQueryProof> {
