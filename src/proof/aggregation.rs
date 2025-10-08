@@ -358,7 +358,11 @@ mod tests {
                 param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
                 air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
                 public_inputs: Vec::new(),
+                public_digest: DigestBytes {
+                    bytes: crate::proof::ser::compute_public_digest(&[]),
+                },
                 commitment_digest: DigestBytes { bytes: [8u8; 32] },
+                has_composition_commit: false,
                 merkle: MerkleProofBundle {
                     core_root: [0u8; 32],
                     aux_root: [0u8; 32],
@@ -383,6 +387,7 @@ mod tests {
                     Vec::new(),
                 )
                 .expect("empty fri proof"),
+                has_telemetry: true,
                 telemetry: Telemetry {
                     header_length: 0,
                     body_length: 0,

@@ -12,7 +12,8 @@ use rpp_stark::merkle::{
     MerkleTree, ProofNode,
 };
 use rpp_stark::proof::envelope::{
-    compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
+    serialize_public_inputs,
 };
 use rpp_stark::proof::params::canonical_stark_params;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
@@ -205,6 +206,7 @@ fn build_envelope(
 ) -> ProofBytes {
     let public_inputs = inputs.as_public_inputs();
     let public_inputs_bytes = serialize_public_inputs(&public_inputs);
+    let public_digest = compute_public_digest(&public_inputs_bytes);
 
     let proof_kind = ConfigProofKind::Tx;
     let air_spec_id = config.profile.air_spec_ids.tx.clone();
@@ -324,9 +326,13 @@ fn build_envelope(
         param_digest: config.param_digest.clone(),
         air_spec_id: air_spec_id.clone(),
         public_inputs: public_inputs_bytes.clone(),
+        public_digest: DigestBytes {
+            bytes: public_digest,
+        },
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
+        has_composition_commit: true,
         merkle,
         openings: Openings {
             trace: trace_openings,
@@ -334,6 +340,7 @@ fn build_envelope(
             out_of_domain: ood_openings,
         },
         fri_proof,
+        has_telemetry: true,
         telemetry,
     };
 

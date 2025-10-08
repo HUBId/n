@@ -64,14 +64,20 @@ pub struct Proof {
     pub air_spec_id: AirSpecId,
     /// Canonical public input encoding.
     pub public_inputs: Vec<u8>,
+    /// Digest binding the canonical public-input payload.
+    pub public_digest: DigestBytes,
     /// Digest binding commitments prior to parsing the body.
     pub commitment_digest: DigestBytes,
+    /// Flag signalling whether the composition commitment segment is present.
+    pub has_composition_commit: bool,
     /// Merkle commitment bundle for core, auxiliary and FRI layers.
     pub merkle: MerkleProofBundle,
     /// Out-of-domain opening payloads.
     pub openings: Openings,
     /// FRI proof payload accompanying the envelope.
     pub fri_proof: FriProof,
+    /// Flag signalling whether the telemetry segment is present in the payload.
+    pub has_telemetry: bool,
     /// Telemetry frame describing declared lengths and digests.
     pub telemetry: Telemetry,
 }
@@ -174,7 +180,7 @@ pub struct MerklePathNode {
 }
 
 /// Telemetry frame exposing declared lengths and FRI parameters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Telemetry {
     /// Declared header length (used for sanity checks).
     pub header_length: u32,

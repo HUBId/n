@@ -33,8 +33,8 @@ use crate::params::StarkParams;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, map_public_to_config_kind,
-    serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
+    map_public_to_config_kind, serialize_public_inputs,
 };
 use crate::proof::transcript::{
     Transcript as ProofTranscript, TranscriptBlockContext, TranscriptHeader,
@@ -246,15 +246,21 @@ pub fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
+    let public_digest = compute_public_digest(&public_inputs_bytes);
+
     let mut proof = Proof {
         version: PROOF_VERSION,
         kind: proof_kind,
         param_digest: context.param_digest.clone(),
         air_spec_id,
         public_inputs: public_inputs_bytes,
+        public_digest: DigestBytes {
+            bytes: public_digest,
+        },
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
+        has_composition_commit: true,
         merkle,
         openings: Openings {
             trace: trace_openings,
@@ -262,6 +268,7 @@ pub fn build_envelope(
             out_of_domain: ood_openings,
         },
         fri_proof,
+        has_telemetry: true,
         telemetry,
     };
 
