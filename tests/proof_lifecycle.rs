@@ -342,6 +342,44 @@ fn verification_rejects_tampered_telemetry_fields() {
     ));
 }
 
+#[test]
+fn verification_report_flags_param_digest_flip() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    mutate_param_digest(&mut proof);
+    let mutated_bytes = reencode_proof(&mut proof);
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification report");
+
+    assert!(matches!(
+        report.error,
+        Some(VerifyError::ParamsHashMismatch)
+    ));
+    assert!(!report.params_ok, "params stage must fail");
+}
+
 fn mutate_header_trace_root(bytes: &ProofBytes) -> ProofBytes {
     let mut mutated = bytes.as_slice().to_vec();
     let offset = header_trace_root_offset(&mutated);
@@ -360,6 +398,17 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
     ProofBytes::new(mutated)
 }
 
+fn mutate_param_digest(proof: &mut Proof) {
+    proof.param_digest.0.bytes[0] ^= 0x1;
+}
+
+fn mutate_public_digest(bytes: &ProofBytes) -> ProofBytes {
+    let mut mutated = bytes.as_slice().to_vec();
+    let offset = header_trace_root_offset(&mutated) - 32;
+    mutated[offset] ^= 0x1;
+    ProofBytes::new(mutated)
+}
+
 fn header_trace_root_offset(bytes: &[u8]) -> usize {
     let mut cursor = 0usize;
     cursor += 2; // version
@@ -372,6 +421,38 @@ fn header_trace_root_offset(bytes: &[u8]) -> usize {
     cursor += public_len; // public inputs
     cursor += 32; // public digest
     cursor
+}
+
+#[test]
+fn proof_decode_rejects_public_digest_tampering() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mutated = mutate_public_digest(&proof_bytes);
+    let decode_error = rpp_stark::Proof::from_bytes(mutated.as_slice()).expect_err("decode must fail");
+    assert!(matches!(decode_error, VerifyError::PublicDigestMismatch));
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let verify_err = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect_err("verification must fail before building report");
+    assert!(matches!(verify_err, VerifyError::PublicDigestMismatch));
 }
 
 #[test]
@@ -640,6 +721,49 @@ fn verification_rejects_tampered_fri_fold_challenge() {
 }
 
 #[test]
+fn verification_report_flags_fri_challenge_flip() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    assert!(
+        !proof.fri_proof.fold_challenges.is_empty(),
+        "expected at least one fold challenge"
+    );
+    let first = proof.fri_proof.fold_challenges[0];
+    proof.fri_proof.fold_challenges[0] = first.add(&FieldElement::from(1u64));
+    let mutated_bytes = reencode_proof(&mut proof);
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification report");
+
+    match report.error {
+        Some(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriPath,
+        }) => {}
+        other => panic!("unexpected verification outcome: {other:?}"),
+    }
+}
+
+#[test]
 fn verification_rejects_composition_leaf_misalignment_with_fri() {
     let setup = TestSetup::new();
     let witness = WitnessBlob {
@@ -747,6 +871,40 @@ fn verification_rejects_tampered_header_trace_root() {
 }
 
 #[test]
+fn verification_report_flags_header_trace_root_mismatch() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let tampered = mutate_header_trace_root(&proof_bytes);
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let err = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &tampered,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect_err("root mismatch must abort decoding");
+    assert!(matches!(
+        err,
+        VerifyError::RootMismatch {
+            section: MerkleSection::TraceCommit
+        }
+    ));
+}
+
+#[test]
 fn verification_rejects_tampered_header_composition_root() {
     let setup = TestSetup::new();
     let witness = WitnessBlob {
@@ -784,6 +942,40 @@ fn verification_rejects_tampered_header_composition_root() {
         Err(StarkError::InvalidInput(reason)) => assert_eq!(reason, "root_mismatch"),
         other => panic!("unexpected verdict: {other:?}"),
     }
+}
+
+#[test]
+fn verification_report_flags_header_composition_root_mismatch() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let tampered = mutate_header_composition_root(&proof_bytes);
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let err = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &tampered,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect_err("composition root mismatch must abort decoding");
+    assert!(matches!(
+        err,
+        VerifyError::RootMismatch {
+            section: MerkleSection::CompositionCommit
+        }
+    ));
 }
 
 #[test]
@@ -1148,4 +1340,41 @@ fn verify_proof_reports_decode_failures() {
     }
 
     assert_eq!(PROOF_VERSION, setup.config.proof_version.0 as u16);
+}
+
+#[test]
+fn verification_report_flags_proof_size_overflow() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let mut tight_context = setup.verifier_context.clone();
+    tight_context.limits.max_proof_size_bytes = 64; // enforce a strict budget
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &proof_bytes,
+        &setup.config,
+        &tight_context,
+    )
+    .expect("verification report");
+
+    match report.error {
+        Some(VerifyError::ProofTooLarge { max_kb, got_kb }) => {
+            assert!(got_kb > max_kb, "reported overflow must exceed budget");
+        }
+        other => panic!("unexpected verification outcome: {other:?}"),
+    }
 }
