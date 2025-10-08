@@ -842,8 +842,8 @@ impl From<ProverError> for VerifyError {
                 section: MerkleSection::FriPath,
             },
             ProverError::ProofTooLarge { actual, limit } => {
-                let got_kb = ((actual + 1023) / 1024).min(u32::MAX as usize) as u32;
-                let max_kb = (((limit as usize) + 1023) / 1024) as u32;
+                let got_kb = actual.div_ceil(1024).min(u32::MAX as usize) as u32;
+                let max_kb = (limit as usize).div_ceil(1024) as u32;
                 VerifyError::ProofTooLarge { max_kb, got_kb }
             }
             ProverError::Serialization(kind) => VerifyError::Serialization(kind),

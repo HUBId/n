@@ -200,7 +200,7 @@ impl ProofBuilder {
         let bytes_total = header_bytes.len() + payload.len() + 32;
         let limit_bytes = (self.params.max_size_kb as usize) * 1024;
         if bytes_total > limit_bytes {
-            let got_kb = ((bytes_total + 1023) / 1024) as u32;
+            let got_kb = bytes_total.div_ceil(1024) as u32;
             return Err(VerifyError::ProofTooLarge {
                 max_kb: self.params.max_size_kb,
                 got_kb,

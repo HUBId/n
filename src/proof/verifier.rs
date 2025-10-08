@@ -461,8 +461,8 @@ fn precheck_body(
 
     let total_bytes = compute_proof_size(proof, context)?;
     if total_bytes > context.limits.max_proof_size_bytes as usize {
-        let got_kb = ((total_bytes + 1023) / 1024) as u32;
-        let max_kb = ((context.limits.max_proof_size_bytes as usize + 1023) / 1024) as u32;
+        let got_kb = total_bytes.div_ceil(1024) as u32;
+        let max_kb = (context.limits.max_proof_size_bytes as usize).div_ceil(1024) as u32;
         return Err(VerifyError::ProofTooLarge { max_kb, got_kb });
     }
 
