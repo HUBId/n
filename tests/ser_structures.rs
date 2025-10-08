@@ -62,6 +62,7 @@ fn sample_proof() -> Proof {
         body: &body_bytes,
     };
     let public_input_bytes = rpp_stark::proof::ser::serialize_public_inputs(&public_inputs);
+    let public_digest = rpp_stark::proof::ser::compute_public_digest(&public_input_bytes);
 
     let merkle = MerkleProofBundle {
         core_root,
@@ -108,12 +109,17 @@ fn sample_proof() -> Proof {
         param_digest: ParamDigest(DigestBytes { bytes: [6u8; 32] }),
         air_spec_id: AirSpecId(DigestBytes { bytes: [7u8; 32] }),
         public_inputs: public_input_bytes,
+        public_digest: DigestBytes {
+            bytes: public_digest,
+        },
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
+        has_composition_commit: true,
         merkle,
         openings,
         fri_proof,
+        has_telemetry: true,
         telemetry: Telemetry {
             header_length: 0,
             body_length: 0,

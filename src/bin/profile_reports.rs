@@ -13,7 +13,8 @@ use rpp_stark::fri::{FriProof, FriSecurityLevel};
 use rpp_stark::hash::{hash, Hasher, OutputReader};
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
+    serialize_public_inputs,
 };
 use rpp_stark::proof::types::{
     FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
@@ -142,12 +143,7 @@ fn build_sample_proof(
         fri_layer_roots.push(sample_digest(&mut reader));
     }
 
-    let ood_openings = vec![OutOfDomainOpening {
-        point: sample_digest(&mut reader),
-        core_values: vec![sample_digest(&mut reader)],
-        aux_values: vec![],
-        composition_value: sample_digest(&mut reader),
-    }];
+    let ood_openings: Vec<OutOfDomainOpening> = Vec::new();
 
     let final_polynomial: Vec<FieldElement> = (0..4)
         .map(|_| FieldElement::from(sample_u64(&mut reader)))
@@ -174,6 +170,8 @@ fn build_sample_proof(
         fri_layer_roots: fri_layer_roots.clone(),
     };
 
+    let public_digest = compute_public_digest(&public_inputs);
+
     let telemetry = Telemetry {
         header_length: 0,
         body_length: 0,
@@ -193,9 +191,13 @@ fn build_sample_proof(
         param_digest: param_digest.clone(),
         air_spec_id: profile.air_spec_ids.get(ProofKind::Tx).clone(),
         public_inputs,
+        public_digest: DigestBytes {
+            bytes: public_digest,
+        },
         commitment_digest: DigestBytes {
             bytes: commitment_digest,
         },
+        has_composition_commit: false,
         merkle,
         openings: Openings {
             trace: trace_openings,
@@ -203,6 +205,7 @@ fn build_sample_proof(
             out_of_domain: ood_openings,
         },
         fri_proof,
+        has_telemetry: true,
         telemetry,
     };
 

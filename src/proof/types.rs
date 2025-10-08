@@ -64,14 +64,20 @@ pub struct Proof {
     pub air_spec_id: AirSpecId,
     /// Canonical public input encoding.
     pub public_inputs: Vec<u8>,
+    /// Digest binding the canonical public-input payload.
+    pub public_digest: DigestBytes,
     /// Digest binding commitments prior to parsing the body.
     pub commitment_digest: DigestBytes,
+    /// Flag signalling whether the composition commitment segment is present.
+    pub has_composition_commit: bool,
     /// Merkle commitment bundle for core, auxiliary and FRI layers.
     pub merkle: MerkleProofBundle,
     /// Out-of-domain opening payloads.
     pub openings: Openings,
     /// FRI proof payload accompanying the envelope.
     pub fri_proof: FriProof,
+    /// Flag signalling whether the telemetry segment is present in the payload.
+    pub has_telemetry: bool,
     /// Telemetry frame describing declared lengths and digests.
     pub telemetry: Telemetry,
 }
@@ -184,6 +190,17 @@ pub struct Telemetry {
     pub fri_parameters: FriParametersMirror,
     /// Integrity digest covering the header bytes and body payload.
     pub integrity_digest: DigestBytes,
+}
+
+impl Default for Telemetry {
+    fn default() -> Self {
+        Self {
+            header_length: 0,
+            body_length: 0,
+            fri_parameters: FriParametersMirror::default(),
+            integrity_digest: DigestBytes::default(),
+        }
+    }
 }
 
 /// Structured verification report pairing a decoded proof with the outcome.

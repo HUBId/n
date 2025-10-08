@@ -6,10 +6,10 @@
 //! serialization helpers from [`crate::proof::ser`] to derive the telemetry and
 //! size metrics.
 
-use crate::hash::Hasher;
 use crate::params::ProofParams;
 pub use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
+    serialize_public_inputs,
 };
 use crate::proof::ser::{
     deserialize_out_of_domain_opening, deserialize_proof, serialize_out_of_domain_opening,
@@ -179,10 +179,13 @@ impl ProofBuilder {
             param_digest: header.param_digest,
             air_spec_id: header.air_spec_id,
             public_inputs: header.public_inputs,
+            public_digest: DigestBytes { bytes: public_digest },
             commitment_digest,
+            has_composition_commit: openings.composition.is_some(),
             merkle,
             openings,
             fri_proof,
+            has_telemetry: true,
             telemetry,
         };
 
@@ -206,12 +209,6 @@ impl ProofBuilder {
             bytes_total,
         })
     }
-}
-
-fn compute_public_digest(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = Hasher::new();
-    hasher.update(bytes);
-    *hasher.finalize().as_bytes()
 }
 
 fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {

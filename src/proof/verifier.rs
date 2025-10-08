@@ -22,8 +22,8 @@ use crate::params::StarkParams;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, encode_proof_kind,
-    map_public_to_config_kind, serialize_public_inputs,
+    compute_commitment_digest, compute_integrity_digest, compute_public_digest,
+    encode_proof_kind, map_public_to_config_kind, serialize_public_inputs,
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
@@ -32,6 +32,7 @@ use crate::proof::types::{
     PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
     PROOF_VERSION,
 };
+use crate::ser::SerKind;
 use crate::utils::serialization::ProofBytes;
 use core::convert::TryInto;
 
@@ -218,6 +219,11 @@ fn validate_header(
     if proof.public_inputs != expected_public_inputs {
         return Err(VerifyError::PublicInputMismatch);
     }
+
+    let expected_digest = compute_public_digest(&proof.public_inputs);
+    if proof.public_digest.bytes != expected_digest {
+        return Err(VerifyError::PublicInputMismatch);
+    }
     stages.public_ok = true;
 
     let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, proof.kind);
@@ -245,12 +251,14 @@ fn precheck_body(
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
     let payload = proof.serialize_payload();
-    let expected_body_length = payload.len() as u32 + 32;
-    if proof.telemetry.body_length != expected_body_length {
-        return Err(VerifyError::BodyLengthMismatch {
-            declared: proof.telemetry.body_length,
-            actual: expected_body_length,
-        });
+    if proof.has_telemetry {
+        let expected_body_length = payload.len() as u32 + 32;
+        if proof.telemetry.body_length != expected_body_length {
+            return Err(VerifyError::BodyLengthMismatch {
+                declared: proof.telemetry.body_length,
+                actual: expected_body_length,
+            });
+        }
     }
 
     let commitment_digest = compute_commitment_digest(
@@ -319,26 +327,36 @@ fn precheck_body(
         &proof.openings.trace,
     )?;
 
-    let composition_openings = proof
-        .openings
-        .composition
-        .as_ref()
-        .ok_or(VerifyError::EmptyOpenings)?;
-    let composition_values =
-        verify_composition_commitment(&stark_params, &proof.merkle.aux_root, composition_openings)?;
+    if proof.has_composition_commit {
+        let composition_openings = proof
+            .openings
+            .composition
+            .as_ref()
+            .ok_or(VerifyError::EmptyOpenings)?;
+        let composition_values = verify_composition_commitment(
+            &stark_params,
+            &proof.merkle.aux_root,
+            composition_openings,
+        )?;
 
-    verify_composition_alignment(
-        &composition_values,
-        &proof.openings.trace.indices,
-        &proof.fri_proof,
-    )?;
+        verify_composition_alignment(
+            &composition_values,
+            &proof.openings.trace.indices,
+            &proof.fri_proof,
+        )?;
 
-    verify_ood_openings(
-        &proof.openings.out_of_domain,
-        &trace_values,
-        &composition_values,
-    )?;
-    stages.composition_ok = true;
+        verify_ood_openings(
+            &proof.openings.out_of_domain,
+            &trace_values,
+            &composition_values,
+        )?;
+        stages.composition_ok = true;
+    } else {
+        if proof.openings.composition.is_some() || !proof.openings.out_of_domain.is_empty() {
+            return Err(VerifyError::Serialization(SerKind::CompositionCommitment));
+        }
+        stages.composition_ok = true;
+    }
 
     let fri_seed = challenges
         .draw_fri_seed()
@@ -359,30 +377,38 @@ fn precheck_body(
             issue: FriVerifyIssue::SecurityLevelMismatch,
         });
     }
-    if proof.telemetry.fri_parameters.fold != 2
-        || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
-    {
-        return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
-    }
+    if proof.has_telemetry {
+        if proof.telemetry.fri_parameters.fold != 2
+            || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
+        {
+            return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
+        }
 
-    if proof.telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
-        || proof.telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
-        || proof.telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
-    {
-        return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
-    }
+        if proof.telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
+            || proof.telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
+            || proof.telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
+        {
+            return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
+        }
 
-    let header_bytes = proof.serialize_header(&payload);
-    if proof.telemetry.header_length != header_bytes.len() as u32 {
-        return Err(VerifyError::HeaderLengthMismatch {
-            declared: proof.telemetry.header_length,
-            actual: header_bytes.len() as u32,
-        });
-    }
+        let header_bytes = proof.serialize_header(&payload);
+        if proof.telemetry.header_length != header_bytes.len() as u32 {
+            return Err(VerifyError::HeaderLengthMismatch {
+                declared: proof.telemetry.header_length,
+                actual: header_bytes.len() as u32,
+            });
+        }
 
-    let integrity_digest = compute_integrity_digest(&header_bytes, &payload);
-    if proof.telemetry.integrity_digest.bytes != integrity_digest {
-        return Err(VerifyError::IntegrityDigestMismatch);
+        let mut canonical = proof.clone();
+        canonical.telemetry.header_length = 0;
+        canonical.telemetry.body_length = 0;
+        canonical.telemetry.integrity_digest.bytes = [0u8; 32];
+        let canonical_payload = canonical.serialize_payload();
+        let canonical_header = canonical.serialize_header(&canonical_payload);
+        let integrity_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
+        if proof.telemetry.integrity_digest.bytes != integrity_digest {
+            return Err(VerifyError::IntegrityDigestMismatch);
+        }
     }
 
     if proof_size_exceeds_limit(proof, context) {
