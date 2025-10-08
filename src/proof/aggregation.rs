@@ -9,6 +9,7 @@ use crate::hash::Hasher;
 use crate::proof::public_inputs::ProofKind;
 use crate::proof::ser::{map_public_to_config_kind, serialize_public_inputs};
 use crate::proof::transcript::TranscriptBlockContext;
+use crate::ser::SerError;
 use crate::utils::serialization::ProofBytes;
 
 use super::public_inputs::PublicInputs;
@@ -95,7 +96,15 @@ pub fn batch_verify(
     config: &ProofSystemConfig,
     verifier_context: &VerifierContext,
 ) -> BatchVerificationOutcome {
-    let sorted = sort_batch_proofs(proofs);
+    let sorted = match sort_batch_proofs(proofs) {
+        Ok(sorted) => sorted,
+        Err((failing_proof_index, error)) => {
+            return BatchVerificationOutcome::Reject {
+                failing_proof_index,
+                error,
+            }
+        }
+    };
     run_batch_with_callbacks(
         block_context,
         &sorted,
@@ -177,16 +186,19 @@ struct SortedProof<'a> {
     original_index: usize,
 }
 
-fn sort_batch_proofs<'a>(proofs: &'a [BatchProofRecord<'a>]) -> Vec<SortedProof<'a>> {
-    let mut entries: Vec<SortedProof<'a>> = proofs
-        .iter()
-        .enumerate()
-        .map(|(index, record)| SortedProof {
+fn sort_batch_proofs<'a>(
+    proofs: &'a [BatchProofRecord<'a>],
+) -> Result<Vec<SortedProof<'a>>, (usize, VerifyError)> {
+    let mut entries: Vec<SortedProof<'a>> = Vec::with_capacity(proofs.len());
+    for (index, record) in proofs.iter().enumerate() {
+        let pi_digest = compute_public_input_digest(record.kind, record.public_inputs)
+            .map_err(|err| (index, VerifyError::from(err)))?;
+        entries.push(SortedProof {
             record,
-            pi_digest: compute_public_input_digest(record.kind, record.public_inputs),
+            pi_digest,
             original_index: index,
-        })
-        .collect();
+        });
+    }
 
     entries.sort_by(|a, b| {
         a.record
@@ -196,16 +208,19 @@ fn sort_batch_proofs<'a>(proofs: &'a [BatchProofRecord<'a>]) -> Vec<SortedProof<
             .then_with(|| a.original_index.cmp(&b.original_index))
     });
 
-    entries
+    Ok(entries)
 }
 
-fn compute_public_input_digest(kind: ProofKind, inputs: &PublicInputs<'_>) -> [u8; 32] {
+fn compute_public_input_digest(
+    kind: ProofKind,
+    inputs: &PublicInputs<'_>,
+) -> Result<[u8; 32], SerError> {
     let mut hasher = Hasher::new();
     hasher.update(b"RPP-PI-V1");
     hasher.update(&[kind.code()]);
-    let serialized = serialize_public_inputs(inputs);
+    let serialized = serialize_public_inputs(inputs)?;
     hasher.update(&serialized);
-    *hasher.finalize().as_bytes()
+    Ok(*hasher.finalize().as_bytes())
 }
 
 fn derive_block_seed(block_context: &BlockContext, sorted: &[SortedProof<'_>]) -> [u8; 32] {
@@ -412,7 +427,7 @@ mod tests {
         let mut unsorted = vec![records[2].clone(), records[0].clone(), records[1].clone()];
         unsorted.extend(records.iter().cloned());
 
-        let sorted = sort_batch_proofs(&unsorted);
+        let sorted = sort_batch_proofs(&unsorted).expect("sorting should succeed");
         let mut previous: Option<(ProofKind, [u8; 32], usize)> = None;
         for entry in sorted {
             let current = (entry.record.kind, entry.pi_digest, entry.original_index);
@@ -430,7 +445,7 @@ mod tests {
     fn batch_fast_path_rejects_and_reports_index_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
-        let sorted = sort_batch_proofs(&records);
+        let sorted = sort_batch_proofs(&records).expect("sorting should succeed");
         let (config, verifier_context) = dummy_config();
         let block_context = BlockContext {
             block_height: 42,
@@ -466,7 +481,7 @@ mod tests {
     fn batch_executor_bubbles_fri_failures_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
-        let sorted = sort_batch_proofs(&records);
+        let sorted = sort_batch_proofs(&records).expect("sorting should succeed");
         let (config, verifier_context) = dummy_config();
         let block_context = BlockContext {
             block_height: 5,
@@ -506,7 +521,7 @@ mod tests {
     fn batch_accepts_when_all_checks_pass_ok() {
         let inputs = sample_public_inputs();
         let records = sample_records(&inputs);
-        let sorted = sort_batch_proofs(&records);
+        let sorted = sort_batch_proofs(&records).expect("sorting should succeed");
         let (config, verifier_context) = dummy_config();
         let block_context = BlockContext {
             block_height: 9,

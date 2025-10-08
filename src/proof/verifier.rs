@@ -218,7 +218,8 @@ fn validate_header(
         return Err(VerifyError::ParamsHashMismatch);
     }
 
-    let expected_public_inputs = serialize_public_inputs(public_inputs);
+    let expected_public_inputs =
+        serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
     if proof.public_inputs != expected_public_inputs {
         return Err(VerifyError::PublicInputMismatch);
     }
@@ -253,7 +254,7 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    let payload = proof.serialize_payload();
+    let payload = proof.serialize_payload().map_err(VerifyError::from)?;
     if proof.has_telemetry {
         let expected_body_length = payload.len() as u32 + 32;
         if proof.telemetry.body_length != expected_body_length {
@@ -294,7 +295,7 @@ fn precheck_body(
     })
     .map_err(|_| VerifyError::TranscriptOrder)?;
 
-    let public_inputs_bytes = serialize_public_inputs(public_inputs);
+    let public_inputs_bytes = serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
     transcript
         .absorb_public_inputs(&public_inputs_bytes)
         .map_err(|_| VerifyError::TranscriptOrder)?;
@@ -405,7 +406,9 @@ fn precheck_body(
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
 
-        let header_bytes = proof.serialize_header(&payload);
+        let header_bytes = proof
+            .serialize_header(&payload)
+            .map_err(VerifyError::from)?;
         if proof.telemetry.header_length != header_bytes.len() as u32 {
             return Err(VerifyError::HeaderLengthMismatch {
                 declared: proof.telemetry.header_length,
@@ -417,15 +420,17 @@ fn precheck_body(
         canonical.telemetry.header_length = 0;
         canonical.telemetry.body_length = 0;
         canonical.telemetry.integrity_digest.bytes = [0u8; 32];
-        let canonical_payload = canonical.serialize_payload();
-        let canonical_header = canonical.serialize_header(&canonical_payload);
+        let canonical_payload = canonical.serialize_payload().map_err(VerifyError::from)?;
+        let canonical_header = canonical
+            .serialize_header(&canonical_payload)
+            .map_err(VerifyError::from)?;
         let integrity_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
         if proof.telemetry.integrity_digest.bytes != integrity_digest {
             return Err(VerifyError::IntegrityDigestMismatch);
         }
     }
 
-    if proof_size_exceeds_limit(proof, context) {
+    if proof_size_exceeds_limit(proof, context)? {
         return Err(VerifyError::ProofTooLarge);
     }
 
@@ -932,11 +937,13 @@ fn field_from_fixed_bytes(bytes: &[u8; 32]) -> Result<FieldElement, VerifyError>
     FieldElement::from_bytes(&buf).map_err(|_| VerifyError::NonCanonicalFieldElement)
 }
 
-fn proof_size_exceeds_limit(proof: &Proof, context: &VerifierContext) -> bool {
-    let payload = proof.serialize_payload();
-    let header_bytes = proof.serialize_header(&payload);
+fn proof_size_exceeds_limit(proof: &Proof, context: &VerifierContext) -> Result<bool, VerifyError> {
+    let payload = proof.serialize_payload().map_err(VerifyError::from)?;
+    let header_bytes = proof
+        .serialize_header(&payload)
+        .map_err(VerifyError::from)?;
     let total = header_bytes.len() + payload.len() + 32;
-    total > context.limits.max_proof_size_bytes as usize
+    Ok(total > context.limits.max_proof_size_bytes as usize)
 }
 
 fn resolve_air_spec_id(

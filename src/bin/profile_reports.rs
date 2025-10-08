@@ -209,8 +209,12 @@ fn build_sample_proof(
         telemetry,
     };
 
-    let payload = proof.serialize_payload();
-    let header_bytes = proof.serialize_header(&payload);
+    let payload = proof
+        .serialize_payload()
+        .expect("sample proof payload serialization");
+    let header_bytes = proof
+        .serialize_header(&payload)
+        .expect("sample proof header serialization");
     proof.telemetry.body_length = (payload.len() + 32) as u32;
     proof.telemetry.header_length = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
@@ -236,7 +240,7 @@ fn sample_public_inputs(profile: &ProfileConfig, run_label: &str) -> Vec<u8> {
         header,
         body: body.as_bytes(),
     };
-    serialize_public_inputs(&inputs)
+    serialize_public_inputs(&inputs).expect("sample public inputs serialization")
 }
 
 fn sample_reader(profile_id: ProfileId, run_label: &str) -> OutputReader {

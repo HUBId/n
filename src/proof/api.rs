@@ -200,5 +200,6 @@ fn map_prover_error_to_verify(error: prover::ProverError) -> VerifyError {
             section: MerkleSection::FriPath,
         },
         ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
+        ProverError::Serialization(kind) => VerifyError::Serialization(kind),
     }
 }

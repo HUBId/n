@@ -47,7 +47,7 @@ pub fn compute_integrity_digest(header_bytes: &[u8], body_payload: &[u8]) -> [u8
 }
 
 /// Serialises the public inputs using the canonical layout.
-pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
+pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Result<Vec<u8>, SerError> {
     fn version_byte(version: PublicInputVersion) -> u8 {
         match version {
             PublicInputVersion::V1 => 1,
@@ -67,12 +67,10 @@ pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
             write_digest(&mut buffer, &program_digest.bytes);
             write_u32(&mut buffer, *trace_length);
             write_u32(&mut buffer, *trace_width);
-            write_u32(
-                &mut buffer,
-                u32::try_from(body.len()).expect("public inputs fit u32"),
-            );
+            let body_len = ensure_u32(body.len(), SerKind::PublicInputs, "len")?;
+            write_u32(&mut buffer, body_len);
             write_bytes(&mut buffer, body);
-            buffer
+            Ok(buffer)
         }
         PublicInputs::Aggregation { header, body } => {
             let AggregationHeaderV1 {
@@ -86,12 +84,10 @@ pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
             write_digest(&mut buffer, &circuit_digest.bytes);
             write_u32(&mut buffer, *leaf_count);
             write_digest(&mut buffer, &root_digest.bytes);
-            write_u32(
-                &mut buffer,
-                u32::try_from(body.len()).expect("public inputs fit u32"),
-            );
+            let body_len = ensure_u32(body.len(), SerKind::PublicInputs, "len")?;
+            write_u32(&mut buffer, body_len);
             write_bytes(&mut buffer, body);
-            buffer
+            Ok(buffer)
         }
         PublicInputs::Recursion { header, body } => {
             let RecursionHeaderV1 {
@@ -105,12 +101,10 @@ pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
             write_u8(&mut buffer, *depth);
             write_digest(&mut buffer, &boundary_digest.bytes);
             write_digest(&mut buffer, &recursion_seed.bytes);
-            write_u32(
-                &mut buffer,
-                u32::try_from(body.len()).expect("public inputs fit u32"),
-            );
+            let body_len = ensure_u32(body.len(), SerKind::PublicInputs, "len")?;
+            write_u32(&mut buffer, body_len);
             write_bytes(&mut buffer, body);
-            buffer
+            Ok(buffer)
         }
         PublicInputs::Vrf { header, body } => {
             let VrfHeaderV1 {
@@ -133,12 +127,10 @@ pub fn serialize_public_inputs(inputs: &PublicInputs<'_>) -> Vec<u8> {
             write_digest(&mut buffer, &tv.bytes);
             write_u16(&mut buffer, field_id.0);
             write_digest(&mut buffer, &context_digest.bytes);
-            write_u32(
-                &mut buffer,
-                u32::try_from(body.len()).expect("public inputs fit u32"),
-            );
+            let body_len = ensure_u32(body.len(), SerKind::PublicInputs, "len")?;
+            write_u32(&mut buffer, body_len);
             write_bytes(&mut buffer, body);
-            buffer
+            Ok(buffer)
         }
     }
 }
@@ -181,10 +173,10 @@ pub(crate) fn decode_proof_kind(byte: u8) -> Result<ProofKind, VerifyError> {
     })
 }
 
-pub(crate) fn serialize_fri_proof(proof: &FriProof) -> Vec<u8> {
+pub(crate) fn serialize_fri_proof(proof: &FriProof) -> Result<Vec<u8>, SerError> {
     proof
         .to_bytes()
-        .expect("FRI proofs embedded in envelopes must be valid")
+        .map_err(|_| SerError::invalid_value(SerKind::Fri, "fri_proof"))
 }
 
 pub(crate) fn deserialize_fri_proof(bytes: &[u8]) -> Result<FriProof, VerifyError> {
@@ -215,8 +207,8 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
     }
 
     let merkle_bytes = serialize_merkle_bundle(&proof.merkle)?;
-    let fri_bytes = serialize_fri_proof(&proof.fri_proof);
-    let openings_bytes = encode_openings(&proof.openings)?;
+    let fri_bytes = serialize_fri_proof(&proof.fri_proof)?;
+    let openings_bytes = serialize_openings(&proof.openings)?;
     let telemetry_bytes = if proof.has_telemetry {
         Some(serialize_telemetry_frame(proof)?)
     } else {
@@ -473,7 +465,7 @@ fn encode_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
     let count = ensure_u32(openings.out_of_domain.len(), SerKind::Openings, "ood_len")?;
     write_u32(&mut buffer, count);
     for opening in &openings.out_of_domain {
-        let encoded = serialize_out_of_domain_opening(opening);
+        let encoded = serialize_out_of_domain_opening(opening)?;
         let encoded_len = ensure_u32(encoded.len(), SerKind::Openings, "ood_block")?;
         write_u32(&mut buffer, encoded_len);
         write_bytes(&mut buffer, &encoded);
@@ -562,30 +554,26 @@ fn deserialize_telemetry_frame(bytes: &[u8]) -> Result<Telemetry, SerError> {
 }
 
 /// Serialises the out-of-domain opening container.
-pub fn serialize_openings(openings: &Openings) -> Vec<u8> {
-    encode_openings(openings).expect("openings serialization should fit u32 lengths")
+pub fn serialize_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
+    encode_openings(openings)
 }
 
 /// Serialises a single out-of-domain opening block.
-pub fn serialize_out_of_domain_opening(opening: &OutOfDomainOpening) -> Vec<u8> {
+pub fn serialize_out_of_domain_opening(opening: &OutOfDomainOpening) -> Result<Vec<u8>, SerError> {
     let mut buffer = Vec::new();
     write_digest(&mut buffer, &opening.point);
-    write_u32(
-        &mut buffer,
-        u32::try_from(opening.core_values.len()).expect("core values fit u32"),
-    );
+    let core_len = ensure_u32(opening.core_values.len(), SerKind::Openings, "core_len")?;
+    write_u32(&mut buffer, core_len);
     for value in &opening.core_values {
         write_digest(&mut buffer, value);
     }
-    write_u32(
-        &mut buffer,
-        u32::try_from(opening.aux_values.len()).expect("aux values fit u32"),
-    );
+    let aux_len = ensure_u32(opening.aux_values.len(), SerKind::Openings, "aux_len")?;
+    write_u32(&mut buffer, aux_len);
     for value in &opening.aux_values {
         write_digest(&mut buffer, value);
     }
     write_digest(&mut buffer, &opening.composition_value);
-    buffer
+    Ok(buffer)
 }
 
 fn deserialize_out_of_domain_opening_inner(bytes: &[u8]) -> Result<OutOfDomainOpening, SerError> {
@@ -684,42 +672,35 @@ pub fn deserialize_out_of_domain_opening(bytes: &[u8]) -> Result<OutOfDomainOpen
 }
 
 /// Serialises the proof header given the payload bytes.
-pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Vec<u8> {
-    let merkle_len = serialize_merkle_bundle(&proof.merkle)
-        .expect("merkle bundle serialization should succeed")
-        .len();
-    let fri_len = serialize_fri_proof(&proof.fri_proof).len();
-    let openings_len = encode_openings(&proof.openings)
-        .expect("openings serialization should succeed")
-        .len();
+pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Result<Vec<u8>, SerError> {
+    let merkle_len = serialize_merkle_bundle(&proof.merkle)?.len();
+    let fri_len = serialize_fri_proof(&proof.fri_proof)?.len();
+    let openings_len = serialize_openings(&proof.openings)?.len();
     let telemetry_len = if proof.has_telemetry {
-        Some(
-            serialize_telemetry_frame(proof)
-                .expect("telemetry serialization should succeed")
-                .len(),
-        )
+        Some(serialize_telemetry_frame(proof)?.len())
     } else {
         None
     };
 
-    debug_assert_eq!(
-        payload.len(),
-        merkle_len + fri_len + openings_len + telemetry_len.unwrap_or(0)
-    );
+    let telemetry_total = telemetry_len.as_ref().copied().unwrap_or(0);
+    let expected_total = merkle_len + fri_len + openings_len + telemetry_total;
+    if payload.len() != expected_total {
+        return Err(SerError::invalid_value(
+            SerKind::Proof,
+            "payload_length_mismatch",
+        ));
+    }
 
     serialize_proof_header_from_lengths(proof, merkle_len, fri_len, openings_len, telemetry_len)
-        .expect("proof header serialization should succeed")
 }
 
 /// Serialises the proof payload (body) without the integrity digest.
-pub fn serialize_proof_payload(proof: &Proof) -> Vec<u8> {
-    let merkle_bytes =
-        serialize_merkle_bundle(&proof.merkle).expect("merkle bundle serialization should succeed");
-    let fri_bytes = serialize_fri_proof(&proof.fri_proof);
-    let openings_bytes =
-        encode_openings(&proof.openings).expect("openings serialization should succeed");
+pub fn serialize_proof_payload(proof: &Proof) -> Result<Vec<u8>, SerError> {
+    let merkle_bytes = serialize_merkle_bundle(&proof.merkle)?;
+    let fri_bytes = serialize_fri_proof(&proof.fri_proof)?;
+    let openings_bytes = serialize_openings(&proof.openings)?;
     let telemetry_bytes = if proof.has_telemetry {
-        Some(serialize_telemetry_frame(proof).expect("telemetry serialization should succeed"))
+        Some(serialize_telemetry_frame(proof)?)
     } else {
         None
     };
@@ -735,7 +716,7 @@ pub fn serialize_proof_payload(proof: &Proof) -> Vec<u8> {
     if let Some(bytes) = telemetry_bytes {
         buffer.extend_from_slice(&bytes);
     }
-    buffer
+    Ok(buffer)
 }
 
 #[cfg(test)]
@@ -777,7 +758,8 @@ mod tests {
             header: header.clone(),
             body: &body_bytes,
         };
-        let public_input_bytes = serialize_public_inputs(&public_inputs);
+        let public_input_bytes =
+            serialize_public_inputs(&public_inputs).expect("public inputs serialization");
         let public_digest = compute_public_digest(&public_input_bytes);
 
         let merkle = MerkleProofBundle {
@@ -849,8 +831,10 @@ mod tests {
         };
 
         // Populate telemetry with deterministic values.
-        let payload = crate::proof::ser::serialize_proof_payload(&proof);
-        let header_bytes = crate::proof::ser::serialize_proof_header(&proof, &payload);
+        let payload = crate::proof::ser::serialize_proof_payload(&proof)
+            .expect("proof payload serialization");
+        let header_bytes = crate::proof::ser::serialize_proof_header(&proof, &payload)
+            .expect("proof header serialization");
         let integrity = compute_integrity_digest(&header_bytes, &payload);
         proof.telemetry.header_length = header_bytes.len() as u32;
         proof.telemetry.body_length = (payload.len() + 32) as u32;

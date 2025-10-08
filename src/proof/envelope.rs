@@ -191,8 +191,8 @@ impl ProofBuilder {
             telemetry,
         };
 
-        let payload = serialize_proof_payload(&proof);
-        let header_bytes = serialize_proof_header(&proof, &payload);
+        let payload = serialize_proof_payload(&proof).map_err(VerifyError::from)?;
+        let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
 
         proof.telemetry.header_length = header_bytes.len() as u32;
         proof.telemetry.body_length = (payload.len() + 32) as u32;
@@ -241,26 +241,26 @@ impl Proof {
     }
 
     /// Serialises the proof header for the provided payload.
-    pub fn serialize_header(&self, payload: &[u8]) -> Vec<u8> {
+    pub fn serialize_header(&self, payload: &[u8]) -> Result<Vec<u8>, SerError> {
         serialize_proof_header(self, payload)
     }
 
     /// Serialises the proof payload (body) without the trailing integrity digest.
-    pub fn serialize_payload(&self) -> Vec<u8> {
+    pub fn serialize_payload(&self) -> Result<Vec<u8>, SerError> {
         serialize_proof_payload(self)
     }
 }
 
 impl Openings {
     /// Serialises the out-of-domain openings using the canonical layout.
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Result<Vec<u8>, SerError> {
         crate::proof::ser::serialize_openings(self)
     }
 }
 
 impl OutOfDomainOpening {
     /// Serialises the opening block using the canonical layout.
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) -> Result<Vec<u8>, SerError> {
         serialize_out_of_domain_opening(self)
     }
 
@@ -349,6 +349,7 @@ mod tests {
             body: &body_vec,
         };
         crate::proof::ser::serialize_public_inputs(&public_inputs)
+            .expect("public inputs serialization")
     }
 
     fn sample_openings() -> Openings {
@@ -488,7 +489,7 @@ mod tests {
             body: &body_bytes,
         };
 
-        let encoded = serialize_public_inputs(&inputs);
+        let encoded = serialize_public_inputs(&inputs).expect("public inputs serialization");
         assert!(!encoded.is_empty());
     }
 

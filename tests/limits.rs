@@ -205,7 +205,8 @@ fn build_envelope(
     final_poly_len: usize,
 ) -> ProofBytes {
     let public_inputs = inputs.as_public_inputs();
-    let public_inputs_bytes = serialize_public_inputs(&public_inputs);
+    let public_inputs_bytes =
+        serialize_public_inputs(&public_inputs).expect("public inputs serialization");
     let public_digest = compute_public_digest(&public_inputs_bytes);
 
     let proof_kind = ConfigProofKind::Tx;
@@ -344,8 +345,12 @@ fn build_envelope(
         telemetry,
     };
 
-    let payload = proof.serialize_payload();
-    let header_bytes = proof.serialize_header(&payload);
+    let payload = proof
+        .serialize_payload()
+        .expect("proof payload serialization");
+    let header_bytes = proof
+        .serialize_header(&payload)
+        .expect("proof header serialization");
     proof.telemetry.body_length = (payload.len() + 32) as u32;
     proof.telemetry.header_length = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
@@ -391,7 +396,7 @@ fn build_ood_openings(
     })
     .expect("transcript");
 
-    let public_bytes = serialize_public_inputs(public_inputs);
+    let public_bytes = serialize_public_inputs(public_inputs).expect("public inputs serialization");
     transcript
         .absorb_public_inputs(&public_bytes)
         .expect("public inputs");
