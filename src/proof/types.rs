@@ -180,7 +180,7 @@ pub struct MerklePathNode {
 }
 
 /// Telemetry frame exposing declared lengths and FRI parameters.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Telemetry {
     /// Declared header length (used for sanity checks).
     pub header_length: u32,
@@ -190,17 +190,6 @@ pub struct Telemetry {
     pub fri_parameters: FriParametersMirror,
     /// Integrity digest covering the header bytes and body payload.
     pub integrity_digest: DigestBytes,
-}
-
-impl Default for Telemetry {
-    fn default() -> Self {
-        Self {
-            header_length: 0,
-            body_length: 0,
-            fri_parameters: FriParametersMirror::default(),
-            integrity_digest: DigestBytes::default(),
-        }
-    }
 }
 
 /// Structured verification report pairing a decoded proof with the outcome.
