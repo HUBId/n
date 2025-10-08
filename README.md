@@ -524,6 +524,284 @@ nightly-Abhängigkeiten.
 
 **DoD:** Verify stabil; Bytes & Regeln dokumentiert.
 
+### Proof-Envelope & Verifier (stable-only, Rust 1.79)
+
+**Leitplanken (gelten für alle Schritte)**
+
+- MSRV: 1.79; kein Nightly; kein `unsafe`; keine `unwrap`/`expect` in Lib-Logik.
+- Ser/De: durch das zentrale `ser/`-Schema (Little-Endian, `u32`-Längen, Option-Flag `u8`).
+- Determinismus: gleiche Inputs → bitidentische Bytes; Query-Indizes immer lokal aus dem Transcript generieren (nie aus dem Proof übernehmen).
+- Snapshots: Proof-Bytes, Params-Bytes, FRI-Roots, Query-Listen als Referenz einfrieren.
+- Fehler sind präzise, dokumentierte Enum-Varianten (keine „stringly typed“ Fehler).
+- CI: `build`, `test`, `clippy -D warnings`; Snapshots als Artefakte.
+
+**Gesamtübersicht der Meilensteine (nur Proof & Verifier Scope)**
+
+- C1. Proof-ABI festnageln (Strukturen, Byte-Layout, Ser/De, Size-Gate)
+- C2. Header-Verifier (Version, ParamsHash, PublicDigest, Größe)
+- C3. Transcript-Rebuild & lokale Query-Indizes (sort & dedup)
+- C4. Openings-Disziplin (Indices-Regeln)
+- C5. Merkle-Prüfung (Root-Bindung, Pfad-Verify)
+- C6. FRI-Verifikation (Einbindung, Fehler-Mapping)
+- C7. Composition-Konsistenz (optional)
+- C8. Report & Telemetry (Flag-Setzung, `total_bytes`)
+- C9. Negative-Matrix & Snapshot-Hardening
+- C10. CI/Doku-Abrundung (stable-only Gates, `PROOF_VERSION` Freeze)
+
+> Jeder Commit ist unabhängig kompilierbar, mit eigenen Tests.
+
+#### C1 — Proof-ABI festnageln
+
+**Ziel:** Ein versionierter, binärstabiler Proof-Envelope mit kanonischem Layout; Ser/De über `ser/`; echte Größenmessung.
+
+**Dateien**
+
+- `src/proof/types` (Strukturvertrags: Proof, Openings, MerkleProofBundle, Telemetry, VerifyError, VerifyReport, `PROOF_VERSION = 1`)
+- `src/proof/ser` (Ser/De für Proof, Openings, Bundle, Telemetry; `serialized_len`)
+- `src/proof/mod` (Reexports)
+
+**Vertragsdetails (ohne Code)**
+
+- Reihenfolge im Proof-Blob: Version (`u16`) → `ParamsHash` (32) → `PublicDigest` (32) → `TraceCommit` (Digest-Bytes) → Flag & `CompCommit`? → `FRI-Block` (Platzhalter; wird `ser/` eingebunden sobald vorhanden) → Openings → Flag & Telemetry?.
+- Openings: Flags für trace/composition/aux; mindestens trace vorhanden.
+- Bundle: Root (Digest-Bytes), Indices (`u32`-Liste), Leaves (jeweils: Längenpräfix `u32` + Rohbytes), Paths (dito).
+- Optionale Felder: `u8`-Flag vor Daten; keinerlei Padding.
+- Fehler: jegliche Ser/De-Abweichung → „Serialization“.
+
+**Tests**
+
+- Roundtrip-Test (serialize → deserialize → Equal).
+- Snapshot der Proof-Bytes (Mini-Fixture; deterministische Füllwerte).
+- Größenmessung: `serialized_len` entspricht tatsächlicher Bytezahl.
+
+**Definition of Done**
+
+- Proof-Bytes sind eingefroren (Snapshot).
+- Keine externen Abhängigkeiten (FRI/Merkle) notwendig.
+
+#### C2 — Header-Verifier (ohne FRI/Merkle)
+
+**Ziel:** `verify()` prüft Version, `params_hash`, `public_digest`, Size-Gate (echte Serialisierung); noch kein Transcript.
+
+**Vertragsdetails**
+
+- Reihenfolge der Checks: Version → `ParamsHash` → `PublicDigest` → SizeGate (`<= max_kb × 1024`).
+- Fehler: passende Varianten; kein Fallback auf generische Fehler.
+- Report: `params_ok` und `public_ok` gemäß Checks; `total_bytes` befüllt; andere Flags (`merkle`/`fri`/`composition`) bleiben `false`.
+
+**Tests**
+
+- Positivfall.
+- Vier Negativfälle: `VersionMismatch`, `ParamsHashMismatch`, `PublicDigestMismatch`, `ProofTooLarge` (Größe real aus Ser; keine Schätzung).
+
+**Definition of Done**
+
+- Verlässlicher Header-Guard; klare Fehlermeldungen.
+
+#### C3 — Transcript-Rebuild & lokale Query-Indizes
+
+**Ziel:** Transcript exakt in fixierter Reihenfolge rekonstruieren und aus ihm Query-Indizes lokal ableiten.
+
+**Reihenfolge (fix)**
+
+- Absorb: `ParamsHash` → `ProtocolTag` → `Seed` → `PublicInputsDigest` → `TraceRoot` → `CompRoot`? → `FRI-Roots` (in Proof-Reihenfolge).
+- Challenges: ggf. Composition-α, dann FRI-Fold-Challenges je Layer.
+- Query-Indizes: aus Challenge-Strom; danach aufsteigend sortieren und Duplikate deterministisch entfernen.
+
+**Regeln**
+
+- Die so erzeugte Liste gilt als einzige Quelle der Wahrheit.
+- Niemals Indizes aus dem Proof übernehmen.
+
+**Tests**
+
+- Vergleich „lokale Query-Liste == openings.trace.indices“ (Positivfall).
+- Negativ: wenn Indices im Opening absichtlich permutiert → Mismatch (wird in C4 feingranular aufgeschlüsselt).
+
+**Definition of Done**
+
+- Indizes reproduzierbar; deterministisch.
+
+#### C4 — Openings-Disziplin (Indices-Regeln)
+
+**Ziel:** Formale Disziplin für Indices in jedem Bundle; präzise Fehlersignale.
+
+**Regeln**
+
+- Indices müssen strikt aufsteigend sein (keine Gleichheit).
+- Keine Duplikate.
+- Identisch zur lokal generierten Liste (Trace-Bundle ist Referenz; Composition/Aux je nach Design ebenfalls abzugleichen).
+
+**Fehler**
+
+- „IndicesNotSorted“, „IndicesDuplicate { index }“, „IndicesMismatch“.
+
+**Tests**
+
+- Drei isolierte Negativfälle pro Regel; Positivfall.
+
+**Definition of Done**
+
+- Fehlerdiagnose landet immer im richtigen Bucket (nicht pauschal).
+
+#### C5 — Merkle-Prüfung (Root-Bindung, Pfad-Verify)
+
+**Ziel:** Bindung zwischen Commit-Root(s) im Header und den Openings; Pfadprüfung je Index.
+
+**Regeln**
+
+- Für jede vorhandene Sektion (trace / composition / aux):
+  - `bundle.root ==` erwarteter Commit (`TraceCommit` oder `CompCommit`).
+  - `indices`, `leaves`, `paths` müssen konsistente Längen besitzen.
+  - Für jeden Index: Verify der Merkle-Pfadregel (Arity & Dom-Sep gemäß Params).
+
+**Fehler**
+
+- „RootMismatch { section }“, „MerkleVerifyFailed { section }“; bei Längeninkonsistenz: „Serialization“ oder eigener Längenfehler (einheitlich handhaben).
+
+**Tests**
+
+- Positivfall (kleiner Baum, 1–2 Indizes).
+- Negativ:
+  - falscher Root,
+  - Pfadknoten-Manipulation,
+  - längeninkonsistenter Vektor.
+
+**Definition of Done**
+
+- Root-Bindung und Pfade robust geprüft; klarer Fehlerpfad.
+
+#### C6 — FRI-Verifikation (Einbindung)
+
+**Ziel:** `fri_verify` korrekt einhängen; Fehler sauber mappen; Reihenfolge im Transcript beachten.
+
+**Regeln**
+
+- Vor FRI-Verify sind Merkle-Openings geprüft (frühe, klare Fehler).
+- Transcript enthält bereits alle FRI-Roots in Proof-Reihenfolge; Fold-Challenges werden exakt nachgezogen.
+- Fehler aus FRI werden 1:1 auf die definierte Fehler-Variante abgebildet.
+
+**Tests**
+
+- Positivfall (Mini-FRI).
+- Negativ: Flip der ersten Fold-Challenge → erwarteter FRI-Fehler.
+
+**Definition of Done**
+
+- FRI-Layer korrekt gekoppelt; deterministische Ergebnisse.
+
+#### C7 — Composition-Konsistenz (optional, wenn `CompCommit` existiert)
+
+**Ziel:** Bytestrenge Bindung zwischen FRI-Kompositions-Opens und dem Composition-Bundle.
+
+**Regeln**
+
+- Leaves (Composition) haben identisches Layout wie Trace-Leaves (`Felt`-LE-Konkatenation, `leaf_width`).
+- Für die Query-Indizes der Kompositions-Ebene müssen die Leaves bytegenau den gelieferten `composition.leaves` entsprechen.
+- Abweichung → „CompositionInconsistent { reason }“.
+
+**Tests**
+
+- Positivfall; Negativ: ein Felt-Byte in `composition.leaves[0]` mutieren → klarer Fehler.
+
+**Definition of Done**
+
+- Kompositionsbindung ist geprüft; kein stilles Auseinanderlaufen.
+
+#### C8 — Report & Telemetry
+
+**Ziel:** Vollständiger, aussagekräftiger Verify-Report; Telemetry lesbar, aber nicht verifikationsrelevant.
+
+**Regeln**
+
+- `total_bytes` ist die tatsächliche Serialisierungslänge des gesamten Proofs (gemessen, nicht geschätzt).
+- Flags:
+  - `params_ok` und `public_ok` nach Header-Checks,
+  - `merkle_ok` nach erfolgreicher Merkle-Prüfung,
+  - `fri_ok` nach FRI-Erfolg,
+  - `composition_ok` nur falls Composition vorhanden und konsistent.
+- Telemetry wird ignoriert für die Gültigkeit; optional in Report gespiegelt (z. B. Queries, Layers).
+
+**Tests**
+
+- Report-Plausibilität (Flags und Bytes); ein Positivfall, der alle Pfade passiert.
+
+**Definition of Done**
+
+- Report konsistent und nützlich für Node-Logging/Monitoring.
+
+#### C9 — Negative-Matrix & Snapshot-Hardening
+
+**Ziel:** Gezielte Fehlerfälle pro Regel, damit Regressions glasklar auffallen; ABI dauerhaft einfrieren.
+
+**Negativfälle (je ein isolierter Test)**
+
+- `VersionMismatch`
+- `ParamsHashMismatch`
+- `PublicDigestMismatch`
+- `ProofTooLarge`
+- `IndicesNotSorted`
+- `IndicesDuplicate`
+- `IndicesMismatch`
+- `RootMismatch`
+- `MerkleVerifyFailed`
+- `FriVerifyFailed`
+- `CompositionInconsistent`
+
+**Snapshots**
+
+- Mini-Proof (kleinste realistische Parameter):
+  - Proof-Bytes (Hex/Bytes),
+  - Trace/Comp/Fri-Roots separat,
+  - lokal erzeugte Query-Indizes als Liste,
+  - Pfadlängen je Bundle.
+
+**Definition of Done**
+
+- Jeder Fehler triggert genau den erwarteten Test; Snapshots bleiben stabil.
+
+#### C10 — CI/Doku-Abrundung
+
+**Ziel:** Stabile Produktion: CI schützt, Doku erklärt, `PROOF_VERSION` klar versioniert.
+
+**CI**
+
+- `build`/`test`/`clippy` auf stable 1.79.
+- Snapshot-Artefakte uploaden.
+- Optional: Job „ABI-Freeze“ der prüft, dass Proof-Snapshots unverändert sind (außer wenn `PROOF_VERSION` erhöht wurde).
+
+**Doku**
+
+- Proof-ABI-Seite (kurz, präzise):
+  - Feldreihenfolge (Tabelle),
+  - Endianness & Längen-Regeln,
+  - Option-Flags,
+  - Query-Indizes-Regel (lokal, sort, dedup),
+  - Fehlertaxonomie (Tabelle),
+  - Versionierungspolitik (jede Layout-Änderung ⇒ `PROOF_VERSION++`).
+- FAQ: Warum Indizes lokal? Warum Size-Gate? Wie Telemetry zu verstehen ist?
+
+**Definition of Done**
+
+- CI grün; Doku vollständig; Team kann das Format ohne Rückfragen implementieren.
+
+**Review-Checkliste pro PR (Auszug)**
+
+- Byte-Layout exakt wie dokumentiert?
+- Alle Ser/De über zentrales `ser/`?
+- Query-Indizes lokal erzeugt, sortiert, dedupliziert?
+- Size-Gate misst echte Serialisierung?
+- Fehler präzise (richtige Variante)?
+- Snapshot-Diffs erklärbar (und ggf. `PROOF_VERSION` erhöht)?
+- Clippy clean, keine `unwrap`/`expect`, kein `unsafe`?
+
+**Risiken & Gegenmaßnahmen**
+
+- Drift beim Byte-Layout → Snapshots + `PROOF_VERSION`-Disziplin.
+- Nichtdeterminismus → Transcript-Only-Randomness, Sort+Dedup, keine OS-RNGs.
+- Übergröße/DoS → Size-Gate früh; Tests mit grenzwertigen Proofs.
+- Interop-Fehler (STWO) → Digest-Länge 32 B fix; Domain-Separation dokumentiert; Public-Inputs-Digest klar definiert.
+
 ### Phase 5 – FRI
 
 **Ziele:** Proof & Verify für kleines N; Folding formal fixiert.
