@@ -507,7 +507,7 @@ fn derive_trace_query_indices(
     let mut indices = Vec::with_capacity(target);
 
     while indices.len() < target {
-        let position = sampler.challenge_usize(domain_size);
+        let position = sampler.challenge_usize(domain_size)?;
         if !seen[position] {
             seen[position] = true;
             indices.push(position as u32);
@@ -558,10 +558,10 @@ impl QueryIndexSampler {
         }
     }
 
-    fn challenge_usize(&mut self, range: usize) -> usize {
+    fn challenge_usize(&mut self, range: usize) -> Result<usize, VerifyError> {
         debug_assert!(range > 0);
-        let word = self.xof.next_u64();
-        (word % (range as u64)) as usize
+        let word = self.xof.next_u64().map_err(VerifyError::from)?;
+        Ok((word % (range as u64)) as usize)
     }
 }
 
@@ -1024,5 +1024,6 @@ fn map_fri_error(error: FriError) -> VerifyError {
         FriError::InvalidStructure(_) => VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriPath,
         },
+        FriError::DeterministicHash(err) => VerifyError::DeterministicHash(err),
     }
 }

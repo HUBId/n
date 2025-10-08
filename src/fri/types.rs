@@ -1,5 +1,6 @@
 use core::fmt;
 
+use crate::hash::deterministic::DeterministicHashError;
 use crate::hash::merkle::MerkleError;
 use crate::params::StarkParams;
 
@@ -166,6 +167,8 @@ pub enum FriError {
     },
     /// Generic structure error (missing layer, inconsistent lengths, etc.).
     InvalidStructure(&'static str),
+    /// Deterministic hashing helper failed while sampling challenges.
+    DeterministicHash(DeterministicHashError),
 }
 
 impl fmt::Display for FriError {
@@ -200,11 +203,20 @@ impl fmt::Display for FriError {
                 "query budget mismatch (expected {expected}, got {actual})"
             ),
             FriError::InvalidStructure(reason) => write!(f, "invalid proof structure: {reason}"),
+            FriError::DeterministicHash(err) => {
+                write!(f, "deterministic hash error: {err}")
+            }
         }
     }
 }
 
 impl std::error::Error for FriError {}
+
+impl From<DeterministicHashError> for FriError {
+    fn from(err: DeterministicHashError) -> Self {
+        FriError::DeterministicHash(err)
+    }
+}
 
 /// Borrowed view over the parameters required when verifying a proof.
 #[derive(Debug, Clone, Copy)]

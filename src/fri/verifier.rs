@@ -18,6 +18,7 @@ fn map_transcript_error(err: TranscriptError) -> FriError {
         TranscriptError::Serialization(_) => FriError::InvalidStructure("transcript-ser"),
         TranscriptError::BoundsViolation => FriError::InvalidStructure("transcript-bounds"),
         TranscriptError::Unsupported => FriError::InvalidStructure("transcript-unsupported"),
+        TranscriptError::DeterministicHash(err) => FriError::DeterministicHash(err),
     }
 }
 
@@ -113,7 +114,7 @@ pub fn fri_verify(
     let mut query_seed = [0u8; 32];
     query_seed.copy_from_slice(&query_seed_bytes);
 
-    let positions = derive_query_positions(query_seed, query_count, proof.initial_domain_size);
+    let positions = derive_query_positions(query_seed, query_count, proof.initial_domain_size)?;
     if positions.len() != proof.queries.len() {
         return Err(FriError::InvalidStructure("query count mismatch"));
     }

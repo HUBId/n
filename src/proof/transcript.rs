@@ -10,7 +10,7 @@ use crate::config::{
     AirSpecId, ParamDigest, PoseidonParamId, ProofKind, TranscriptVersionId,
     TRANSCRIPT_VERSION_ID_RPP_FS_V1,
 };
-use crate::hash::Hasher;
+use crate::hash::{deterministic::DeterministicHashError, Hasher};
 
 /// Domain tag absorbed as the very first section of every transcript.
 const TRANSCRIPT_DOMAIN_TAG: &[u8] = b"RPP-FS/V1";
@@ -207,6 +207,8 @@ pub enum TranscriptError {
     UnsupportedTranscriptVersion,
     /// VRF proofs require additional metadata.
     MissingVrfMetadata,
+    /// Deterministic hashing helper failed while deriving challenges.
+    DeterministicHash(DeterministicHashError),
 }
 
 impl core::fmt::Display for TranscriptError {
@@ -234,11 +236,20 @@ impl core::fmt::Display for TranscriptError {
             TranscriptError::MissingVrfMetadata => {
                 write!(f, "missing VRF metadata before commitment roots")
             }
+            TranscriptError::DeterministicHash(err) => {
+                write!(f, "deterministic hash error: {err}")
+            }
         }
     }
 }
 
 impl std::error::Error for TranscriptError {}
+
+impl From<DeterministicHashError> for TranscriptError {
+    fn from(err: DeterministicHashError) -> Self {
+        TranscriptError::DeterministicHash(err)
+    }
+}
 
 impl Transcript {
     /// Instantiates a new transcript from the provided header.
@@ -622,8 +633,10 @@ impl TranscriptChallenges {
         hasher.update(&self.state);
         hasher.update(label.as_bytes());
         let mut reader = hasher.finalize_xof();
-        reader.fill(&mut self.state);
-        reader.fill(output);
+        reader
+            .fill(&mut self.state)
+            .map_err(TranscriptError::from)?;
+        reader.fill(output).map_err(TranscriptError::from)?;
         Ok(())
     }
 }

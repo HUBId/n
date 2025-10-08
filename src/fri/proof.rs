@@ -613,7 +613,7 @@ impl FriProof {
         let query_seed = transcript.derive_query_seed();
 
         let query_positions =
-            derive_query_positions(query_seed, view.query_count(), evaluations.len());
+            derive_query_positions(query_seed, view.query_count(), evaluations.len())?;
 
         let mut queries = Vec::with_capacity(query_positions.len());
         for &position in &query_positions {
@@ -749,7 +749,7 @@ impl FriVerifier {
         transcript.absorb_final(&proof.final_polynomial_digest);
         let query_seed = transcript.derive_query_seed();
         let expected_positions =
-            derive_query_positions(query_seed, view.query_count(), proof.initial_domain_size);
+            derive_query_positions(query_seed, view.query_count(), proof.initial_domain_size)?;
 
         if expected_positions.len() != proof.queries.len() {
             return Err(FriError::InvalidStructure("query count mismatch"));
@@ -806,14 +806,14 @@ pub(crate) fn derive_query_positions(
     seed: [u8; 32],
     count: usize,
     domain_size: usize,
-) -> Vec<usize> {
+) -> Result<Vec<usize>, FriError> {
     assert!(domain_size > 0, "domain size must be positive");
     let mut xof = PseudoBlake3Xof::new(&seed);
     let target = count.min(domain_size);
     let mut unique = Vec::with_capacity(target);
     let mut seen = vec![false; domain_size];
     while unique.len() < target {
-        let word = xof.next_u64();
+        let word = xof.next_u64().map_err(FriError::from)?;
         let position = (word % (domain_size as u64)) as usize;
         if !seen[position] {
             seen[position] = true;
@@ -821,7 +821,7 @@ pub(crate) fn derive_query_positions(
         }
     }
     unique.sort();
-    unique
+    Ok(unique)
 }
 
 fn verify_path(
@@ -986,7 +986,8 @@ mod tests {
         let mut transcript = FriTranscript::new(seed);
         transcript.absorb_final(&final_digest);
         let query_seed = transcript.derive_query_seed();
-        let positions = derive_query_positions(query_seed, security.query_budget(), 1024);
+        let positions = derive_query_positions(query_seed, security.query_budget(), 1024)
+            .expect("query positions");
 
         let queries: Vec<FriQueryProof> = positions
             .into_iter()

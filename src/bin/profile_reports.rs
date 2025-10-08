@@ -134,9 +134,13 @@ fn build_sample_proof(
     let mut reader = sample_reader(profile.id, run_label);
 
     let mut core_root = [0u8; 32];
-    reader.fill(&mut core_root);
+    reader
+        .fill(&mut core_root)
+        .expect("profile sampler XOF should not fail");
     let mut aux_root = [0u8; 32];
-    reader.fill(&mut aux_root);
+    reader
+        .fill(&mut aux_root)
+        .expect("profile sampler XOF should not fail");
 
     let mut fri_layer_roots = Vec::new();
     for _ in 0..2 {
@@ -253,7 +257,9 @@ fn sample_reader(profile_id: ProfileId, run_label: &str) -> OutputReader {
 
 fn sample_digest(reader: &mut OutputReader) -> [u8; 32] {
     let mut bytes = [0u8; 32];
-    reader.fill(&mut bytes);
+    reader
+        .fill(&mut bytes)
+        .expect("profile sampler XOF should not fail");
     bytes
 }
 
@@ -274,7 +280,9 @@ fn build_trace_stub(fri_proof: &FriProof) -> TraceOpenings {
 
 fn sample_u64(reader: &mut OutputReader) -> u64 {
     let mut bytes = [0u8; 8];
-    reader.fill(&mut bytes);
+    reader
+        .fill(&mut bytes)
+        .expect("profile sampler XOF should not fail");
     u64::from_le_bytes(bytes)
 }
 

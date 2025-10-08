@@ -101,7 +101,7 @@ fn derive_query_positions_from_proof(proof: &FriProof, seed: FriTranscriptSeed) 
     let mut seen = vec![false; proof.initial_domain_size];
 
     while unique.len() < target {
-        let word = xof.next_u64();
+        let word = xof.next_u64().expect("query sampling");
         let position = (word % (proof.initial_domain_size as u64)) as usize;
         if !seen[position] {
             seen[position] = true;

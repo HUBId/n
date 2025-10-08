@@ -449,7 +449,9 @@ fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec
     let mut unique = Vec::with_capacity(target);
     let mut seen = vec![false; domain_size];
     while unique.len() < target {
-        let word = xof.next_u64();
+        let word = xof
+            .next_u64()
+            .expect("deterministic query sampling must succeed");
         let position = (word % (domain_size as u64)) as usize;
         if !seen[position] {
             seen[position] = true;

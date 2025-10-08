@@ -1,5 +1,6 @@
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
 use crate::fri::FriProof;
+use crate::hash::deterministic::DeterministicHashError;
 use crate::ser::SerKind;
 use crate::utils::serialization::DigestBytes;
 use serde::{Deserialize, Serialize};
@@ -316,11 +317,19 @@ pub enum VerifyError {
     AggregationDigestMismatch,
     /// Malformed serialization encountered while decoding a proof section.
     Serialization(SerKind),
+    /// Deterministic hashing helper failed while sampling queries.
+    DeterministicHash(DeterministicHashError),
 }
 
 impl From<crate::ser::SerError> for VerifyError {
     fn from(err: crate::ser::SerError) -> Self {
         VerifyError::Serialization(err.kind())
+    }
+}
+
+impl From<DeterministicHashError> for VerifyError {
+    fn from(err: DeterministicHashError) -> Self {
+        VerifyError::DeterministicHash(err)
     }
 }
 
