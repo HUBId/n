@@ -11,8 +11,10 @@ use crate::config::{
 };
 use crate::field::prime_field::CanonicalSerialize;
 use crate::field::FieldElement;
+use crate::fri::pseudo_blake3;
 use crate::fri::types::{FriError, FriSecurityLevel};
-use crate::fri::FriVerifier;
+use crate::fri::{FriVerifier, PseudoBlake3Xof};
+use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::merkle::traits::MerkleHasher;
 use crate::merkle::verify_proof as verify_merkle_proof;
 use crate::merkle::{
@@ -34,7 +36,6 @@ use crate::proof::types::{
 };
 use crate::ser::SerKind;
 use crate::utils::serialization::ProofBytes;
-use core::convert::TryInto;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct VerificationStages {
@@ -321,6 +322,28 @@ fn precheck_body(
     ensure_merkle_scheme(config, context)?;
     let stark_params = canonical_stark_params(&context.profile);
 
+    let fri_seed = challenges
+        .draw_fri_seed()
+        .map_err(|_| VerifyError::TranscriptOrder)?;
+    for (layer_index, _) in proof.merkle.fri_layer_roots.iter().enumerate() {
+        challenges
+            .draw_fri_eta(layer_index)
+            .map_err(|_| VerifyError::TranscriptOrder)?;
+    }
+    let _ = challenges
+        .draw_query_seed()
+        .map_err(|_| VerifyError::TranscriptOrder)?;
+
+    let query_count = stark_params.fri().queries as usize;
+    let fri_query_seed = derive_fri_query_seed(fri_seed, &proof.fri_proof);
+    let expected_indices = derive_trace_query_indices(
+        fri_query_seed,
+        query_count,
+        proof.fri_proof.initial_domain_size,
+    )?;
+
+    validate_trace_indices(&proof.openings.trace.indices, &expected_indices)?;
+
     let trace_values = verify_trace_commitment(
         &stark_params,
         &proof.merkle.core_root,
@@ -358,20 +381,7 @@ fn precheck_body(
         stages.composition_ok = true;
     }
 
-    let fri_seed = challenges
-        .draw_fri_seed()
-        .map_err(|_| VerifyError::TranscriptOrder)?;
-    for (layer_index, _) in proof.merkle.fri_layer_roots.iter().enumerate() {
-        challenges
-            .draw_fri_eta(layer_index)
-            .map_err(|_| VerifyError::TranscriptOrder)?;
-    }
-    let _ = challenges
-        .draw_query_seed()
-        .map_err(|_| VerifyError::TranscriptOrder)?;
-
     let security_level = map_security_level(&context.profile);
-    validate_trace_indices(&proof.openings.trace.indices, &proof.fri_proof)?;
     if proof.fri_proof.security_level != security_level {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::SecurityLevelMismatch,
@@ -424,11 +434,85 @@ fn precheck_body(
     })
 }
 
-fn validate_trace_indices(
-    provided: &[u32],
-    fri_proof: &crate::fri::FriProof,
+fn ensure_merkle_scheme(
+    config: &ProofSystemConfig,
+    context: &VerifierContext,
 ) -> Result<(), VerifyError> {
-    let mut previous: Option<u32> = None;
+    if config.profile.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
+        || context.common_ids.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
+    {
+        return Err(VerifyError::UnsupportedMerkleScheme);
+    }
+
+    Ok(())
+}
+
+fn derive_fri_query_seed(fri_seed: [u8; 32], fri_proof: &crate::fri::FriProof) -> [u8; 32] {
+    let mut state = fri_seed;
+
+    for (layer_index, root) in fri_proof.layer_roots.iter().enumerate() {
+        let mut payload = Vec::with_capacity(state.len() + 8 + root.len());
+        payload.extend_from_slice(&state);
+        payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
+        payload.extend_from_slice(root);
+        state = pseudo_blake3(&payload);
+
+        let label = format!(
+            "{}ETA-{}",
+            FiatShamirChallengeRules::SALT_PREFIX,
+            layer_index
+        );
+        let mut eta_payload = Vec::with_capacity(state.len() + label.len());
+        eta_payload.extend_from_slice(&state);
+        eta_payload.extend_from_slice(label.as_bytes());
+        let challenge = pseudo_blake3(&eta_payload);
+        state = pseudo_blake3(&challenge);
+    }
+
+    let mut final_payload = Vec::with_capacity(state.len() + b"RPP-FS/FINAL".len() + 32);
+    final_payload.extend_from_slice(&state);
+    final_payload.extend_from_slice(b"RPP-FS/FINAL");
+    final_payload.extend_from_slice(&fri_proof.final_polynomial_digest);
+    state = pseudo_blake3(&final_payload);
+
+    let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
+    query_payload.extend_from_slice(&state);
+    query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
+    pseudo_blake3(&query_payload)
+}
+
+fn derive_trace_query_indices(
+    query_seed: [u8; 32],
+    query_count: usize,
+    domain_size: usize,
+) -> Result<Vec<u32>, VerifyError> {
+    if domain_size == 0 || domain_size > u32::MAX as usize {
+        return Err(VerifyError::IndicesMismatch);
+    }
+
+    let mut sampler = QueryIndexSampler::new(query_seed);
+    let target = core::cmp::min(query_count, domain_size);
+    let mut seen = vec![false; domain_size];
+    let mut indices = Vec::with_capacity(target);
+
+    while indices.len() < target {
+        let position = sampler.challenge_usize(domain_size);
+        if !seen[position] {
+            seen[position] = true;
+            indices.push(position as u32);
+        }
+    }
+
+    indices.sort_unstable();
+    Ok(indices)
+}
+
+fn validate_trace_indices(provided: &[u32], expected: &[u32]) -> Result<(), VerifyError> {
+    if provided.is_empty() {
+        return Err(VerifyError::EmptyOpenings);
+    }
+
+    let mut previous = None;
     for &value in provided {
         if let Some(prev) = previous {
             if value < prev {
@@ -441,34 +525,33 @@ fn validate_trace_indices(
         previous = Some(value);
     }
 
-    if fri_proof.queries.len() != provided.len() {
+    if provided.len() != expected.len() {
         return Err(VerifyError::IndicesMismatch);
     }
 
-    for (&expected, query) in provided.iter().zip(fri_proof.queries.iter()) {
-        let actual: u32 = query
-            .position
-            .try_into()
-            .map_err(|_| VerifyError::IndicesMismatch)?;
-        if expected != actual {
-            return Err(VerifyError::IndicesMismatch);
-        }
+    if provided != expected {
+        return Err(VerifyError::IndicesMismatch);
     }
 
     Ok(())
 }
 
-fn ensure_merkle_scheme(
-    config: &ProofSystemConfig,
-    context: &VerifierContext,
-) -> Result<(), VerifyError> {
-    if config.profile.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
-        || context.common_ids.merkle_scheme_id != MERKLE_SCHEME_ID_BLAKE3_2ARY_V1
-    {
-        return Err(VerifyError::UnsupportedMerkleScheme);
+struct QueryIndexSampler {
+    xof: PseudoBlake3Xof,
+}
+
+impl QueryIndexSampler {
+    fn new(seed: [u8; 32]) -> Self {
+        Self {
+            xof: PseudoBlake3Xof::new(&seed),
+        }
     }
 
-    Ok(())
+    fn challenge_usize(&mut self, range: usize) -> usize {
+        debug_assert!(range > 0);
+        let word = self.xof.next_u64();
+        (word % (range as u64)) as usize
+    }
 }
 
 #[derive(Clone, Copy)]
