@@ -869,7 +869,8 @@ fn verify_composition_alignment(
                 ),
             });
         }
-        if &leaf_bytes[..fri_bytes.len()] != fri_bytes {
+        let leaf_prefix = &leaf_bytes[..fri_bytes.len()];
+        if leaf_prefix != fri_bytes.as_slice() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: format!("composition_leaf_bytes_mismatch:pos={position}:index={index}"),
             });
