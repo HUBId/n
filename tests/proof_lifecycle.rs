@@ -9,7 +9,7 @@ use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::proof::ser::serialize_proof;
-use rpp_stark::proof::types::{MerkleSection, VerifyError, PROOF_VERSION};
+use rpp_stark::proof::types::{MerkleSection, Proof, VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
@@ -166,6 +166,95 @@ fn proof_lifecycle_accepts_valid_inputs() {
             panic!("expected verification to accept, got {:?}", err);
         }
     }
+}
+
+fn decode_proof(bytes: &ProofBytes) -> Proof {
+    Proof::from_bytes(bytes.as_slice()).expect("decode proof")
+}
+
+fn reencode_proof(proof: &Proof) -> ProofBytes {
+    ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
+}
+
+#[test]
+fn verification_rejects_tampered_ood_core_value() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    let ood = proof
+        .openings
+        .out_of_domain
+        .first_mut()
+        .expect("ood payload present");
+    let value = ood.core_values.first_mut().expect("core value present");
+    value[0] ^= 0x1;
+
+    let tampered_bytes = reencode_proof(&proof);
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &tampered_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+    assert!(matches!(
+        verdict,
+        VerificationVerdict::Reject(VerifyError::TraceOodMismatch)
+    ));
+}
+
+#[test]
+fn verification_rejects_tampered_ood_composition_value() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let mut proof = decode_proof(&proof_bytes);
+    let ood = proof
+        .openings
+        .out_of_domain
+        .first_mut()
+        .expect("ood payload present");
+    ood.composition_value[0] ^= 0x1;
+
+    let tampered_bytes = reencode_proof(&proof);
+    let verify_inputs = make_public_inputs(&setup.header, &setup.body);
+    let verdict = verify_proof(
+        ProofKind::Execution,
+        &verify_inputs,
+        &tampered_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification verdict");
+    assert!(matches!(
+        verdict,
+        VerificationVerdict::Reject(VerifyError::CompositionOodMismatch)
+    ));
 }
 
 #[test]

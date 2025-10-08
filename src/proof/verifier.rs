@@ -9,7 +9,7 @@ use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
     MERKLE_SCHEME_ID_BLAKE3_2ARY_V1,
 };
-use crate::field::prime_field::CanonicalSerialize;
+use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
 use crate::fri::pseudo_blake3;
 use crate::fri::types::{FriError, FriSecurityLevel};
@@ -309,10 +309,10 @@ fn precheck_body(
     let mut challenges = transcript
         .finalize()
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    let _alpha_vector = challenges
+    let alpha_vector = challenges
         .draw_alpha_vector(PROOF_ALPHA_VECTOR_LEN)
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    let _ood_points = challenges
+    let ood_points = challenges
         .draw_ood_points(PROOF_MIN_OOD_POINTS)
         .map_err(|_| VerifyError::TranscriptOrder)?;
     let _ood_seed = challenges
@@ -372,6 +372,8 @@ fn precheck_body(
             &proof.openings.out_of_domain,
             &trace_values,
             &composition_values,
+            &ood_points,
+            &alpha_vector,
         )?;
         stages.composition_ok = true;
     } else {
@@ -762,33 +764,38 @@ fn verify_ood_openings(
     openings: &[OutOfDomainOpening],
     trace_values: &[FieldElement],
     composition_values: &[FieldElement],
+    points: &[[u8; 32]],
+    alpha_vector: &[[u8; 32]],
 ) -> Result<(), VerifyError> {
-    if openings.is_empty() {
+    if openings.is_empty()
+        || trace_values.is_empty()
+        || composition_values.is_empty()
+        || points.is_empty()
+        || alpha_vector.is_empty()
+    {
         return Err(VerifyError::OutOfDomainInvalid);
     }
-    if trace_values.is_empty() || composition_values.is_empty() {
+
+    if openings.len() != points.len() {
         return Err(VerifyError::OutOfDomainInvalid);
     }
 
-    let trace_len = trace_values.len();
-    let comp_len = composition_values.len();
-    for opening in openings {
-        if opening.core_values.len() != 1 {
-            return Err(VerifyError::OutOfDomainInvalid);
-        }
-        if !opening.aux_values.is_empty() {
+    let alphas: Vec<FieldElement> = alpha_vector
+        .iter()
+        .map(FieldElement::from_transcript_bytes)
+        .collect();
+
+    for (opening, point_bytes) in openings.iter().zip(points.iter()) {
+        if opening.core_values.len() != 1 || !opening.aux_values.is_empty() {
             return Err(VerifyError::OutOfDomainInvalid);
         }
 
-        let comp_index = (opening.point[0] as usize) % comp_len;
-        let expected_comp = composition_values[comp_index];
-        let observed_comp = field_from_fixed_bytes(&opening.composition_value)?;
-        if observed_comp != expected_comp {
-            return Err(VerifyError::CompositionOodMismatch);
+        if opening.point != *point_bytes {
+            return Err(VerifyError::OutOfDomainInvalid);
         }
 
-        let trace_index = comp_index % trace_len;
-        let expected_trace = trace_values[trace_index];
+        let point = FieldElement::from_transcript_bytes(point_bytes);
+        let expected_trace = evaluate_ood_samples(trace_values, &alphas, point);
         let observed_trace = field_from_fixed_bytes(
             opening
                 .core_values
@@ -798,9 +805,35 @@ fn verify_ood_openings(
         if observed_trace != expected_trace {
             return Err(VerifyError::TraceOodMismatch);
         }
+
+        let expected_composition = evaluate_ood_samples(composition_values, &alphas, point);
+        let observed_composition = field_from_fixed_bytes(&opening.composition_value)?;
+        if observed_composition != expected_composition {
+            return Err(VerifyError::CompositionOodMismatch);
+        }
     }
 
     Ok(())
+}
+
+fn evaluate_ood_samples(
+    samples: &[FieldElement],
+    alphas: &[FieldElement],
+    point: FieldElement,
+) -> FieldElement {
+    if samples.is_empty() || alphas.is_empty() {
+        return FieldElement::ZERO;
+    }
+
+    let mut acc = FieldElement::ZERO;
+    let mut power = FieldElement::ONE;
+    for (sample, alpha) in samples.iter().zip(alphas.iter().cycle()) {
+        let weighted = sample.mul(alpha);
+        let term = weighted.mul(&power);
+        acc = acc.add(&term);
+        power = power.mul(&point);
+    }
+    acc
 }
 
 fn field_from_fixed_bytes(bytes: &[u8; 32]) -> Result<FieldElement, VerifyError> {
