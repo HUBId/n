@@ -10,7 +10,7 @@ use rpp_stark::field::FieldElement;
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
-use rpp_stark::proof::ser::serialize_proof;
+use rpp_stark::proof::ser::{compute_integrity_digest, map_public_to_config_kind, serialize_proof};
 use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, Proof, VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
@@ -190,13 +190,156 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
         let header = canonical
             .serialize_header(&payload)
             .expect("serialize canonical header");
-        let integrity = rpp_stark::proof::ser::compute_integrity_digest(&header, &payload);
+        let integrity = compute_integrity_digest(&header, &payload);
         proof.telemetry.header_length = header.len() as u32;
         proof.telemetry.body_length = (payload.len() + 32) as u32;
         proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
     }
 
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
+}
+
+#[test]
+fn verification_report_records_total_bytes_and_telemetry() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &proof_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("verification report");
+
+    assert!(
+        report.error.is_none(),
+        "expected verification to accept, got {:?}",
+        report.error
+    );
+    assert_eq!(
+        report.total_bytes as usize,
+        proof_bytes.as_slice().len(),
+        "reported total bytes must match input length"
+    );
+
+    assert!(
+        report.proof.has_telemetry,
+        "fixture proof should include telemetry"
+    );
+    let payload = report.proof.serialize_payload().expect("serialize payload");
+    let header = report
+        .proof
+        .serialize_header(&payload)
+        .expect("serialize header");
+    let expected_body_length = (payload.len() + 32) as u32;
+    assert_eq!(
+        report.proof.telemetry.body_length, expected_body_length,
+        "telemetry body length must match payload"
+    );
+    let expected_header_length = header.len() as u32;
+    assert_eq!(
+        report.proof.telemetry.header_length, expected_header_length,
+        "telemetry header length must match header bytes"
+    );
+    assert_eq!(
+        u64::from(report.proof.telemetry.header_length)
+            + u64::from(report.proof.telemetry.body_length),
+        report.total_bytes + 32,
+        "telemetry lengths must sum to total bytes plus the integrity digest"
+    );
+
+    let mut canonical = report.proof.clone();
+    canonical.telemetry.header_length = 0;
+    canonical.telemetry.body_length = 0;
+    canonical.telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+    let canonical_payload = canonical
+        .serialize_payload()
+        .expect("serialize canonical payload");
+    let canonical_header = canonical
+        .serialize_header(&canonical_payload)
+        .expect("serialize canonical header");
+    let expected_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
+    assert_eq!(
+        report.proof.telemetry.integrity_digest.bytes, expected_digest,
+        "telemetry integrity digest must remain stable"
+    );
+}
+
+#[test]
+fn verification_rejects_tampered_telemetry_fields() {
+    let setup = TestSetup::new();
+    let witness = WitnessBlob {
+        bytes: &setup.witness,
+    };
+    let public_inputs = make_public_inputs(&setup.header, &setup.body);
+    let proof_bytes = generate_proof(
+        ProofKind::Execution,
+        &public_inputs,
+        witness,
+        &setup.config,
+        &setup.prover_context,
+    )
+    .expect("proof generation succeeds");
+
+    let declared_kind = map_public_to_config_kind(ProofKind::Execution);
+
+    let mut tampered_header = decode_proof(&proof_bytes);
+    tampered_header.telemetry.header_length =
+        tampered_header.telemetry.header_length.saturating_add(4);
+    let tampered_header_bytes = ProofBytes::new(
+        serialize_proof(&tampered_header).expect("serialize tampered header proof"),
+    );
+    let header_report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &tampered_header_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("header mismatch report");
+    match header_report.error {
+        Some(VerifyError::HeaderLengthMismatch { declared, actual }) => {
+            assert_eq!(
+                declared, tampered_header.telemetry.header_length,
+                "report must echo tampered header length"
+            );
+            assert_ne!(declared, actual, "mismatch must surface differing lengths");
+        }
+        other => panic!("expected header length mismatch, got {:?}", other),
+    }
+
+    let mut tampered_digest = decode_proof(&proof_bytes);
+    tampered_digest.telemetry.integrity_digest.bytes[0] ^= 0x1;
+    let tampered_digest_bytes = ProofBytes::new(
+        serialize_proof(&tampered_digest).expect("serialize tampered digest proof"),
+    );
+    let digest_report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &tampered_digest_bytes,
+        &setup.config,
+        &setup.verifier_context,
+    )
+    .expect("digest mismatch report");
+    assert!(matches!(
+        digest_report.error,
+        Some(VerifyError::IntegrityDigestMismatch)
+    ));
 }
 
 fn mutate_header_trace_root(bytes: &ProofBytes) -> ProofBytes {
@@ -474,10 +617,8 @@ fn verification_rejects_tampered_fri_fold_challenge() {
         !proof.fri_proof.fold_challenges.is_empty(),
         "expected fold challenges"
     );
-    proof.fri_proof.final_polynomial[0] = proof
-        .fri_proof
-        .final_polynomial[0]
-        .add(&FieldElement::from(1u64));
+    proof.fri_proof.final_polynomial[0] =
+        proof.fri_proof.final_polynomial[0].add(&FieldElement::from(1u64));
     let mutated_bytes = reencode_proof(&mut proof);
 
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);

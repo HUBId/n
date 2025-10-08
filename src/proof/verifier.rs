@@ -66,15 +66,19 @@ pub fn verify_proof_bytes(
     }
 
     let proof = Proof::from_bytes(proof_bytes.as_slice())?;
-    let total_bytes = proof_bytes.as_slice().len() as u64;
+    let total_len = proof_bytes.as_slice().len();
+    let total_bytes = total_len as u64;
     let mut stages = VerificationStages::default();
     match precheck_decoded_proof(
         proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
-        None,
+        DecodedProofEnv {
+            declared_kind,
+            public_inputs,
+            config,
+            context,
+            total_bytes: total_len,
+            block_context: None,
+        },
         &mut stages,
     ) {
         Ok(prechecked) => match execute_fri_stage(&prechecked) {
@@ -101,32 +105,38 @@ pub(crate) struct PrecheckedProof {
     pub(crate) params: StarkParams,
 }
 
+struct DecodedProofEnv<'ctx, 'pi> {
+    declared_kind: ConfigProofKind,
+    public_inputs: &'pi PublicInputs<'pi>,
+    config: &'ctx ProofSystemConfig,
+    context: &'ctx VerifierContext,
+    total_bytes: usize,
+    block_context: Option<&'ctx TranscriptBlockContext>,
+}
+
 #[allow(clippy::result_large_err)]
 fn precheck_decoded_proof(
     proof: Proof,
-    declared_kind: ConfigProofKind,
-    public_inputs: &PublicInputs<'_>,
-    config: &ProofSystemConfig,
-    context: &VerifierContext,
-    block_context: Option<&TranscriptBlockContext>,
+    env: DecodedProofEnv<'_, '_>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedProof, (Proof, VerifyError)> {
     if let Err(error) = validate_header(
         &proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
+        env.declared_kind,
+        env.public_inputs,
+        env.config,
+        env.context,
         stages,
     ) {
         return Err((proof, error));
     }
     match precheck_body(
         &proof,
-        public_inputs,
-        config,
-        context,
-        block_context,
+        env.public_inputs,
+        env.config,
+        env.context,
+        env.total_bytes,
+        env.block_context,
         stages,
     ) {
         Ok(prechecked) => Ok(PrecheckedProof {
@@ -158,14 +168,18 @@ pub(crate) fn precheck_proof_bytes(
         return Err(VerifyError::ParamsHashMismatch);
     }
     let proof = Proof::from_bytes(proof_bytes.as_slice())?;
+    let total_len = proof_bytes.as_slice().len();
     let mut stages = VerificationStages::default();
     precheck_decoded_proof(
         proof,
-        declared_kind,
-        public_inputs,
-        config,
-        context,
-        block_context,
+        DecodedProofEnv {
+            declared_kind,
+            public_inputs,
+            config,
+            context,
+            total_bytes: total_len,
+            block_context,
+        },
         &mut stages,
     )
     .map_err(|(_, err)| err)
@@ -250,6 +264,7 @@ fn precheck_body(
     public_inputs: &PublicInputs<'_>,
     config: &ProofSystemConfig,
     context: &VerifierContext,
+    total_bytes: usize,
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
@@ -416,9 +431,57 @@ fn precheck_body(
             issue: FriVerifyIssue::SecurityLevelMismatch,
         });
     }
+    if total_bytes > context.limits.max_proof_size_bytes as usize {
+        let got_kb = total_bytes.div_ceil(1024) as u32;
+        let max_kb = (context.limits.max_proof_size_bytes as usize).div_ceil(1024) as u32;
+        return Err(VerifyError::ProofTooLarge { max_kb, got_kb });
+    }
+
+    let payload = proof.serialize_payload().map_err(VerifyError::from)?;
+    let header_bytes = proof
+        .serialize_header(&payload)
+        .map_err(VerifyError::from)?;
+    let payload_len = payload.len();
+    let declared_body_length = match total_bytes.checked_sub(header_bytes.len()) {
+        Some(value) => value,
+        None => {
+            let actual = payload_len.min(u32::MAX as usize) as u32;
+            return Err(VerifyError::BodyLengthMismatch {
+                declared: 0,
+                actual,
+            });
+        }
+    };
+
+    if declared_body_length != payload_len {
+        let declared = declared_body_length.min(u32::MAX as usize) as u32;
+        let actual = payload_len.min(u32::MAX as usize) as u32;
+        return Err(VerifyError::BodyLengthMismatch { declared, actual });
+    }
+
     if proof.has_telemetry {
-        let payload = proof.serialize_payload().map_err(VerifyError::from)?;
-        let expected_body_length = payload.len() as u32 + 32;
+        let expected_body_with_digest = match payload_len.checked_add(32) {
+            Some(value) => value,
+            None => {
+                let actual = payload_len.min(u32::MAX as usize) as u32;
+                return Err(VerifyError::BodyLengthMismatch {
+                    declared: proof.telemetry.body_length,
+                    actual,
+                });
+            }
+        };
+
+        let expected_body_length: u32 = match expected_body_with_digest.try_into() {
+            Ok(value) => value,
+            Err(_) => {
+                let actual = payload_len.min(u32::MAX as usize) as u32;
+                return Err(VerifyError::BodyLengthMismatch {
+                    declared: proof.telemetry.body_length,
+                    actual,
+                });
+            }
+        };
+
         if proof.telemetry.body_length != expected_body_length {
             return Err(VerifyError::BodyLengthMismatch {
                 declared: proof.telemetry.body_length,
@@ -439,13 +502,21 @@ fn precheck_body(
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
 
-        let header_bytes = proof
-            .serialize_header(&payload)
-            .map_err(VerifyError::from)?;
-        if proof.telemetry.header_length != header_bytes.len() as u32 {
+        let expected_header_length: u32 = match header_bytes.len().try_into() {
+            Ok(value) => value,
+            Err(_) => {
+                let actual = header_bytes.len().min(u32::MAX as usize) as u32;
+                return Err(VerifyError::HeaderLengthMismatch {
+                    declared: proof.telemetry.header_length,
+                    actual,
+                });
+            }
+        };
+
+        if proof.telemetry.header_length != expected_header_length {
             return Err(VerifyError::HeaderLengthMismatch {
                 declared: proof.telemetry.header_length,
-                actual: header_bytes.len() as u32,
+                actual: expected_header_length,
             });
         }
 
@@ -461,13 +532,6 @@ fn precheck_body(
         if proof.telemetry.integrity_digest.bytes != integrity_digest {
             return Err(VerifyError::IntegrityDigestMismatch);
         }
-    }
-
-    let total_bytes = compute_proof_size(proof, context)?;
-    if total_bytes > context.limits.max_proof_size_bytes as usize {
-        let got_kb = total_bytes.div_ceil(1024) as u32;
-        let max_kb = (context.limits.max_proof_size_bytes as usize).div_ceil(1024) as u32;
-        return Err(VerifyError::ProofTooLarge { max_kb, got_kb });
     }
 
     enforce_resource_limits(proof.kind, public_inputs, context, proof)?;
@@ -1013,14 +1077,6 @@ fn field_from_fixed_bytes(bytes: &[u8; 32]) -> Result<FieldElement, VerifyError>
     let mut buf = [0u8; 8];
     buf.copy_from_slice(&bytes[..8]);
     FieldElement::from_bytes(&buf).map_err(|_| VerifyError::NonCanonicalFieldElement)
-}
-
-fn compute_proof_size(proof: &Proof, _context: &VerifierContext) -> Result<usize, VerifyError> {
-    let payload = proof.serialize_payload().map_err(VerifyError::from)?;
-    let header_bytes = proof
-        .serialize_header(&payload)
-        .map_err(VerifyError::from)?;
-    Ok(header_bytes.len() + payload.len() + 32)
 }
 
 fn resolve_air_spec_id(
