@@ -62,6 +62,23 @@ Public inputs mirror the schema from [`types::PublicInputs`](src/air/types.rs):
 All serialisation is byte-for-byte reproducible; replaying the same trace and
 public inputs therefore yields identical transcript openings and FRI queries.
 
+### Witness layout
+
+Witness blobs follow the fixed header/body layout shown below:
+
+1. `u32` little-endian row count.
+2. Four `u32` little-endian column counters in the order `main`, `auxiliary`,
+   `permutation`, `lookup`.
+3. Column data encoded column-major: for each segment the declared number of
+   columns is emitted, each containing `row_count` field elements in canonical
+   little-endian form.
+
+The worked LFSR example used by the prover declares a single main column and no
+auxiliary segments. Its execution seed is carried in the execution proof body as
+an 8-byte little-endian field element. Boundary constraints fix the first and
+last row of the column to the deterministic LFSR state to ensure witnesses are
+reproducible from public inputs.
+
 ### Transcript challenge ordering
 
 The Fiat–Shamir transcript emits challenges in the order shown below. The phase

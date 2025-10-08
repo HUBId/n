@@ -30,7 +30,7 @@ const ALPHA: Felt = Felt(5);
 /// Additive tweak applied during the transition.
 const BETA: Felt = Felt(7);
 /// Blowup factor enforced by the schema.
-const LDE_BLOWUP: usize = 4;
+const LDE_BLOWUP: usize = 8;
 
 /// Public inputs for the LFSR example.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -3,6 +3,8 @@ use rpp_stark::config::{
     ChunkingPolicy, CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig,
     ProverContext, ThreadPoolProfile, VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
 };
+use rpp_stark::field::prime_field::{CanonicalSerialize, FieldElementOps};
+use rpp_stark::field::FieldElement;
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
@@ -42,14 +44,16 @@ impl TestSetup {
         );
         let verifier_context = build_verifier_context(&profile, &common, &param_digest, None);
 
+        let seed = FieldElement::from(3u64);
+        let length = 128usize;
         let header = ExecutionHeaderV1 {
             version: PublicInputVersion::V1,
             program_digest: DigestBytes { bytes: [0u8; 32] },
-            trace_length: 128,
-            trace_width: 4,
+            trace_length: length as u32,
+            trace_width: 1,
         };
-        let body = Vec::new();
-        let witness = build_witness(128);
+        let body = seed.to_bytes().to_vec();
+        let witness = build_witness(seed, length);
 
         Self {
             config,
@@ -62,11 +66,28 @@ impl TestSetup {
     }
 }
 
-fn build_witness(count: usize) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(4 + count * 8);
-    bytes.extend_from_slice(&(count as u32).to_le_bytes());
-    for value in 0..count {
-        bytes.extend_from_slice(&((value as u64 + 1).to_le_bytes()));
+const LFSR_ALPHA: u64 = 5;
+const LFSR_BETA: u64 = 7;
+
+fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
+    let alpha = FieldElement::from(LFSR_ALPHA);
+    let beta = FieldElement::from(LFSR_BETA);
+    let mut column = Vec::with_capacity(rows);
+    let mut state = seed;
+    column.push(state);
+    for _ in 1..rows {
+        state = state.mul(&alpha).add(&beta);
+        column.push(state);
+    }
+
+    let mut bytes = Vec::with_capacity(20 + rows * 8);
+    bytes.extend_from_slice(&(rows as u32).to_le_bytes());
+    bytes.extend_from_slice(&1u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    for value in column {
+        bytes.extend_from_slice(&value.to_bytes());
     }
     bytes
 }
