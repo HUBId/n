@@ -217,12 +217,15 @@ fn evaluations_to_leaves(evaluations: &[Felt], leaf_width: usize) -> Result<Vec<
         ));
     }
 
-    let element_bytes = Felt::ZERO.to_bytes();
     let mut leaves = Vec::with_capacity(evaluations.len() / leaf_width);
     for chunk in evaluations.chunks(leaf_width) {
-        let mut bytes = Vec::with_capacity(leaf_width * element_bytes.len());
+        let mut bytes = Vec::with_capacity(leaf_width * Felt::BYTE_LENGTH);
         for felt in chunk {
-            bytes.extend_from_slice(&felt.to_bytes());
+            let encoded = felt.to_bytes().map_err(|_| AirError::Serialization {
+                kind: SerKind::Trace,
+                detail: "non-canonical constraint evaluation",
+            })?;
+            bytes.extend_from_slice(&encoded);
         }
         leaves.push(Leaf::new(bytes));
     }

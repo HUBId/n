@@ -94,12 +94,17 @@ fn deterministic_state_digest() {
     let close2 = t2.challenge_bytes(TranscriptLabel::ProofClose, 32).unwrap();
     assert_eq!(close1, close2);
     let proof_close_hex: String = close1.iter().map(|b| format!("{:02x}", b)).collect();
-    let fri_fold_scalars: Vec<u64> = fri_folds.iter().map(|f| u64::from(*f)).collect();
+    let fri_fold_scalars: Vec<u64> = fri_folds
+        .iter()
+        .map(|f| u64::try_from(*f).expect("canonical fold scalar"))
+        .collect();
     assert_json_snapshot!(
         "transcript_profile_x8",
         serde_json::json!({
-            "trace_challenge": u64::from(trace_challenge_a1),
-            "comp_challenge": u64::from(comp_challenge_a1),
+            "trace_challenge": u64::try_from(trace_challenge_a1)
+                .expect("canonical trace challenge"),
+            "comp_challenge": u64::try_from(comp_challenge_a1)
+                .expect("canonical composition challenge"),
             "fri_folds": fri_fold_scalars,
             "query_indices": idxs1,
             "proof_close_hex": proof_close_hex,

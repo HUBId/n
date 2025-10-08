@@ -246,20 +246,20 @@ impl FriProof {
         }
 
         for challenge in &self.fold_challenges {
-            buffer.extend_from_slice(&field_to_bytes(challenge));
+            buffer.extend_from_slice(&field_to_bytes(challenge)?);
         }
 
         buffer.extend_from_slice(&self.final_polynomial_digest);
 
         for value in &self.final_polynomial {
-            buffer.extend_from_slice(&field_to_bytes(value));
+            buffer.extend_from_slice(&field_to_bytes(value)?);
         }
 
         for query in &self.queries {
             buffer.extend_from_slice(&(query.position as u32).to_le_bytes());
             buffer.extend_from_slice(&(query.layers.len() as u16).to_le_bytes());
             for layer in &query.layers {
-                buffer.extend_from_slice(&field_to_bytes(&layer.value));
+                buffer.extend_from_slice(&field_to_bytes(&layer.value)?);
                 buffer.push(layer.path.len() as u8);
                 for element in &layer.path {
                     buffer.push(element.index.0);
@@ -268,14 +268,14 @@ impl FriProof {
                     }
                 }
             }
-            buffer.extend_from_slice(&field_to_bytes(&query.final_value));
+            buffer.extend_from_slice(&field_to_bytes(&query.final_value)?);
         }
 
         if let Some(oods) = &self.deep_oods {
-            buffer.extend_from_slice(&field_to_bytes(&oods.point));
+            buffer.extend_from_slice(&field_to_bytes(&oods.point)?);
             buffer.extend_from_slice(&(oods.evaluations.len() as u16).to_le_bytes());
             for value in &oods.evaluations {
-                buffer.extend_from_slice(&field_to_bytes(value));
+                buffer.extend_from_slice(&field_to_bytes(value)?);
             }
         }
 
@@ -531,13 +531,13 @@ impl FriTranscript {
 }
 
 /// Residual polynomial commitment hashing all final-layer evaluations.
-pub(crate) fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
+pub(crate) fn hash_final_layer(values: &[FieldElement]) -> Result<[u8; 32], FriError> {
     let mut payload = Vec::with_capacity(4 + values.len() * 8);
     payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
     for value in values {
-        payload.extend_from_slice(&field_to_bytes(value));
+        payload.extend_from_slice(&field_to_bytes(value)?);
     }
-    pseudo_blake3(&payload)
+    Ok(pseudo_blake3(&payload))
 }
 
 fn default_fri_params() -> &'static StarkParams {
@@ -594,7 +594,7 @@ impl FriProof {
                 break;
             }
 
-            let layer = FriLayer::new(layer_index, coset_shift, current);
+            let layer = FriLayer::new(layer_index, coset_shift, current)?;
             let root = layer.root();
             transcript.absorb_layer(layer.index(), &root);
             let eta = transcript.draw_eta(layer.index());
@@ -608,7 +608,7 @@ impl FriProof {
 
         // Record the final layer (values only).
         let final_polynomial = current.clone();
-        let final_polynomial_digest = hash_final_layer(&final_polynomial);
+        let final_polynomial_digest = hash_final_layer(&final_polynomial)?;
         transcript.absorb_final(&final_polynomial_digest);
         let query_seed = transcript.derive_query_seed();
 
@@ -739,7 +739,7 @@ impl FriVerifier {
             }
         }
 
-        let recomputed_digest = hash_final_layer(&proof.final_polynomial);
+        let recomputed_digest = hash_final_layer(&proof.final_polynomial)?;
         if recomputed_digest != proof.final_polynomial_digest {
             return Err(FriError::LayerRootMismatch {
                 layer: proof.layer_roots.len(),
@@ -832,7 +832,7 @@ fn verify_path(
     layer_index: usize,
     leaf_count: usize,
 ) -> Result<(), FriError> {
-    let encoded_leaf = encode_leaf(&field_to_bytes(&value));
+    let encoded_leaf = encode_leaf(&field_to_bytes(&value)?);
     let computed =
         compute_root_from_path(&encoded_leaf, index, leaf_count, path).map_err(|err| {
             FriError::PathInvalid {
@@ -981,7 +981,7 @@ mod tests {
         let seed = sample_seed();
         let security = FriSecurityLevel::Standard;
         let final_polynomial: Vec<FieldElement> = Vec::new();
-        let final_digest = hash_final_layer(&final_polynomial);
+        let final_digest = hash_final_layer(&final_polynomial).expect("final layer hash");
 
         let mut transcript = FriTranscript::new(seed);
         transcript.absorb_final(&final_digest);

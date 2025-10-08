@@ -13,6 +13,31 @@
 //!   operating-system entropy sources are intentionally avoided.
 
 use core::{cmp::Ordering, fmt};
+use std::error::Error;
+
+/// Errors surfaced while enforcing canonical field constraints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldConstraintError {
+    /// The value is not a canonical representative of the field modulus.
+    NotCanonical,
+    /// The value must be non-zero but was equal to the additive identity.
+    IsZero,
+}
+
+impl fmt::Display for FieldConstraintError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FieldConstraintError::NotCanonical => {
+                f.write_str("field element is not in canonical form")
+            }
+            FieldConstraintError::IsZero => {
+                f.write_str("field element violates non-zero constraint")
+            }
+        }
+    }
+}
+
+impl Error for FieldConstraintError {}
 
 /// Metadata describing the underlying field modulus.
 #[derive(Debug, Clone, Copy)]
@@ -75,6 +100,8 @@ impl FieldElement {
     pub const ZERO: FieldElement = FieldElement(0);
     /// Multiplicative identity in canonical form.
     pub const ONE: FieldElement = FieldElement(1);
+    /// Length in bytes of the canonical serialization.
+    pub const BYTE_LENGTH: usize = 8;
 
     #[inline(always)]
     const fn modulus() -> u64 {
@@ -204,12 +231,15 @@ pub trait MontgomeryConvertible: Sized {
 }
 
 /// Trait defining serialization requirements for field elements.
+///
+/// Implementations must reject non-canonical encodings by returning
+/// [`FieldConstraintError`].
 pub trait CanonicalSerialize: Sized {
     /// Canonical serialization output type (e.g. `[u8; 8]`).
     type Bytes;
 
     /// Serializes the element into canonical little-endian bytes.
-    fn to_bytes(&self) -> Self::Bytes;
+    fn to_bytes(&self) -> Result<Self::Bytes, FieldConstraintError>;
 
     /// Attempts to deserialize from canonical little-endian bytes.
     fn from_bytes(bytes: &Self::Bytes) -> Result<Self, FieldDeserializeError>;
@@ -233,13 +263,17 @@ impl fmt::Display for FieldDeserializeError {
 }
 
 /// Trait collecting constant-time auditing assertions required by higher layers.
+///
+/// The methods return [`FieldConstraintError`] instead of panicking so callers
+/// can surface canonicality bugs through their own error channels while
+/// retaining constant-time checking internally.
 pub trait ConstantTimeAssertions {
     /// Ensures the element is strictly less than the field modulus in constant time.
-    fn assert_lt_modulus(&self);
+    fn assert_lt_modulus(&self) -> Result<(), FieldConstraintError>;
     /// Ensures the element is *not* the additive identity in constant time.
-    fn assert_nonzero(&self);
-    /// Ensures the element is a valid canonical representative (or panics/logs otherwise).
-    fn assert_canonical(&self);
+    fn assert_nonzero(&self) -> Result<(), FieldConstraintError>;
+    /// Ensures the element is a valid canonical representative.
+    fn assert_canonical(&self) -> Result<(), FieldConstraintError>;
 }
 
 impl FieldElementOps for FieldElement {
@@ -285,9 +319,9 @@ impl MontgomeryConvertible for FieldElement {
 impl CanonicalSerialize for FieldElement {
     type Bytes = [u8; 8];
 
-    fn to_bytes(&self) -> Self::Bytes {
-        self.assert_canonical();
-        self.0.to_le_bytes()
+    fn to_bytes(&self) -> Result<Self::Bytes, FieldConstraintError> {
+        self.assert_canonical()?;
+        Ok(self.0.to_le_bytes())
     }
 
     fn from_bytes(bytes: &Self::Bytes) -> Result<Self, FieldDeserializeError> {
@@ -301,20 +335,22 @@ impl CanonicalSerialize for FieldElement {
 }
 
 impl ConstantTimeAssertions for FieldElement {
-    fn assert_lt_modulus(&self) {
+    fn assert_lt_modulus(&self) -> Result<(), FieldConstraintError> {
         if self.0 >= Self::modulus() {
-            panic!("field element not canonical");
+            return Err(FieldConstraintError::NotCanonical);
         }
+        Ok(())
     }
 
-    fn assert_nonzero(&self) {
+    fn assert_nonzero(&self) -> Result<(), FieldConstraintError> {
         if self.0 == 0 {
-            panic!("field element is zero");
+            return Err(FieldConstraintError::IsZero);
         }
+        Ok(())
     }
 
-    fn assert_canonical(&self) {
-        self.assert_lt_modulus();
+    fn assert_canonical(&self) -> Result<(), FieldConstraintError> {
+        self.assert_lt_modulus()
     }
 }
 
@@ -324,10 +360,12 @@ impl From<u64> for FieldElement {
     }
 }
 
-impl From<FieldElement> for u64 {
-    fn from(value: FieldElement) -> Self {
-        value.assert_canonical();
-        value.0
+impl TryFrom<FieldElement> for u64 {
+    type Error = FieldConstraintError;
+
+    fn try_from(value: FieldElement) -> Result<Self, Self::Error> {
+        value.assert_canonical()?;
+        Ok(value.0)
     }
 }
 

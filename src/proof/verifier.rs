@@ -620,7 +620,7 @@ fn verify_merkle_section(
         return Err(VerifyError::UnsupportedMerkleScheme);
     }
 
-    let element_size = FieldElement::ZERO.to_bytes().len();
+    let element_size = FieldElement::BYTE_LENGTH;
     let expected_leaf_bytes = element_size * params.merkle().leaf_width as usize;
     let arity = params.merkle().arity;
     let root_digest = MerkleDigest::new(root.to_vec());
@@ -1025,5 +1025,8 @@ fn map_fri_error(error: FriError) -> VerifyError {
             section: MerkleSection::FriPath,
         },
         FriError::DeterministicHash(err) => VerifyError::DeterministicHash(err),
+        FriError::FieldConstraint(_) => VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::Generic,
+        },
     }
 }

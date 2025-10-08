@@ -58,15 +58,21 @@ impl PublicInputs {
     }
 
     /// Returns the canonical 32-byte digest derived from the public inputs.
-    pub fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> Result<[u8; 32], AirError> {
         let mut digest = [0u8; 32];
-        let seed_bytes = self.seed.to_bytes();
+        let seed_bytes = self.seed.to_bytes().map_err(|_| AirError::Serialization {
+            kind: SerKind::PublicInput,
+            detail: "seed non-canonical",
+        })?;
         digest[..seed_bytes.len()].copy_from_slice(&seed_bytes);
         let length_fe = Felt::from(self.length as u64);
-        let length_bytes = length_fe.to_bytes();
+        let length_bytes = length_fe.to_bytes().map_err(|_| AirError::Serialization {
+            kind: SerKind::PublicInput,
+            detail: "length non-canonical",
+        })?;
         let offset = seed_bytes.len();
         digest[offset..offset + length_bytes.len()].copy_from_slice(&length_bytes);
-        digest
+        Ok(digest)
     }
 }
 
@@ -101,12 +107,18 @@ impl PublicInputsCodecTrait for PublicInputsCodec {
 
     fn encode(&self, value: &Self::Value) -> Result<Vec<FieldElementBytes>, AirError> {
         let mut seed_bytes = [0u8; 32];
-        let seed_le = value.seed.to_bytes();
+        let seed_le = value.seed.to_bytes().map_err(|_| AirError::Serialization {
+            kind: SerKind::PublicInput,
+            detail: "seed non-canonical",
+        })?;
         seed_bytes[..seed_le.len()].copy_from_slice(&seed_le);
 
         let mut length_bytes = [0u8; 32];
         let length_fe = Felt::from(value.length as u64);
-        let length_le = length_fe.to_bytes();
+        let length_le = length_fe.to_bytes().map_err(|_| AirError::Serialization {
+            kind: SerKind::PublicInput,
+            detail: "length non-canonical",
+        })?;
         length_bytes[..length_le.len()].copy_from_slice(&length_le);
 
         Ok(vec![
@@ -126,7 +138,10 @@ impl PublicInputsCodecTrait for PublicInputsCodec {
         }
         let seed = Self::decode_field(&bytes[0])?;
         let length = Self::decode_field(&bytes[1])?;
-        let length = u64::from(length) as usize;
+        let length = u64::try_from(length).map_err(|_| AirError::Serialization {
+            kind: SerKind::PublicInput,
+            detail: "length non-canonical",
+        })? as usize;
         PublicInputs::new(seed, length)
     }
 }
@@ -502,7 +517,10 @@ mod tests {
     #[test]
     fn public_input_digest_snapshot() {
         let inputs = PublicInputs::new(Felt(3), 8).unwrap();
-        assert_json_snapshot!("public_input_digest_seed3_len8", inputs.digest());
+        assert_json_snapshot!(
+            "public_input_digest_seed3_len8",
+            inputs.digest().expect("example inputs must be canonical")
+        );
     }
 
     #[test]

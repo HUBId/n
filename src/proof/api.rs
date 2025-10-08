@@ -201,5 +201,8 @@ fn map_prover_error_to_verify(error: prover::ProverError) -> VerifyError {
         },
         ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
         ProverError::Serialization(kind) => VerifyError::Serialization(kind),
+        ProverError::FieldConstraint(context, _) => {
+            VerifyError::UnexpectedEndOfBuffer(context.to_string())
+        }
     }
 }

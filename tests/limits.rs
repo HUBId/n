@@ -232,7 +232,9 @@ fn build_envelope(
 
     let params = canonical_stark_params(&context.profile);
     let leaf_count = initial_domain_size.max(1);
-    let zero_leaf = FieldElement::ZERO.to_bytes();
+    let zero_leaf = FieldElement::ZERO
+        .to_bytes()
+        .expect("zero is a canonical field element");
     let trace_leaves: Vec<Leaf> = (0..leaf_count)
         .map(|_| Leaf::new(zero_leaf.to_vec()))
         .collect();
@@ -504,7 +506,7 @@ fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
     let mut payload = Vec::with_capacity(4 + values.len() * 8);
     payload.extend_from_slice(&(values.len() as u32).to_le_bytes());
     for value in values {
-        let bytes = value.to_bytes();
+        let bytes = value.to_bytes().expect("synthetic values are canonical");
         payload.extend_from_slice(&bytes);
     }
     pseudo_blake3(&payload)
@@ -524,7 +526,12 @@ fn build_opening_artifacts(
         let bytes = leaves
             .get(index as usize)
             .map(|leaf| leaf.as_bytes().to_vec())
-            .unwrap_or_else(|| FieldElement::ZERO.to_bytes().to_vec());
+            .unwrap_or_else(|| {
+                FieldElement::ZERO
+                    .to_bytes()
+                    .expect("zero is canonical")
+                    .to_vec()
+            });
         leaf_bytes.push(bytes);
         paths.push(convert_tree_proof(&proof, index));
     }
@@ -580,7 +587,7 @@ fn convert_tree_proof(proof: &MerkleProof, index: u32) -> MerkleAuthenticationPa
 
 fn field_to_bytes(value: FieldElement) -> [u8; 32] {
     let mut bytes = [0u8; 32];
-    let le = value.to_bytes();
+    let le = value.to_bytes().expect("test values should be canonical");
     bytes[..le.len()].copy_from_slice(&le);
     bytes
 }

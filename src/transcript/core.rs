@@ -1,6 +1,7 @@
 use crate::hash::deterministic::{pseudo_blake3, Hasher, PseudoBlake3Xof};
 use crate::params::{ChallengeBounds, StarkParams};
 use crate::utils::serialization::DigestBytes;
+use core::convert::TryFrom;
 
 use super::ser;
 use super::types::{
@@ -407,7 +408,7 @@ impl Transcript {
 }
 
 fn encode_felt(felt: Felt) -> Result<[u8; 32], ()> {
-    let value: u64 = felt.into();
+    let value = u64::try_from(felt).map_err(|_| ())?;
     let mut out = [0u8; 32];
     out[..8].copy_from_slice(&value.to_le_bytes());
     Ok(out)

@@ -74,7 +74,7 @@ pub fn fri_verify(
         return Err(FriError::InvalidStructure("final-polynomial-length"));
     }
 
-    let recomputed_digest = hash_final_layer(&proof.final_polynomial);
+    let recomputed_digest = hash_final_layer(&proof.final_polynomial)?;
     if recomputed_digest != proof.final_polynomial_digest {
         return Err(FriError::LayerRootMismatch { layer: num_layers });
     }
@@ -173,7 +173,7 @@ pub fn fri_verify(
                                     layer: layer_index,
                                 });
                             }
-                        } else if hash_leaf(&sibling_value) != sibling_digest {
+                        } else if hash_leaf(&sibling_value)? != sibling_digest {
                             return Err(FriError::FoldingConstraintViolated { layer: layer_index });
                         }
                     }
@@ -186,7 +186,7 @@ pub fn fri_verify(
                         if left_value != FieldElement::ZERO {
                             return Err(FriError::FoldingConstraintViolated { layer: layer_index });
                         }
-                    } else if hash_leaf(&left_value) != sibling_digest {
+                    } else if hash_leaf(&left_value)? != sibling_digest {
                         return Err(FriError::FoldingConstraintViolated { layer: layer_index });
                     }
                 }

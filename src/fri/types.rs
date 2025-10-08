@@ -1,5 +1,6 @@
 use core::fmt;
 
+use crate::field::prime_field::FieldConstraintError;
 use crate::hash::deterministic::DeterministicHashError;
 use crate::hash::merkle::MerkleError;
 use crate::params::StarkParams;
@@ -169,6 +170,8 @@ pub enum FriError {
     InvalidStructure(&'static str),
     /// Deterministic hashing helper failed while sampling challenges.
     DeterministicHash(DeterministicHashError),
+    /// Field element violated canonical encoding constraints.
+    FieldConstraint(FieldConstraintError),
 }
 
 impl fmt::Display for FriError {
@@ -206,6 +209,9 @@ impl fmt::Display for FriError {
             FriError::DeterministicHash(err) => {
                 write!(f, "deterministic hash error: {err}")
             }
+            FriError::FieldConstraint(err) => {
+                write!(f, "field constraint violation: {err}")
+            }
         }
     }
 }
@@ -215,6 +221,12 @@ impl std::error::Error for FriError {}
 impl From<DeterministicHashError> for FriError {
     fn from(err: DeterministicHashError) -> Self {
         FriError::DeterministicHash(err)
+    }
+}
+
+impl From<FieldConstraintError> for FriError {
+    fn from(err: FieldConstraintError) -> Self {
+        FriError::FieldConstraint(err)
     }
 }
 
