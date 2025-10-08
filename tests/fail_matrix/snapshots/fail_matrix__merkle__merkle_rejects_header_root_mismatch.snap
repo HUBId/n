@@ -1,0 +1,19 @@
+---
+source: tests/fail_matrix/merkle.rs
+assertion_line: 102
+expression: snapshot
+---
+[
+    (
+        "trace_commit",
+        "2fdc2d4e2384e2055871c3f6f3f202a585be09af46ed09a03c9550f27dd306d7",
+    ),
+    (
+        "merkle_core_root",
+        "2edc2d4e2384e2055871c3f6f3f202a585be09af46ed09a03c9550f27dd306d7",
+    ),
+    (
+        "merkle_aux_root",
+        "b00162d607f98f5fc4d3eda621b26caf7ad62fcbe7993b43cd4bdb6324f5f725",
+    ),
+]
