@@ -217,13 +217,104 @@ pub fn flip_public_digest_byte(bytes: &ProofBytes) -> ProofBytes {
     ProofBytes::new(mutated)
 }
 
-/// Swaps the first two trace query indices.
-pub fn swap_trace_indices(proof: &Proof) -> ProofBytes {
+/// Helper bundling mutated proof bytes with their decoded representation.
+#[derive(Debug, Clone)]
+pub struct MutatedProof {
+    pub bytes: ProofBytes,
+    pub proof: Proof,
+}
+
+fn mutate_proof<F>(proof: &Proof, mutator: F) -> MutatedProof
+where
+    F: FnOnce(&mut Proof),
+{
     let mut mutated = proof.clone();
-    if mutated.openings.trace.indices.len() >= 2 {
-        mutated.openings.trace.indices.swap(0, 1);
+    mutator(&mut mutated);
+    let bytes = reencode_proof(&mut mutated);
+    MutatedProof {
+        bytes,
+        proof: mutated,
     }
-    reencode_proof(&mut mutated)
+}
+
+fn mutate_trace_indices_with<F>(proof: &Proof, mutator: F) -> MutatedProof
+where
+    F: FnOnce(&mut Vec<u32>),
+{
+    mutate_proof(proof, |proof| {
+        mutator(&mut proof.openings.trace.indices);
+    })
+}
+
+fn mutate_composition_indices_with<F>(proof: &Proof, mutator: F) -> Option<MutatedProof>
+where
+    F: FnOnce(&mut Vec<u32>),
+{
+    if proof.openings.composition.is_some() {
+        Some(mutate_proof(proof, |proof| {
+            if let Some(composition) = proof.openings.composition.as_mut() {
+                mutator(&mut composition.indices);
+            }
+        }))
+    } else {
+        None
+    }
+}
+
+/// Swaps the first two trace query indices.
+pub fn swap_trace_indices(proof: &Proof) -> MutatedProof {
+    mutate_trace_indices_with(proof, |indices| {
+        if indices.len() >= 2 {
+            indices.swap(0, 1);
+        }
+    })
+}
+
+/// Swaps the first two composition query indices (if present).
+pub fn swap_composition_indices(proof: &Proof) -> Option<MutatedProof> {
+    mutate_composition_indices_with(proof, |indices| {
+        if indices.len() >= 2 {
+            indices.swap(0, 1);
+        }
+    })
+}
+
+/// Duplicates the leading trace index to trigger the duplicate check.
+pub fn duplicate_trace_index(proof: &Proof) -> MutatedProof {
+    mutate_trace_indices_with(proof, |indices| {
+        if indices.len() >= 2 {
+            indices[1] = indices[0];
+        }
+    })
+}
+
+/// Duplicates the leading composition index to trigger the duplicate check.
+pub fn duplicate_composition_index(proof: &Proof) -> Option<MutatedProof> {
+    mutate_composition_indices_with(proof, |indices| {
+        if indices.len() >= 2 {
+            indices[1] = indices[0];
+        }
+    })
+}
+
+/// Replaces all trace indices with values outside of the expected range.
+pub fn mismatch_trace_indices(proof: &Proof) -> MutatedProof {
+    mutate_trace_indices_with(proof, |indices| {
+        let base = 1_000_000u32;
+        for (offset, value) in indices.iter_mut().enumerate() {
+            *value = base.saturating_add(offset as u32);
+        }
+    })
+}
+
+/// Replaces all composition indices with values outside of the expected range.
+pub fn mismatch_composition_indices(proof: &Proof) -> Option<MutatedProof> {
+    mutate_composition_indices_with(proof, |indices| {
+        let base = 1_000_000u32;
+        for (offset, value) in indices.iter_mut().enumerate() {
+            *value = base.saturating_add(offset as u32);
+        }
+    })
 }
 
 /// Corrupts the leading sibling digest within the first trace Merkle path.
