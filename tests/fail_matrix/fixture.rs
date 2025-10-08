@@ -366,3 +366,12 @@ pub fn truncate_trace_paths(proof: &Proof) -> MutatedProof {
         }
     })
 }
+
+/// Offsets the leading FRI fold challenge by one to violate folding constraints.
+pub fn perturb_fri_fold_challenge(proof: &Proof) -> MutatedProof {
+    mutate_proof(proof, |proof| {
+        if let Some(challenge) = proof.fri_proof.fold_challenges.get_mut(0) {
+            *challenge = challenge.add(&FieldElement::ONE);
+        }
+    })
+}
