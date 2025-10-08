@@ -714,7 +714,7 @@ fn convert_path(
                     if node.index >= branching || node.index == first.index {
                         return Err(VerifyError::MerkleVerifyFailed { section });
                     }
-                    if !missing_positions.iter().any(|&pos| pos == node.index) {
+                    if !missing_positions.contains(&node.index) {
                         return Err(VerifyError::MerkleVerifyFailed { section });
                     }
                     if seen[node.index as usize] {
