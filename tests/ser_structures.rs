@@ -9,8 +9,8 @@ use rpp_stark::merkle::{
 use rpp_stark::proof::params::canonical_stark_params;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::ser::{
-    compute_commitment_digest, compute_integrity_digest, deserialize_proof, serialize_proof,
-    serialize_proof_header, serialize_proof_payload,
+    compute_integrity_digest, deserialize_proof, serialize_proof, serialize_proof_header,
+    serialize_proof_payload,
 };
 use rpp_stark::proof::types::{
     CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
@@ -48,7 +48,6 @@ fn sample_proof() -> Proof {
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let core_root = fri_layer_roots.first().copied().unwrap_or([0u8; 32]);
     let aux_root = [1u8; 32];
-    let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
     let header = ExecutionHeaderV1 {
         version: PublicInputVersion::V1,
@@ -113,10 +112,8 @@ fn sample_proof() -> Proof {
         public_digest: DigestBytes {
             bytes: public_digest,
         },
-        commitment_digest: DigestBytes {
-            bytes: commitment_digest,
-        },
-        has_composition_commit: true,
+        trace_commit: DigestBytes { bytes: core_root },
+        composition_commit: Some(DigestBytes { bytes: aux_root }),
         merkle,
         openings,
         fri_proof,
@@ -226,8 +223,5 @@ fn proof_public_input_digest_mismatch() {
         panic!("public input body not found in serialized proof");
     }
     let err = deserialize_proof(&bytes).expect_err("digest mismatch");
-    assert!(matches!(
-        err,
-        VerifyError::Serialization(SerKind::PublicInputs)
-    ));
+    assert!(matches!(err, VerifyError::PublicDigestMismatch));
 }

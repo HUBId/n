@@ -220,13 +220,14 @@ fn map_verify_error(error: VerifyError) -> StarkError {
         }
         VerifyError::ParamsHashMismatch => StarkError::InvalidInput("param_digest_mismatch"),
         VerifyError::PublicInputMismatch => StarkError::InvalidInput("public_input_mismatch"),
+        VerifyError::PublicDigestMismatch => StarkError::InvalidInput("public_digest_mismatch"),
         VerifyError::TranscriptOrder => StarkError::InvalidInput("transcript_order"),
         VerifyError::OutOfDomainInvalid => StarkError::InvalidInput("out_of_domain_invalid"),
         VerifyError::UnsupportedMerkleScheme => {
             StarkError::InvalidInput("unsupported_merkle_scheme")
         }
+        VerifyError::RootMismatch { .. } => StarkError::InvalidInput("root_mismatch"),
         VerifyError::MerkleVerifyFailed { section } => match section {
-            MerkleSection::CommitmentDigest => StarkError::InvalidInput("merkle_commitment_digest"),
             MerkleSection::FriRoots => StarkError::InvalidInput("merkle_fri_roots"),
             MerkleSection::FriPath => StarkError::InvalidInput("merkle_fri_path"),
             MerkleSection::TraceCommit => StarkError::InvalidInput("merkle_trace_commit"),
@@ -260,13 +261,16 @@ fn map_verify_error(error: VerifyError) -> StarkError {
             FriVerifyIssue::Generic => StarkError::InvalidInput("fri_generic_failure"),
         },
         VerifyError::DegreeBoundExceeded => StarkError::InvalidInput("degree_bound_exceeded"),
-        VerifyError::ProofTooLarge => StarkError::InvalidInput("proof_too_large"),
+        VerifyError::ProofTooLarge { .. } => StarkError::InvalidInput("proof_too_large"),
         VerifyError::EmptyOpenings => StarkError::InvalidInput("empty_openings"),
         VerifyError::IndicesNotSorted => StarkError::InvalidInput("indices_not_sorted"),
-        VerifyError::IndicesDuplicate => StarkError::InvalidInput("indices_duplicate"),
+        VerifyError::IndicesDuplicate { .. } => StarkError::InvalidInput("indices_duplicate"),
         VerifyError::IndicesMismatch => StarkError::InvalidInput("indices_mismatch"),
         VerifyError::AggregationDigestMismatch => {
             StarkError::InvalidInput("aggregation_digest_mismatch")
+        }
+        VerifyError::CompositionInconsistent { .. } => {
+            StarkError::InvalidInput("composition_inconsistent")
         }
         VerifyError::Serialization(_) => StarkError::InvalidInput("serialization_error"),
         VerifyError::DeterministicHash(_) => {

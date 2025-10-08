@@ -16,7 +16,7 @@ use crate::proof::ser::{
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
 use crate::proof::types::{
-    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, Telemetry, VerifyError,
+    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, VerifyError,
 };
 use crate::ser::{SerError, SerKind};
 use crate::{
@@ -24,6 +24,7 @@ use crate::{
     fri::FriProof,
     utils::serialization::DigestBytes,
 };
+use std::convert::TryInto;
 
 /// Result emitted by [`ProofBuilder::build`].
 #[derive(Debug, Clone)]
@@ -57,7 +58,6 @@ struct HeaderFields {
 pub struct ProofBuilder {
     params: ProofParams,
     header: Option<HeaderFields>,
-    commitment_digest: Option<DigestBytes>,
     merkle: Option<MerkleProofBundle>,
     openings: Option<Openings>,
     fri_proof: Option<FriProof>,
@@ -70,7 +70,6 @@ impl ProofBuilder {
         Self {
             params,
             header: None,
-            commitment_digest: None,
             merkle: None,
             openings: None,
             fri_proof: None,
@@ -94,12 +93,6 @@ impl ProofBuilder {
             air_spec_id,
             public_inputs,
         });
-        self
-    }
-
-    /// Provides the commitment digest covering all Merkle roots.
-    pub fn with_commitment_digest(mut self, digest: DigestBytes) -> Self {
-        self.commitment_digest = Some(digest);
         self
     }
 
@@ -140,9 +133,6 @@ impl ProofBuilder {
             });
         }
 
-        let commitment_digest = self
-            .commitment_digest
-            .ok_or(VerifyError::Serialization(SerKind::Proof))?;
         let merkle = self
             .merkle
             .ok_or(VerifyError::Serialization(SerKind::TraceCommitment))?;
@@ -163,15 +153,19 @@ impl ProofBuilder {
         ensure_sorted_indices(&fri_proof)?;
         merkle.ensure_consistency(&fri_proof)?;
 
-        let expected_commitment =
-            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
-        if commitment_digest.bytes != expected_commitment {
-            return Err(VerifyError::MerkleVerifyFailed {
-                section: MerkleSection::CommitmentDigest,
+        let public_digest = compute_public_digest(&header.public_inputs);
+
+        if openings.composition.is_some() && merkle.aux_root == [0u8; 32] {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "missing_composition_root".to_string(),
             });
         }
 
-        let public_digest = compute_public_digest(&header.public_inputs);
+        if openings.composition.is_none() && merkle.aux_root != [0u8; 32] {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: "unexpected_composition_root".to_string(),
+            });
+        }
 
         let mut proof = Proof {
             version: header.version,
@@ -182,8 +176,12 @@ impl ProofBuilder {
             public_digest: DigestBytes {
                 bytes: public_digest,
             },
-            commitment_digest,
-            has_composition_commit: openings.composition.is_some(),
+            trace_commit: DigestBytes {
+                bytes: merkle.core_root,
+            },
+            composition_commit: openings.composition.as_ref().map(|_| DigestBytes {
+                bytes: merkle.aux_root,
+            }),
             merkle,
             openings,
             fri_proof,
@@ -202,7 +200,11 @@ impl ProofBuilder {
         let bytes_total = header_bytes.len() + payload.len() + 32;
         let limit_bytes = (self.params.max_size_kb as usize) * 1024;
         if bytes_total > limit_bytes {
-            return Err(VerifyError::ProofTooLarge);
+            let got_kb = ((bytes_total + 1023) / 1024) as u32;
+            return Err(VerifyError::ProofTooLarge {
+                max_kb: self.params.max_size_kb,
+                got_kb,
+            });
         }
 
         Ok(BuiltProof {
@@ -218,7 +220,8 @@ fn ensure_sorted_indices(fri_proof: &FriProof) -> Result<(), VerifyError> {
     for query in &fri_proof.queries {
         if let Some(prev) = previous {
             if query.position <= prev {
-                return Err(VerifyError::IndicesDuplicate);
+                let index = query.position.try_into().unwrap_or(u32::MAX);
+                return Err(VerifyError::IndicesDuplicate { index });
             }
         }
         previous = Some(query.position);
@@ -441,8 +444,6 @@ mod tests {
         let aux_root = [1u8; 32];
         let merkle = MerkleProofBundle::from_fri_proof(core_root, aux_root, &fri_proof)
             .expect("merkle consistency");
-        let commitment_digest =
-            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
         let telemetry = sample_telemetry(
             fri_proof.security_level.query_budget() as u16,
             fri_proof.final_polynomial.len() as u32,
@@ -456,9 +457,6 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_commitment_digest(DigestBytes {
-                bytes: commitment_digest,
-            })
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
@@ -500,8 +498,6 @@ mod tests {
         let core_root = fri_proof.layer_roots.first().copied().unwrap();
         let merkle = MerkleProofBundle::from_fri_proof(core_root, [22u8; 32], &fri_proof)
             .expect("consistent merkle roots");
-        let commitment =
-            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
         let telemetry = sample_telemetry(1, 1);
 
         let result = ProofBuilder::new(builder_params())
@@ -512,7 +508,6 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [2u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_commitment_digest(DigestBytes { bytes: commitment })
             .with_merkle_bundle(merkle)
             .with_openings({
                 let mut openings = sample_openings();
@@ -532,8 +527,6 @@ mod tests {
         let core_root = fri_proof.layer_roots.first().copied().unwrap();
         let merkle = MerkleProofBundle::from_fri_proof(core_root, [32u8; 32], &fri_proof)
             .expect("consistent merkle roots");
-        let commitment =
-            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
         let telemetry = sample_telemetry(1, 1);
 
         let result = ProofBuilder::new(builder_params())
@@ -544,24 +537,21 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [4u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_commitment_digest(DigestBytes { bytes: commitment })
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
             .with_telemetry(telemetry)
             .build();
 
-        assert!(matches!(result, Err(VerifyError::IndicesDuplicate)));
+        assert!(matches!(result, Err(VerifyError::IndicesDuplicate { .. })));
     }
 
     #[test]
     fn builder_rejects_large_proofs() {
         let fri_proof = sample_fri_proof();
         let core_root = fri_proof.layer_roots.first().copied().unwrap();
-        let merkle = MerkleProofBundle::from_fri_proof(core_root, [0u8; 32], &fri_proof)
+        let merkle = MerkleProofBundle::from_fri_proof(core_root, [0xabu8; 32], &fri_proof)
             .expect("consistent merkle roots");
-        let commitment =
-            compute_commitment_digest(&merkle.core_root, &merkle.aux_root, &merkle.fri_layer_roots);
         let telemetry = sample_telemetry(
             fri_proof.security_level.query_budget() as u16,
             fri_proof.final_polynomial.len() as u32,
@@ -579,14 +569,13 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [9u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_commitment_digest(DigestBytes { bytes: commitment })
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
             .with_telemetry(telemetry)
             .build();
 
-        assert!(matches!(result, Err(VerifyError::ProofTooLarge)));
+        assert!(matches!(result, Err(VerifyError::ProofTooLarge { .. })));
     }
 
     #[test]
