@@ -35,11 +35,14 @@ struct LayerTree {
 impl LayerTree {
     /// Builds a Merkle tree from the provided evaluations using the canonical
     /// hashing helpers.
-    fn new(values: &[FieldElement]) -> Self {
+    fn new(values: &[FieldElement]) -> Result<Self, FriError> {
         let mut levels = Vec::new();
-        let mut current: Vec<[u8; 32]> = values.iter().map(hash_leaf).collect();
+        let mut current: Vec<[u8; 32]> = values
+            .iter()
+            .map(|value| hash_leaf(value).map_err(FriError::from))
+            .collect::<Result<_, _>>()?;
         if current.is_empty() {
-            current.push(hash_leaf(&FieldElement::ZERO));
+            current.push(hash_leaf(&FieldElement::ZERO)?);
         }
         levels.push(current.clone());
 
@@ -60,7 +63,7 @@ impl LayerTree {
             current = next;
         }
 
-        Self { levels }
+        Ok(Self { levels })
     }
 
     /// Returns the Merkle root digest.
@@ -109,7 +112,7 @@ pub(crate) fn verify_query_opening(
     position: usize,
     domain_size: usize,
 ) -> Result<(), FriError> {
-    let encoded_leaf = encode_leaf(&field_to_bytes(&opening.value));
+    let encoded_leaf = encode_leaf(&field_to_bytes(&opening.value)?);
     let computed = compute_root_from_path(&encoded_leaf, position, domain_size, &opening.path)
         .map_err(|reason| FriError::PathInvalid {
             layer: layer_index,
@@ -138,16 +141,20 @@ pub struct FriLayer {
 
 impl FriLayer {
     /// Materialises a new layer by hashing the provided evaluations.
-    pub fn new(index: usize, coset_shift: FieldElement, evaluations: Vec<FieldElement>) -> Self {
+    pub fn new(
+        index: usize,
+        coset_shift: FieldElement,
+        evaluations: Vec<FieldElement>,
+    ) -> Result<Self, FriError> {
         let domain_size = evaluations.len();
-        let tree = LayerTree::new(&evaluations);
-        Self {
+        let tree = LayerTree::new(&evaluations)?;
+        Ok(Self {
             index,
             domain_size,
             coset_shift,
             evaluations,
             tree,
-        }
+        })
     }
 
     /// Returns the index of the layer within the folding schedule.

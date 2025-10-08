@@ -24,7 +24,9 @@ fn add_mul_inv_laws_ok() {
 #[test]
 fn serde_le_roundtrip_ok() {
     let element = FieldElement::from(42u64);
-    let bytes = element.to_bytes();
+    let bytes = element
+        .to_bytes()
+        .expect("canonical element should serialize");
     let decoded = FieldElement::from_bytes(&bytes).expect("canonical roundtrip");
     assert_eq!(decoded, element);
 }

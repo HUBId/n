@@ -68,9 +68,10 @@ fn pack_leaves(values: &[FieldElement], leaf_width: usize) -> Vec<Leaf> {
     values
         .chunks(leaf_width)
         .map(|chunk| {
-            let mut bytes = Vec::with_capacity(leaf_width * FieldElement::ZERO.to_bytes().len());
+            let mut bytes = Vec::with_capacity(leaf_width * FieldElement::BYTE_LENGTH);
             for felt in chunk {
-                bytes.extend_from_slice(&felt.to_bytes());
+                let le = felt.to_bytes().expect("benchmark inputs must be canonical");
+                bytes.extend_from_slice(&le);
             }
             Leaf::new(bytes)
         })
@@ -130,7 +131,9 @@ fn stage_transcript(
         .absorb_digest(
             TranscriptLabel::PublicInputsDigest,
             &DigestBytes {
-                bytes: inputs.digest(),
+                bytes: inputs
+                    .digest()
+                    .expect("fixture public inputs must be canonical"),
             },
         )
         .expect("absorb public inputs");

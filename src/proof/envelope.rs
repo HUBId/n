@@ -329,14 +329,15 @@ mod tests {
         bytes.extend_from_slice(&0u32.to_le_bytes());
         bytes.extend_from_slice(&0u32.to_le_bytes());
         for value in column {
-            bytes.extend_from_slice(&value.to_bytes());
+            let encoded = value.to_bytes().expect("fixture values must be canonical");
+            bytes.extend_from_slice(&encoded);
         }
         bytes
     }
 
     fn sample_public_inputs() -> Vec<u8> {
         let seed = FieldElement::from(11u64);
-        let body_bytes = seed.to_bytes();
+        let body_bytes = seed.to_bytes().expect("fixture seed must be canonical");
         let header = ExecutionHeaderV1 {
             version: PublicInputVersion::V1,
             program_digest: DigestBytes { bytes: [2u8; 32] },
@@ -609,7 +610,7 @@ mod tests {
         );
 
         let seed = FieldElement::from(13u64);
-        let seed_bytes = seed.to_bytes();
+        let seed_bytes = seed.to_bytes().expect("fixture seed must be canonical");
         let public_inputs = PublicInputs::Execution {
             header: ExecutionHeaderV1 {
                 version: PublicInputVersion::V1,

@@ -425,7 +425,15 @@ mod tests {
             Felt::from(6u64),
         ];
         assert_eq!(trace.as_slice(), expected.as_slice());
-        let serialized: Vec<[u8; 8]> = trace.as_slice().iter().map(Felt::to_bytes).collect();
+        let serialized: Vec<[u8; 8]> = trace
+            .as_slice()
+            .iter()
+            .map(|value| {
+                value
+                    .to_bytes()
+                    .expect("trace fixture values must be canonical")
+            })
+            .collect();
         assert_eq!(serialized[0], 1u64.to_le_bytes());
         assert_eq!(serialized[3], 4u64.to_le_bytes());
         Ok(())

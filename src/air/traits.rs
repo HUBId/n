@@ -225,7 +225,9 @@ mod tests {
 
         fn encode(&self, value: &Self::Value) -> Result<Vec<FieldElementBytes>, AirError> {
             let mut buf = [0u8; 32];
-            let le = value.to_bytes();
+            let le = value
+                .to_bytes()
+                .expect("mock codec should receive canonical values");
             buf[..le.len()].copy_from_slice(&le);
             Ok(vec![FieldElementBytes { bytes: buf }])
         }

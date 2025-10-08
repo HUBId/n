@@ -58,7 +58,7 @@ pub fn fri_prove(
             return Err(FriError::InvalidStructure("layer-index-overflow"));
         }
 
-        let layer = FriLayer::new(layer_index, coset_shift, current);
+        let layer = FriLayer::new(layer_index, coset_shift, current)?;
         let root = layer.root();
         transcript
             .absorb_digest(
@@ -77,7 +77,7 @@ pub fn fri_prove(
     }
 
     let final_polynomial = current;
-    let final_polynomial_digest = hash_final_layer(&final_polynomial);
+    let final_polynomial_digest = hash_final_layer(&final_polynomial)?;
 
     let count_bytes = (view.query_count() as u32).to_le_bytes();
     transcript

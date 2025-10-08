@@ -377,7 +377,10 @@ impl TraceData {
         let mut bytes = Vec::with_capacity(column.len());
         for value in column {
             let mut buf = [0u8; 32];
-            let le = value.to_bytes();
+            let le = value.to_bytes().map_err(|_| AirError::Serialization {
+                kind: SerKind::Trace,
+                detail: "non-canonical trace value",
+            })?;
             buf[..le.len()].copy_from_slice(&le);
             bytes.push(FieldElementBytes { bytes: buf });
         }

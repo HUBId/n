@@ -96,7 +96,8 @@ fn bench_layer_commitment(c: &mut Criterion) {
         group.throughput(Throughput::Elements(layer.values.len() as u64));
         group.bench_with_input(BenchmarkId::new("commit", label), layer, |b, input| {
             b.iter(|| {
-                let committed = FriLayer::new(input.index, input.coset_shift, input.values.clone());
+                let committed = FriLayer::new(input.index, input.coset_shift, input.values.clone())
+                    .expect("layer commitment");
                 black_box(committed.root());
             });
         });

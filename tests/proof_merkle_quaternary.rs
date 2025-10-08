@@ -49,7 +49,10 @@ fn build_setup() -> (
         trace_length: length as u32,
         trace_width: 1,
     };
-    let body = seed.to_bytes().to_vec();
+    let body = seed
+        .to_bytes()
+        .expect("fixture seed must be canonical")
+        .to_vec();
     let witness = build_witness(seed, length);
 
     (
@@ -80,7 +83,8 @@ fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&0u32.to_le_bytes());
     for value in column {
-        bytes.extend_from_slice(&value.to_bytes());
+        let encoded = value.to_bytes().expect("fixture values must be canonical");
+        bytes.extend_from_slice(&encoded);
     }
     bytes
 }

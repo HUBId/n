@@ -48,7 +48,9 @@ use crate::utils::serialization::{DigestBytes, WitnessBlob};
 use core::cmp::{max, min};
 use core::convert::TryInto;
 
-use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError, FieldElementOps};
+use crate::field::prime_field::{
+    CanonicalSerialize, FieldConstraintError, FieldDeserializeError, FieldElementOps,
+};
 
 use super::types::{FriVerifyIssue, MerkleSection, VerifyError};
 
@@ -73,6 +75,8 @@ pub enum ProverError {
     ProofTooLarge { actual: usize, limit: u32 },
     /// Serialization failure while assembling the proof envelope.
     Serialization(SerKind),
+    /// Canonical field constraint violated during proof generation.
+    FieldConstraint(&'static str, FieldConstraintError),
 }
 
 impl From<crate::proof::transcript::TranscriptError> for ProverError {
@@ -240,7 +244,7 @@ pub fn build_envelope(
         &alpha_vector,
         &sampled_trace_values,
         &sampled_composition_values,
-    );
+    )?;
     let fri_layer_roots = fri_proof.layer_roots.clone();
     let commitment_digest = compute_commitment_digest(&core_root, &aux_root, &fri_layer_roots);
 
@@ -629,8 +633,11 @@ fn evaluations_to_leaves(values: &[FieldElement]) -> Result<Vec<Leaf>, ProverErr
     }
     let mut leaves = Vec::with_capacity(values.len());
     for value in values {
-        let mut bytes = Vec::with_capacity(8);
-        bytes.extend_from_slice(&value.to_bytes());
+        let mut bytes = Vec::with_capacity(FieldElement::BYTE_LENGTH);
+        let encoded = value
+            .to_bytes()
+            .map_err(|err| ProverError::FieldConstraint("evaluations_to_leaves", err))?;
+        bytes.extend_from_slice(&encoded);
         leaves.push(Leaf::new(bytes));
     }
     Ok(leaves)
@@ -737,9 +744,9 @@ fn derive_ood_openings(
     alpha_vector: &[[u8; 32]],
     trace_values: &[FieldElement],
     composition_values: &[FieldElement],
-) -> Vec<OutOfDomainOpening> {
+) -> Result<Vec<OutOfDomainOpening>, ProverError> {
     if composition_values.is_empty() || trace_values.is_empty() || points.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let alphas: Vec<FieldElement> = alpha_vector
@@ -754,12 +761,17 @@ fn derive_ood_openings(
             let core_evaluation = evaluate_ood_samples(trace_values, &alphas, point);
             let composition_evaluation = evaluate_ood_samples(composition_values, &alphas, point);
 
-            OutOfDomainOpening {
+            let core_bytes = field_to_fixed_bytes(core_evaluation)
+                .map_err(|err| ProverError::FieldConstraint("ood_core", err))?;
+            let composition_bytes = field_to_fixed_bytes(composition_evaluation)
+                .map_err(|err| ProverError::FieldConstraint("ood_composition", err))?;
+
+            Ok(OutOfDomainOpening {
                 point: *point_bytes,
-                core_values: vec![field_to_fixed_bytes(core_evaluation)],
+                core_values: vec![core_bytes],
                 aux_values: Vec::new(),
-                composition_value: field_to_fixed_bytes(composition_evaluation),
-            }
+                composition_value: composition_bytes,
+            })
         })
         .collect()
 }
@@ -784,11 +796,11 @@ fn evaluate_ood_samples(
     acc
 }
 
-fn field_to_fixed_bytes(value: FieldElement) -> [u8; 32] {
+fn field_to_fixed_bytes(value: FieldElement) -> Result<[u8; 32], FieldConstraintError> {
     let mut bytes = [0u8; 32];
-    let le = value.to_bytes();
+    let le = value.to_bytes()?;
     bytes[..le.len()].copy_from_slice(&le);
-    bytes
+    Ok(bytes)
 }
 
 fn digest_to_array(bytes: &[u8]) -> [u8; 32] {
@@ -830,6 +842,9 @@ impl From<ProverError> for VerifyError {
             },
             ProverError::ProofTooLarge { .. } => VerifyError::ProofTooLarge,
             ProverError::Serialization(kind) => VerifyError::Serialization(kind),
+            ProverError::FieldConstraint(context, _) => {
+                VerifyError::UnexpectedEndOfBuffer(context.to_string())
+            }
         }
     }
 }

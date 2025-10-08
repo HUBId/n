@@ -182,6 +182,7 @@ fn map_prover_error(error: prover::ProverError) -> StarkError {
         ProverError::Serialization(kind) => {
             map_serialization_error(SerError::invalid_value(kind, "prover_serialization"))
         }
+        ProverError::FieldConstraint(context, _) => StarkError::InvalidInput(context),
     }
 }
 

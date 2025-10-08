@@ -122,7 +122,10 @@ fn fri_pipeline_rejects_trace_root_tampering() {
         .absorb_digest(
             TranscriptLabel::PublicInputsDigest,
             &DigestBytes {
-                bytes: fixture.inputs.digest(),
+                bytes: fixture
+                    .inputs
+                    .digest()
+                    .expect("fixture inputs must be canonical"),
             },
         )
         .expect("absorb public inputs");
@@ -199,7 +202,7 @@ fn build_fixture() -> LfsrFriFixture {
         .absorb_digest(
             TranscriptLabel::PublicInputsDigest,
             &DigestBytes {
-                bytes: inputs.digest(),
+                bytes: inputs.digest().expect("fixture inputs must be canonical"),
             },
         )
         .expect("absorb public inputs");
@@ -284,9 +287,10 @@ fn pack_leaves(values: &[FieldElement], leaf_width: usize) -> Vec<Leaf> {
     values
         .chunks(leaf_width)
         .map(|chunk| {
-            let mut bytes = Vec::with_capacity(leaf_width * FieldElement::ZERO.to_bytes().len());
+            let mut bytes = Vec::with_capacity(leaf_width * FieldElement::BYTE_LENGTH);
             for felt in chunk {
-                bytes.extend_from_slice(&felt.to_bytes());
+                let le = felt.to_bytes().expect("fixture values are canonical");
+                bytes.extend_from_slice(&le);
             }
             Leaf::new(bytes)
         })
@@ -299,7 +303,10 @@ fn prepare_verifier_transcript(fixture: &LfsrFriFixture) -> Transcript {
         .absorb_digest(
             TranscriptLabel::PublicInputsDigest,
             &DigestBytes {
-                bytes: fixture.inputs.digest(),
+                bytes: fixture
+                    .inputs
+                    .digest()
+                    .expect("fixture inputs must be canonical"),
             },
         )
         .expect("absorb public inputs");

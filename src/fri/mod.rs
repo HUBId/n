@@ -109,6 +109,7 @@ pub use types::{
 };
 pub use verifier::fri_verify;
 
+use crate::field::prime_field::{CanonicalSerialize, FieldConstraintError};
 use crate::field::FieldElement;
 use crate::hash::hash;
 
@@ -183,17 +184,17 @@ pub(crate) fn field_from_hash(bytes: &[u8; 32]) -> FieldElement {
 
 /// Helper converting a field element into canonical little-endian bytes.
 #[inline]
-pub(crate) fn field_to_bytes(value: &FieldElement) -> [u8; 8] {
-    value.0.to_le_bytes()
+pub(crate) fn field_to_bytes(value: &FieldElement) -> Result<[u8; 8], FieldConstraintError> {
+    value.to_bytes()
 }
 
 /// Hashes a field element into a leaf digest using the canonical leaf framing.
 #[inline]
-pub(crate) fn hash_leaf(value: &FieldElement) -> [u8; 32] {
+pub(crate) fn hash_leaf(value: &FieldElement) -> Result<[u8; 32], FieldConstraintError> {
     let mut payload = Vec::with_capacity(12);
     payload.extend_from_slice(&(8u32.to_le_bytes()));
-    payload.extend_from_slice(&field_to_bytes(value));
-    hash(&payload).into()
+    payload.extend_from_slice(&field_to_bytes(value)?);
+    Ok(hash(&payload).into())
 }
 
 /// Hashes two child digests into their parent digest.
