@@ -39,11 +39,7 @@ fn composition_rejects_leaf_bytes_mismatch() {
         .as_ref()
         .expect("composition openings available");
 
-    let first_leaf = composition
-        .leaves
-        .first()
-        .cloned()
-        .expect("composition leaf available");
+    let leaves = composition.leaves.clone();
     let indices = composition.indices.clone();
     let first_index = indices
         .first()
@@ -53,7 +49,7 @@ fn composition_rejects_leaf_bytes_mismatch() {
     let expected_reason = format!("composition_leaf_bytes_mismatch:pos=0:index={first_index}");
     assert_eq!(reason, expected_reason);
 
-    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_leaf", &first_leaf);
-    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_indices", &indices);
-    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_reason", &reason);
+    assert_debug_snapshot!("rejects_leaf_bytes_mismatch__leaves", leaves);
+    assert_debug_snapshot!("rejects_leaf_bytes_mismatch__indices", &indices);
+    assert_debug_snapshot!("rejects_leaf_bytes_mismatch__reason", &reason);
 }
