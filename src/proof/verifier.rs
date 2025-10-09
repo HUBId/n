@@ -395,17 +395,18 @@ fn precheck_body(
                 .ok_or(VerifyError::CompositionInconsistent {
                     reason: "missing_composition_openings".to_string(),
                 })?;
+        let alignment_values = extract_composition_leaf_values(&composition_openings.leaves)?;
+        verify_composition_alignment(
+            &alignment_values,
+            &composition_openings.leaves,
+            &proof.openings.trace.indices,
+            &proof.fri_proof,
+        )?;
+
         let composition_values = verify_composition_commitment(
             &stark_params,
             &composition_commit.bytes,
             composition_openings,
-        )?;
-
-        verify_composition_alignment(
-            &composition_values,
-            &composition_openings.leaves,
-            &proof.openings.trace.indices,
-            &proof.fri_proof,
         )?;
 
         verify_ood_openings(
@@ -871,6 +872,23 @@ fn convert_path(
     }
 }
 
+fn extract_composition_leaf_values(leaves: &[Vec<u8>]) -> Result<Vec<FieldElement>, VerifyError> {
+    let mut values = Vec::with_capacity(leaves.len());
+    for leaf_bytes in leaves {
+        if leaf_bytes.len() < FieldElement::BYTE_LENGTH {
+            return Err(VerifyError::CompositionLeafMismatch);
+        }
+
+        let mut field_bytes = [0u8; FieldElement::BYTE_LENGTH];
+        field_bytes.copy_from_slice(&leaf_bytes[..FieldElement::BYTE_LENGTH]);
+        let value = FieldElement::from_bytes(&field_bytes)
+            .map_err(|_| VerifyError::NonCanonicalFieldElement)?;
+        values.push(value);
+    }
+
+    Ok(values)
+}
+
 fn verify_composition_alignment(
     composition_values: &[FieldElement],
     composition_leaves: &[Vec<u8>],
@@ -915,11 +933,6 @@ fn verify_composition_alignment(
                 .ok_or_else(|| VerifyError::CompositionInconsistent {
                     reason: format!("fri_first_layer_missing:pos={position}:index={index}"),
                 })?;
-        if *value != first_layer.value {
-            return Err(VerifyError::CompositionInconsistent {
-                reason: format!("fri_value_mismatch:pos={position}:index={index}"),
-            });
-        }
         let fri_bytes = field_to_bytes(&first_layer.value).map_err(|_| {
             VerifyError::CompositionInconsistent {
                 reason: format!("fri_value_encoding:pos={position}:index={index}"),
@@ -937,6 +950,11 @@ fn verify_composition_alignment(
         if leaf_prefix != fri_bytes.as_slice() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: format!("composition_leaf_bytes_mismatch:pos={position}:index={index}"),
+            });
+        }
+        if *value != first_layer.value {
+            return Err(VerifyError::CompositionInconsistent {
+                reason: format!("fri_value_mismatch:pos={position}:index={index}"),
             });
         }
     }

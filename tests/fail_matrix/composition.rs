@@ -1,39 +1,12 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
-use rpp_stark::proof::types::{MerkleSection, VerifyError};
+use rpp_stark::proof::types::VerifyError;
 use rpp_stark::proof::verifier::verify_proof_bytes;
 
-use super::{flip_composition_leaf_byte, FailMatrixFixture, MutatedProof};
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        use std::fmt::Write;
-        let _ = write!(out, "{:02x}", byte);
-    }
-    out
-}
-
-fn snapshot_composition_leaves(mutated: &MutatedProof) {
-    let leaves: Vec<String> = mutated
-        .proof
-        .openings
-        .composition
-        .as_ref()
-        .map(|composition| {
-            composition
-                .leaves
-                .iter()
-                .map(|leaf| hex_bytes(leaf))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    assert_debug_snapshot!("composition_rejects_leaf_mutation_leaves", leaves);
-}
+use super::{flip_composition_leaf_byte, FailMatrixFixture};
 
 #[test]
-fn composition_rejects_leaf_mutation() {
+fn composition_rejects_leaf_bytes_mismatch() {
     let fixture = FailMatrixFixture::new();
     let Some(mutated) = flip_composition_leaf_byte(&fixture.proof()) else {
         eprintln!("fixture does not expose composition openings; skipping test");
@@ -54,12 +27,33 @@ fn composition_rejects_leaf_mutation() {
     .expect("report produced");
 
     let error = report.error.expect("expected verification failure");
-    match error {
-        VerifyError::MerkleVerifyFailed {
-            section: MerkleSection::CompositionCommit,
-        } => {}
+    let reason = match error {
+        VerifyError::CompositionInconsistent { reason } => reason,
         other => panic!("unexpected verification outcome: {other:?}"),
-    }
+    };
 
-    snapshot_composition_leaves(&mutated);
+    let composition = mutated
+        .proof
+        .openings
+        .composition
+        .as_ref()
+        .expect("composition openings available");
+
+    let first_leaf = composition
+        .leaves
+        .first()
+        .cloned()
+        .expect("composition leaf available");
+    let indices = composition.indices.clone();
+    let first_index = indices
+        .first()
+        .copied()
+        .expect("composition index available");
+
+    let expected_reason = format!("composition_leaf_bytes_mismatch:pos=0:index={first_index}");
+    assert_eq!(reason, expected_reason);
+
+    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_leaf", &first_leaf);
+    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_indices", &indices);
+    assert_debug_snapshot!("composition_rejects_leaf_bytes_mismatch_reason", &reason);
 }
