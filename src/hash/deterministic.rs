@@ -144,6 +144,12 @@ impl Hasher<Blake2sInteropHasher> {
     }
 }
 
+impl Default for Hasher<Blake2sInteropHasher> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<B: DeterministicHasherBackend> Hasher<B> {
     /// Creates a new deterministic hasher with an explicit backend.
     pub fn with_backend() -> Self {
@@ -272,8 +278,8 @@ impl Blake2sXof {
 
     fn squeeze_block(&mut self) -> [u8; 32] {
         let mut hasher = Blake2s256::new();
-        blake2::Digest::update(&mut hasher, &self.state);
-        blake2::Digest::update(&mut hasher, &self.counter.to_le_bytes());
+        blake2::Digest::update(&mut hasher, self.state);
+        blake2::Digest::update(&mut hasher, self.counter.to_le_bytes());
         let block: [u8; 32] = hasher.finalize().into();
         self.state = block;
         self.counter = self.counter.wrapping_add(1);

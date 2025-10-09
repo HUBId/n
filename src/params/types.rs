@@ -38,13 +38,14 @@ impl FieldKind {
 /// | `Poseidon2` | 256 | Algebraic sponge tuned for Goldilocks. |
 /// | `Rescue` | 256 | Algebraic cipher for prime fields. |
 /// | `Blake2s` | 256 | Byte-oriented Blake2s XOF. |
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum HashFamily {
     /// Poseidon2 algebraic sponge.
     Poseidon2,
     /// Rescue prime field hash.
     Rescue,
     /// Blake2s byte hash.
+    #[default]
     Blake2s,
 }
 
@@ -64,12 +65,6 @@ impl HashFamily {
             3 => Some(HashFamily::Blake2s),
             _ => None,
         }
-    }
-}
-
-impl Default for HashFamily {
-    fn default() -> Self {
-        HashFamily::Blake2s
     }
 }
 
