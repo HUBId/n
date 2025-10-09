@@ -1,22 +1,23 @@
 ---
 source: tests/transcript_determinism.rs
-expression: "serde_json::json!({\n    \"trace_challenge\": u64::from(trace_challenge_a1), \"comp_challenge\":\n    u64::from(comp_challenge_a1), \"fri_folds\": fri_fold_scalars,\n    \"query_indices\": idxs1, \"proof_close_hex\": proof_close_hex,\n})"
+assertion_line: 101
+expression: "serde_json::json!({\n    \"trace_challenge\":\n    u64::try_from(trace_challenge_a1).expect(\"canonical trace challenge\"),\n    \"comp_challenge\":\n    u64::try_from(comp_challenge_a1).expect(\"canonical composition challenge\"),\n    \"fri_folds\": fri_fold_scalars, \"query_indices\": idxs1, \"proof_close_hex\":\n    proof_close_hex,\n})"
 ---
 {
-  "comp_challenge": 13114735442786134060,
+  "comp_challenge": 4544395549825592479,
   "fri_folds": [
-    10460183637743574028,
-    16722506697855477607,
-    4812532910690204353,
-    6675039160206136737,
-    978179244964381337
+    7018992374078284144,
+    11004696832450032240,
+    15614099910591839379,
+    9673043499701073733,
+    7977881611598001890
   ],
-  "proof_close_hex": "c341cbc8ec4b4eaa487afad4a18992db457a935788d0a5b29fdedac1f1ee5ddc",
+  "proof_close_hex": "2a4b24959fd52a2606420845639724c913cbfdccf9c29045896f590cb9866d5d",
   "query_indices": [
-    645753,
-    2918761,
-    3045002,
-    14985
+    3789920,
+    240205,
+    261103,
+    2619952
   ],
-  "trace_challenge": 15037769056891080729
+  "trace_challenge": 18060372420658952913
 }

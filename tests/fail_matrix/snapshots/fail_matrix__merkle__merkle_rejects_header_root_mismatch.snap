@@ -6,14 +6,14 @@ expression: snapshot
 [
     (
         "trace_commit",
-        "2fdc2d4e2384e2055871c3f6f3f202a585be09af46ed09a03c9550f27dd306d7",
+        "4035ca2ceb7ae4aa4ef47c44248021558efa725d94fa89d516d873c1b9ce2621",
     ),
     (
         "merkle_core_root",
-        "2edc2d4e2384e2055871c3f6f3f202a585be09af46ed09a03c9550f27dd306d7",
+        "4135ca2ceb7ae4aa4ef47c44248021558efa725d94fa89d516d873c1b9ce2621",
     ),
     (
         "merkle_aux_root",
-        "b00162d607f98f5fc4d3eda621b26caf7ad62fcbe7993b43cd4bdb6324f5f725",
+        "31c04afbca9a6479991a94a77b152776b986ad94cd2ce067fb4440d2c37f9950",
     ),
 ]

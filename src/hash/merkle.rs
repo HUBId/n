@@ -1,9 +1,9 @@
-//! BLAKE3-based binary Merkle tree implementation used by the proving system.
+//! Blake2s-based binary Merkle tree implementation used by the proving system.
 //!
 //! The tree adheres to the specification circulated with the repository:
 //!
 //! * Inner nodes hash the concatenation of their two children in order.
-//! * Leaves are hashed as `BLAKE3(u32_le(len) || payload)`.
+//! * Leaves are hashed as `Blake2s(u32_le(len) || payload)`.
 //! * Missing children on the right-hand side are padded with a fixed
 //!   `EMPTY` digest derived from the string `"RPP-MERKLE-EMPTY\0"`.
 //! * Authentication paths serialise an index byte followed by the sibling
@@ -20,13 +20,13 @@ use core::fmt;
 /// Number of children per internal node.
 const ARITY: usize = 2;
 
-/// Size of a digest emitted by the tree (BLAKE3 output size).
+/// Size of a digest emitted by the tree (Blake2s output size).
 pub const DIGEST_SIZE: usize = 32;
 
 /// Canonical digest for an empty child.
 pub const EMPTY_DIGEST: [u8; DIGEST_SIZE] = [
-    0x10, 0x68, 0x98, 0xac, 0xc4, 0xcc, 0xf4, 0xd1, 0x1d, 0x07, 0x4a, 0x00, 0x09, 0xbc, 0x4a, 0x8e,
-    0x56, 0x29, 0x03, 0x5a, 0xf3, 0x05, 0x46, 0xdc, 0xdb, 0xff, 0xba, 0x19, 0x77, 0xa7, 0x59, 0x61,
+    0xe6, 0x81, 0x37, 0x62, 0x79, 0xe1, 0xdf, 0xc4, 0x11, 0xcb, 0xc0, 0xa2, 0x3e, 0xd1, 0xfe, 0x32,
+    0xfe, 0xf7, 0x80, 0x87, 0x03, 0x14, 0x9f, 0x30, 0x1a, 0xdf, 0x3a, 0xb3, 0xbb, 0xec, 0x73, 0x34,
 ];
 
 /// Digest binding the documented Merkle layout for parameter commitments.
@@ -79,7 +79,7 @@ impl fmt::Display for MerkleError {
 
 impl std::error::Error for MerkleError {}
 
-/// Convenience wrapper for a binary BLAKE3 Merkle tree.
+/// Convenience wrapper for a binary Blake2s Merkle tree.
 #[derive(Debug, Clone)]
 pub struct Blake3MerkleTree {
     levels: Vec<Vec<[u8; DIGEST_SIZE]>>,

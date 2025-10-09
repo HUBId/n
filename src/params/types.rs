@@ -67,6 +67,12 @@ impl HashFamily {
     }
 }
 
+impl Default for HashFamily {
+    fn default() -> Self {
+        HashFamily::Blake2s
+    }
+}
+
 /// Specific hash kind including parameter identifiers.
 ///
 /// | Variant | Parameter Column | Description |

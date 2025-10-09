@@ -1,4 +1,4 @@
-use crate::hash::deterministic::{pseudo_blake3, Hasher, PseudoBlake3Xof};
+use crate::hash::deterministic::{hash, Blake2sXof, Hasher};
 use crate::params::{ChallengeBounds, StarkParams};
 use crate::utils::serialization::DigestBytes;
 use core::convert::TryFrom;
@@ -183,7 +183,7 @@ pub struct Transcript {
     seed: [u8; 32],
     _context: TranscriptContext,
     state: [u8; 32],
-    xof: PseudoBlake3Xof,
+    xof: Blake2sXof,
     phase: TranscriptPhase,
     tracker: PhaseTracker,
     challenge_counter: u64,
@@ -213,7 +213,7 @@ impl Transcript {
             seed,
             _context: context_tag,
             state: digest,
-            xof: PseudoBlake3Xof::from_state(digest),
+            xof: Blake2sXof::from_state(digest),
             phase: TranscriptPhase::Init,
             tracker: PhaseTracker::new(fri_layers),
             challenge_counter: 0,
@@ -229,7 +229,7 @@ impl Transcript {
 
     fn absorb_internal(&mut self, label: TranscriptLabel, bytes: &[u8]) {
         self.state = mix(self.state, label, bytes);
-        self.xof = PseudoBlake3Xof::from_state(self.state);
+        self.xof = Blake2sXof::from_state(self.state);
         self.phase = match self.tracker.apply_absorb(label) {
             Ok(phase) => phase,
             Err(_) => self.phase,
@@ -261,7 +261,7 @@ impl Transcript {
             seed: self.seed,
             _context: subcontext,
             state: fork_state,
-            xof: PseudoBlake3Xof::from_state(fork_state),
+            xof: Blake2sXof::from_state(fork_state),
             phase,
             tracker,
             challenge_counter: 0,
@@ -292,7 +292,7 @@ impl Transcript {
     ) -> Result<(), TranscriptError> {
         self.update_phase_absorb(label)?;
         self.state = mix(self.state, label, data);
-        self.xof = PseudoBlake3Xof::from_state(self.state);
+        self.xof = Blake2sXof::from_state(self.state);
         Ok(())
     }
 
@@ -331,10 +331,10 @@ impl Transcript {
         seed.extend_from_slice(&self.state);
         seed.extend_from_slice(&label.domain_tag());
         seed.extend_from_slice(&self.challenge_counter.to_le_bytes());
-        let mut reader = PseudoBlake3Xof::new(&seed);
+        let mut reader = Blake2sXof::new(&seed);
         reader.squeeze(output).map_err(TranscriptError::from)?;
         self.state = mix(self.state, label, output);
-        self.xof = PseudoBlake3Xof::from_state(self.state);
+        self.xof = Blake2sXof::from_state(self.state);
         Ok(())
     }
 
@@ -402,7 +402,7 @@ impl Transcript {
         let mut buf = [0u8; 32];
         buf.copy_from_slice(bytes);
         self.state = buf;
-        self.xof = PseudoBlake3Xof::from_state(self.state);
+        self.xof = Blake2sXof::from_state(self.state);
         Ok(())
     }
 }
@@ -420,7 +420,7 @@ fn mix(state: [u8; 32], label: TranscriptLabel, data: &[u8]) -> [u8; 32] {
     payload.extend_from_slice(&label.domain_tag());
     payload.extend_from_slice(&(data.len() as u64).to_le_bytes());
     payload.extend_from_slice(data);
-    pseudo_blake3(&payload)
+    hash(&payload).into()
 }
 
 #[allow(dead_code)]

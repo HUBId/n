@@ -62,10 +62,10 @@ fn radix2_twiddle_tables_digest_is_stable() {
     // Update only if the deterministic seed or root derivation changes.
     assert_eq!(
         forward_digest,
-        "7fd5c0fe98605734741950e5413aeb429391a9608fd4de5b3a0793fc8053b345"
+        "18c042fc9243ad5f2dcacab733578b9962c1b5208a53e4b15e3cb0eb1381ba34"
     );
     assert_eq!(
         inverse_digest,
-        "c6c9a502a18ad218b9b7bedc0e5f3f54088767a2f656742a93e05681b6f43027"
+        "7e4c94519cc7de920f6ca19b46b38060b906e7056febe650c3c58a471fcc5b8d"
     );
 }

@@ -1,6 +1,7 @@
 use core::convert::TryInto;
 use core::fmt;
 
+use blake2::{Blake2s256, Digest};
 use serde::{Deserialize, Serialize};
 
 /// Error surfaced by deterministic hashing helpers when slice conversions fail.
@@ -25,7 +26,7 @@ impl fmt::Display for DeterministicHashError {
 
 impl std::error::Error for DeterministicHashError {}
 
-/// Internal deterministic hash value produced by the pseudo-BLAKE3 helper.
+/// Internal deterministic hash value produced by the canonical helper.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Hash {
     bytes: [u8; 32],
@@ -90,105 +91,166 @@ impl fmt::Debug for HexOutput {
     }
 }
 
-/// Deterministic streaming helper mirroring the `blake3::Hasher` interface.
-#[derive(Default, Clone)]
-pub struct Hasher {
-    buffer: Vec<u8>,
+/// Backend interface implemented by deterministic hashers.
+pub trait DeterministicHasherBackend: Sized {
+    /// Extendable output reader associated with the backend.
+    type Xof: DeterministicXofBackend;
+
+    /// Creates a new hasher instance.
+    fn new() -> Self;
+
+    /// Absorbs additional bytes into the hasher state.
+    fn update(&mut self, bytes: &[u8]);
+
+    /// Finalises the hasher and returns a 32-byte digest.
+    fn finalize(self) -> [u8; 32];
+
+    /// Finalises the hasher into an extendable output reader.
+    fn finalize_xof(self) -> Self::Xof;
 }
 
-impl Hasher {
-    /// Creates a new deterministic hasher instance.
+/// Backend interface implemented by deterministic XOF readers.
+pub trait DeterministicXofBackend {
+    /// Returns the next 64 bits from the deterministic stream.
+    fn next_u64(&mut self) -> Result<u64, DeterministicHashError>;
+
+    /// Fills the provided buffer with deterministic bytes from the XOF stream.
+    fn fill(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
+        let mut offset = 0;
+        while offset < output.len() {
+            let word = self.next_u64()?;
+            let bytes = word.to_le_bytes();
+            let remaining = output.len() - offset;
+            let take = remaining.min(bytes.len());
+            output[offset..offset + take].copy_from_slice(&bytes[..take]);
+            offset += take;
+        }
+        Ok(())
+    }
+}
+
+/// Deterministic streaming helper mirroring the `blake3::Hasher` interface.
+#[derive(Clone)]
+pub struct Hasher<B: DeterministicHasherBackend = Blake2sInteropHasher> {
+    backend: B,
+}
+
+impl Hasher<Blake2sInteropHasher> {
+    /// Creates a new deterministic hasher instance using the default backend.
     pub fn new() -> Self {
-        Self { buffer: Vec::new() }
+        Self {
+            backend: Blake2sInteropHasher::new(),
+        }
+    }
+}
+
+impl<B: DeterministicHasherBackend> Hasher<B> {
+    /// Creates a new deterministic hasher with an explicit backend.
+    pub fn with_backend() -> Self {
+        Self { backend: B::new() }
     }
 
     /// Absorbs additional bytes into the hasher state.
     pub fn update(&mut self, bytes: &[u8]) {
-        self.buffer.extend_from_slice(bytes);
+        self.backend.update(bytes);
     }
 
     /// Finalises the hasher and returns a 32-byte digest.
     pub fn finalize(self) -> Hash {
-        hash(&self.buffer)
+        Hash::from(self.backend.finalize())
     }
 
     /// Finalises the hasher into an extendable output reader.
-    pub fn finalize_xof(self) -> OutputReader {
+    pub fn finalize_xof(self) -> OutputReader<B::Xof> {
         OutputReader {
-            xof: PseudoBlake3Xof::from_state(pseudo_blake3(&self.buffer)),
+            xof: self.backend.finalize_xof(),
         }
     }
 }
 
 /// Extendable output reader mirroring the `blake3::OutputReader` API.
 #[derive(Debug, Clone)]
-pub struct OutputReader {
-    xof: PseudoBlake3Xof,
+pub struct OutputReader<X = Blake2sXof> {
+    xof: X,
 }
 
-impl OutputReader {
+impl<X: DeterministicXofBackend> OutputReader<X> {
     /// Fills the provided buffer with deterministic bytes from the XOF stream.
     ///
     /// Returns an error if the underlying slice conversion fails.
     pub fn fill(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
-        self.xof.squeeze(output)
+        self.xof.fill(output)
+    }
+
+    /// Returns the next 64 bits from the deterministic stream.
+    pub fn next_u64(&mut self) -> Result<u64, DeterministicHashError> {
+        self.xof.next_u64()
     }
 }
 
-/// Computes a deterministic 32-byte hash of the provided payload.
+/// Computes a deterministic 32-byte hash of the provided payload using the
+/// default backend.
 pub fn hash(input: &[u8]) -> Hash {
-    Hash::from(pseudo_blake3(input))
+    hash_with_backend::<Blake2sInteropHasher>(input)
 }
 
-/// Deterministic pseudo BLAKE3 hash used throughout the crate.
-pub fn pseudo_blake3(input: &[u8]) -> [u8; 32] {
-    let mut state = [
-        0x6a09e667f3bcc908u64,
-        0xbb67ae8584caa73bu64,
-        0x3c6ef372fe94f82bu64,
-        0xa54ff53a5f1d36f1u64,
-    ];
-
-    for (i, chunk) in input.chunks(8).enumerate() {
-        let mut buf = [0u8; 8];
-        buf[..chunk.len()].copy_from_slice(chunk);
-        let mut value = u64::from_le_bytes(buf);
-        value ^= ((i as u64 + 1).wrapping_mul(0x9e3779b97f4a7c15)).rotate_left((i % 8) as u32 + 1);
-        let idx = i % 4;
-        state[idx] = state[idx].wrapping_add(value);
-        state[idx] = state[idx].rotate_left(13);
-        state[idx] ^= state[(idx + 1) % 4];
-        state[idx] = state[idx].wrapping_mul(0xbf58476d1ce4e5b9);
-    }
-
-    for i in 0..4 {
-        let next = state[(i + 1) % 4];
-        state[i] ^= next.rotate_right(7);
-        state[i] = state[i].wrapping_add(0x94d049bb133111ebu64 ^ (i as u64 * 0x2545f4914f6cdd1d));
-        state[i] = state[i].rotate_left(17);
-    }
-
-    let mut out = [0u8; 32];
-    for (dst, value) in out.chunks_mut(8).zip(state.iter()) {
-        dst.copy_from_slice(&value.to_le_bytes());
-    }
-    out
+/// Computes a deterministic 32-byte hash of the provided payload with a
+/// user-specified backend.
+pub fn hash_with_backend<B: DeterministicHasherBackend>(input: &[u8]) -> Hash {
+    let mut hasher = Hasher::<B>::with_backend();
+    hasher.update(input);
+    hasher.finalize()
 }
 
-/// Deterministic XOF used as a pseudo BLAKE3-XOF replacement.
+/// Deterministic Blake2s backend compatible with the STWO transcript layout.
+#[derive(Clone)]
+pub struct Blake2sInteropHasher {
+    state: Blake2s256,
+}
+
+impl DeterministicHasherBackend for Blake2sInteropHasher {
+    type Xof = Blake2sXof;
+
+    fn new() -> Self {
+        Self {
+            state: Blake2s256::new(),
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        blake2::Digest::update(&mut self.state, bytes);
+    }
+
+    fn finalize(self) -> [u8; 32] {
+        self.state.finalize().into()
+    }
+
+    fn finalize_xof(self) -> Self::Xof {
+        Blake2sXof::from_state(self.state.finalize().into())
+    }
+}
+
+impl Default for Blake2sInteropHasher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Blake2s-based extendable output reader mirroring the STWO pseudo-XOF.
 #[derive(Debug, Clone)]
-pub struct PseudoBlake3Xof {
+pub struct Blake2sXof {
     state: [u8; 32],
     counter: u64,
 }
 
-impl PseudoBlake3Xof {
+impl Blake2sXof {
     /// Creates a new XOF instance from an arbitrary seed.
     pub fn new(seed: &[u8]) -> Self {
-        let mut data = seed.to_vec();
-        data.extend_from_slice(b"/XOF");
+        let mut hasher = Blake2s256::new();
+        blake2::Digest::update(&mut hasher, seed);
+        blake2::Digest::update(&mut hasher, b"/XOF");
         Self {
-            state: pseudo_blake3(&data),
+            state: hasher.finalize().into(),
             counter: 0,
         }
     }
@@ -199,32 +261,100 @@ impl PseudoBlake3Xof {
     }
 
     /// Returns the next 64 bits from the deterministic stream.
-    ///
-    /// This operation is infallible for well-formed inputs but returns an error if the
-    /// pseudo-BLAKE3 block cannot be converted into an 8-byte array.
     pub fn next_u64(&mut self) -> Result<u64, DeterministicHashError> {
-        let mut data = Vec::with_capacity(40);
-        data.extend_from_slice(&self.state);
-        data.extend_from_slice(&self.counter.to_le_bytes());
-        let block = pseudo_blake3(&data);
+        DeterministicXofBackend::next_u64(self)
+    }
+
+    /// Fills the provided buffer with bytes from the stream.
+    pub fn squeeze(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
+        DeterministicXofBackend::fill(self, output)
+    }
+
+    fn squeeze_block(&mut self) -> [u8; 32] {
+        let mut hasher = Blake2s256::new();
+        blake2::Digest::update(&mut hasher, &self.state);
+        blake2::Digest::update(&mut hasher, &self.counter.to_le_bytes());
+        let block: [u8; 32] = hasher.finalize().into();
         self.state = block;
         self.counter = self.counter.wrapping_add(1);
+        block
+    }
+}
+
+impl DeterministicXofBackend for Blake2sXof {
+    fn next_u64(&mut self) -> Result<u64, DeterministicHashError> {
+        let block = self.squeeze_block();
         let bytes: [u8; 8] = block[0..8]
             .try_into()
             .map_err(|_| DeterministicHashError::SliceConversion { expected: 8 })?;
         Ok(u64::from_le_bytes(bytes))
     }
 
-    /// Fills the provided buffer with bytes from the stream.
-    ///
-    /// Returns an error if the next word cannot be produced.
-    pub fn squeeze(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
-        for chunk in output.chunks_mut(8) {
-            let word = self.next_u64()?;
-            let bytes = word.to_le_bytes();
-            let len = chunk.len();
-            chunk.copy_from_slice(&bytes[..len]);
+    fn fill(&mut self, output: &mut [u8]) -> Result<(), DeterministicHashError> {
+        let mut remaining = output;
+        while !remaining.is_empty() {
+            let block = self.squeeze_block();
+            let take = remaining.len().min(block.len());
+            let (dst, rest) = remaining.split_at_mut(take);
+            dst.copy_from_slice(&block[..take]);
+            remaining = rest;
         }
         Ok(())
+    }
+}
+
+/// Adapter backend that exposes Poseidon interoperability over Blake2s.
+#[derive(Clone, Default)]
+pub struct PoseidonInteropHasher {
+    inner: Blake2sInteropHasher,
+}
+
+impl DeterministicHasherBackend for PoseidonInteropHasher {
+    type Xof = Blake2sXof;
+
+    fn new() -> Self {
+        Self {
+            inner: Blake2sInteropHasher::new(),
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        self.inner.update(bytes);
+    }
+
+    fn finalize(self) -> [u8; 32] {
+        self.inner.finalize()
+    }
+
+    fn finalize_xof(self) -> Self::Xof {
+        self.inner.finalize_xof()
+    }
+}
+
+/// Adapter backend that exposes Rescue interoperability over Blake2s.
+#[derive(Clone, Default)]
+pub struct RescueInteropHasher {
+    inner: Blake2sInteropHasher,
+}
+
+impl DeterministicHasherBackend for RescueInteropHasher {
+    type Xof = Blake2sXof;
+
+    fn new() -> Self {
+        Self {
+            inner: Blake2sInteropHasher::new(),
+        }
+    }
+
+    fn update(&mut self, bytes: &[u8]) {
+        self.inner.update(bytes);
+    }
+
+    fn finalize(self) -> [u8; 32] {
+        self.inner.finalize()
+    }
+
+    fn finalize_xof(self) -> Self::Xof {
+        self.inner.finalize_xof()
     }
 }

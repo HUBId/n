@@ -1,20 +1,11 @@
 ---
 source: tests/fail_matrix/composition.rs
+assertion_line: 52
 expression: leaves
 ---
 [
     [
         1,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    ],
-    [
-        0,
         0,
         0,
         0,
@@ -92,6 +83,16 @@ expression: leaves
         111,
         95,
         142,
+    ],
+    [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
     ],
     [
         0,
