@@ -1,9 +1,9 @@
-use crate::params::{Endianness, FieldKind, MerkleArity, StarkParams};
+use crate::params::{Endianness, FieldKind, HashKind, MerkleArity, StarkParams};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
 
 use super::traits::MerkleHasher;
-use super::types::{Digest, Leaf, MerkleArityExt, MerkleError, TreeDepth};
+use super::types::{Digest, Leaf, MerkleError, TreeDepth};
 
 /// Version identifier for [`CommitAux`].
 const AUX_VERSION: u16 = 1;
@@ -137,6 +137,13 @@ impl<H: MerkleHasher> MerkleTree<H> {
                 reason: "hash family mismatch",
             });
         }
+        if let HashKind::Blake2s { digest_size } = params.hash() {
+            if digest_size as usize != H::digest_size() {
+                return Err(MerkleError::IncompatibleParams {
+                    reason: "digest size mismatch",
+                });
+            }
+        }
         Ok(Self {
             config,
             levels: None,
@@ -192,7 +199,10 @@ impl<H: MerkleHasher> MerkleTree<H> {
         let mut levels = Vec::new();
         levels.push(hashed.clone());
 
-        let arity = self.config.arity.as_usize();
+        let arity = match self.config.arity {
+            MerkleArity::Binary => 2,
+            MerkleArity::Quaternary => 4,
+        };
         let mut current = hashed;
 
         while current.len() > 1 {

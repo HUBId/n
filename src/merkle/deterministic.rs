@@ -1,4 +1,5 @@
 use crate::hash::deterministic::Hasher;
+use crate::hash::merkle::{LEAF_DOMAIN_TAG, NODE_DOMAIN_TAG};
 use crate::params::HashFamily;
 use std::convert::TryInto;
 
@@ -10,13 +11,21 @@ pub struct DeterministicMerkleHasher;
 impl MerkleHasher for DeterministicMerkleHasher {
     type Digest = [u8; 32];
 
-    fn hash_leaves(domain_sep: u64, ordered_leaf_bytes: &[u8]) -> Self::Digest {
-        hash_with_tag(0x00, domain_sep, ordered_leaf_bytes)
+    fn hash_leaves_with_tag(
+        leaf_domain_tag: u8,
+        domain_sep: u64,
+        ordered_leaf_bytes: &[u8],
+    ) -> Self::Digest {
+        hash_with_tag(leaf_domain_tag, domain_sep, ordered_leaf_bytes)
     }
 
-    fn hash_nodes(domain_sep: u64, ordered_children: &[Self::Digest]) -> Self::Digest {
+    fn hash_nodes_with_tag(
+        node_domain_tag: u8,
+        domain_sep: u64,
+        ordered_children: &[Self::Digest],
+    ) -> Self::Digest {
         let mut hasher = Hasher::new();
-        hasher.update(&[0x01]);
+        hasher.update(&[node_domain_tag]);
         hasher.update(&domain_sep.to_le_bytes());
         for digest in ordered_children {
             hasher.update(digest);
@@ -25,7 +34,10 @@ impl MerkleHasher for DeterministicMerkleHasher {
     }
 
     fn digest_size() -> usize {
-        32
+        match Self::hash_family() {
+            HashFamily::Blake2s => crate::hash::merkle::DIGEST_SIZE,
+            _ => unreachable!("deterministic merkle hasher only supports Blake2s"),
+        }
     }
 
     fn from_bytes(bytes: &[u8]) -> Option<Self::Digest> {
@@ -43,4 +55,16 @@ fn hash_with_tag(tag: u8, domain_sep: u64, payload: &[u8]) -> [u8; 32] {
     hasher.update(&domain_sep.to_le_bytes());
     hasher.update(payload);
     hasher.finalize().into_bytes()
+}
+
+impl DeterministicMerkleHasher {
+    /// Returns the canonical leaf domain separation tag used for Blake2s Merkle commitments.
+    pub const fn leaf_domain_tag() -> u8 {
+        LEAF_DOMAIN_TAG
+    }
+
+    /// Returns the canonical node domain separation tag used for Blake2s Merkle commitments.
+    pub const fn node_domain_tag() -> u8 {
+        NODE_DOMAIN_TAG
+    }
 }
