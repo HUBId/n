@@ -8,6 +8,8 @@ mod indices;
 mod merkle;
 #[path = "fail_matrix/fri.rs"]
 mod fri;
+#[path = "fail_matrix/composition.rs"]
+mod composition;
 
 pub use fixture::{
     corrupt_merkle_path, duplicate_composition_index, duplicate_trace_index,
