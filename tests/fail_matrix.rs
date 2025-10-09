@@ -1,15 +1,17 @@
+#[path = "fail_matrix/composition.rs"]
+mod composition;
 #[path = "fail_matrix/fixture.rs"]
 mod fixture;
+#[path = "fail_matrix/fri.rs"]
+mod fri;
 #[path = "fail_matrix/header.rs"]
 mod header;
 #[path = "fail_matrix/indices.rs"]
 mod indices;
 #[path = "fail_matrix/merkle.rs"]
 mod merkle;
-#[path = "fail_matrix/fri.rs"]
-mod fri;
-#[path = "fail_matrix/composition.rs"]
-mod composition;
+#[path = "fail_matrix/snapshots.rs"]
+mod snapshots;
 
 pub use fixture::{
     corrupt_merkle_path, duplicate_composition_index, duplicate_trace_index,
