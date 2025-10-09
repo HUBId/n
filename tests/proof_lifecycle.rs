@@ -657,6 +657,7 @@ fn verification_rejects_tampered_composition_leaf() {
         .as_mut()
         .expect("composition openings present");
     composition.leaves[0][0] ^= 1;
+    let composition_index = composition.indices[0];
     let mutated = serialize_proof(&proof).expect("serialize proof");
     let mutated_bytes = ProofBytes::new(mutated);
 
@@ -670,9 +671,11 @@ fn verification_rejects_tampered_composition_leaf() {
     )
     .expect("verification verdict");
 
+    let expected_reason =
+        format!("composition_leaf_bytes_mismatch:pos=0:index={composition_index}");
     match verdict {
-        VerificationVerdict::Reject(VerifyError::MerkleVerifyFailed { section }) => {
-            assert_eq!(section, MerkleSection::CompositionCommit);
+        VerificationVerdict::Reject(VerifyError::CompositionInconsistent { reason }) => {
+            assert_eq!(reason, expected_reason);
         }
         other => panic!("unexpected verdict: {other:?}"),
     }
@@ -820,7 +823,7 @@ fn verification_rejects_composition_leaf_misalignment_with_fri() {
     .expect("verification verdict");
 
     let expected_reason = format!(
-        "fri_value_mismatch:pos={}:index={}",
+        "composition_leaf_bytes_mismatch:pos={}:index={}",
         query_position, composition_index
     );
     match verdict {
