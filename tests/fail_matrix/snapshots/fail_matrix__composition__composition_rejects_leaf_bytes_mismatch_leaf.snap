@@ -1,0 +1,14 @@
+---
+source: tests/fail_matrix/composition.rs
+expression: "&first_leaf"
+---
+[
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+]

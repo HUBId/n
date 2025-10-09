@@ -1,0 +1,5 @@
+---
+source: tests/fail_matrix/composition.rs
+expression: "&reason"
+---
+"composition_leaf_bytes_mismatch:pos=0:index=3"
