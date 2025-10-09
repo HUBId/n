@@ -1,6 +1,7 @@
 use core::convert::TryInto;
 use core::fmt;
 
+use crate::hash::config::BLAKE2S_PARAMETERS_V1;
 use blake2::{Blake2s256, Digest};
 use serde::{Deserialize, Serialize};
 
@@ -218,9 +219,9 @@ impl DeterministicHasherBackend for Blake2sInteropHasher {
     type Xof = Blake2sXof;
 
     fn new() -> Self {
-        Self {
-            state: Blake2s256::new(),
-        }
+        let mut state = Blake2s256::new();
+        blake2::Digest::update(&mut state, BLAKE2S_PARAMETERS_V1.domain_tag);
+        Self { state }
     }
 
     fn update(&mut self, bytes: &[u8]) {
@@ -253,6 +254,7 @@ impl Blake2sXof {
     /// Creates a new XOF instance from an arbitrary seed.
     pub fn new(seed: &[u8]) -> Self {
         let mut hasher = Blake2s256::new();
+        blake2::Digest::update(&mut hasher, BLAKE2S_PARAMETERS_V1.domain_tag);
         blake2::Digest::update(&mut hasher, seed);
         blake2::Digest::update(&mut hasher, b"/XOF");
         Self {
@@ -278,6 +280,7 @@ impl Blake2sXof {
 
     fn squeeze_block(&mut self) -> [u8; 32] {
         let mut hasher = Blake2s256::new();
+        blake2::Digest::update(&mut hasher, BLAKE2S_PARAMETERS_V1.domain_tag);
         blake2::Digest::update(&mut hasher, self.state);
         blake2::Digest::update(&mut hasher, self.counter.to_le_bytes());
         let block: [u8; 32] = hasher.finalize().into();

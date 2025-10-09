@@ -32,6 +32,11 @@ pub use blake3::{
     Blake3Domain, Blake3TranscriptSection, Blake3TranscriptSpec, Blake3TranscriptVersion,
     FiatShamirChallengeRules, TranscriptPhaseTag,
 };
+pub use config::{
+    Blake2sParameters, HashParameters, PoseidonParameters, BLAKE2S_COMMITMENT_DOMAIN_TAG,
+    BLAKE2S_PARAMETERS_V1, BLAKE2S_PARAMETERS_V1_ID, POSEIDON_ARITHMETIC_DOMAIN_TAG,
+    POSEIDON_PARAMETERS_V1_ID,
+};
 pub use deterministic::{
     hash, hash_with_backend, Blake2sInteropHasher, Blake2sXof, Hash, Hasher, HexOutput,
     OutputReader, PoseidonInteropHasher, RescueInteropHasher,

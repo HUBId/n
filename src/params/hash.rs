@@ -1,4 +1,4 @@
-use crate::hash::config::BLAKE2S_COMMITMENT_DOMAIN_TAG;
+use crate::hash::config::BLAKE2S_PARAMETERS_V1;
 use crate::hash::deterministic::hash;
 
 use super::ser::serialize_params;
@@ -19,7 +19,7 @@ pub fn params_hash(params: &StarkParams) -> [u8; 32] {
     match family {
         HashFamily::Poseidon2 => prefixed.extend_from_slice(b"POSEIDON2/0"),
         HashFamily::Rescue => prefixed.extend_from_slice(b"RESCUE/0"),
-        HashFamily::Blake2s => prefixed.extend_from_slice(BLAKE2S_COMMITMENT_DOMAIN_TAG),
+        HashFamily::Blake2s => prefixed.extend_from_slice(BLAKE2S_PARAMETERS_V1.domain_tag),
     }
     prefixed.extend_from_slice(&payload);
     hash(&prefixed).into()

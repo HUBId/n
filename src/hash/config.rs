@@ -11,7 +11,7 @@ pub const POSEIDON_ARITHMETIC_DOMAIN_TAG: &[u8] = b"rpp-stark:poseidon:arith";
 pub const BLAKE2S_PARAMETERS_V1_ID: &str = "blake2s-v1-transcript";
 
 /// Domain separation tag for Blake2s when hashing external commitments or transcript data.
-pub const BLAKE2S_COMMITMENT_DOMAIN_TAG: &[u8] = b"rpp-stark:blake2s:commit";
+pub const BLAKE2S_COMMITMENT_DOMAIN_TAG: &[u8] = b"stwo:blake2s:commit";
 
 /// Poseidon parameter set descriptor.
 #[derive(Debug, Clone, Copy)]
@@ -62,6 +62,10 @@ impl Blake2sParameters {
         Self { id, domain_tag }
     }
 }
+
+/// Canonical Blake2s parameter set used across STWO-compatible transcripts.
+pub const BLAKE2S_PARAMETERS_V1: Blake2sParameters =
+    Blake2sParameters::new(BLAKE2S_PARAMETERS_V1_ID, BLAKE2S_COMMITMENT_DOMAIN_TAG);
 
 /// Aggregate hash parameters used by the STARK engine.
 #[derive(Debug, Clone, Copy)]
