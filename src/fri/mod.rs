@@ -93,7 +93,7 @@ mod prover;
 pub mod types;
 mod verifier;
 
-pub(crate) use crate::hash::{pseudo_blake3, PseudoBlake3Xof};
+pub(crate) use crate::hash::{hash, Blake2sXof};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
 pub use folding::{
     binary_fold, coset_shift_schedule, next_domain_size, parent_index, phi, FoldingLayer,
@@ -111,7 +111,6 @@ pub use verifier::fri_verify;
 
 use crate::field::prime_field::{CanonicalSerialize, FieldConstraintError};
 use crate::field::FieldElement;
-use crate::hash::hash;
 
 /// Prime modulus used by the Goldilocks field.
 const MODULUS: u128 = FieldElement::MODULUS.value as u128;

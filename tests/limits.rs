@@ -6,7 +6,7 @@ use rpp_stark::config::{
 };
 use rpp_stark::field::prime_field::CanonicalSerialize;
 use rpp_stark::field::FieldElement;
-use rpp_stark::hash::{pseudo_blake3, FiatShamirChallengeRules, PseudoBlake3Xof};
+use rpp_stark::hash::{hash, Blake2sXof, FiatShamirChallengeRules};
 use rpp_stark::merkle::{
     CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleProof,
     MerkleTree, ProofNode,
@@ -448,7 +448,7 @@ fn derive_query_indices(seed: [u8; 32], count: usize, domain_size: usize) -> Vec
     if domain_size == 0 {
         return Vec::new();
     }
-    let mut xof = PseudoBlake3Xof::new(&seed);
+    let mut xof = Blake2sXof::new(&seed);
     let target = count.min(domain_size);
     let mut unique = Vec::with_capacity(target);
     let mut seen = vec![false; domain_size];
@@ -481,14 +481,14 @@ fn derive_fri_query_seed(
         payload.extend_from_slice(&state);
         payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
         payload.extend_from_slice(root);
-        state = pseudo_blake3(&payload);
+        state = hash(&payload).into();
 
         let label = format!("{}ETA-{layer_index}", FiatShamirChallengeRules::SALT_PREFIX);
         let mut eta_payload = Vec::with_capacity(state.len() + label.len());
         eta_payload.extend_from_slice(&state);
         eta_payload.extend_from_slice(label.as_bytes());
-        let challenge = pseudo_blake3(&eta_payload);
-        state = pseudo_blake3(&challenge);
+        let challenge: [u8; 32] = hash(&eta_payload).into();
+        state = hash(&challenge).into();
     }
 
     let mut final_payload =
@@ -496,12 +496,12 @@ fn derive_fri_query_seed(
     final_payload.extend_from_slice(&state);
     final_payload.extend_from_slice(b"RPP-FS/FINAL");
     final_payload.extend_from_slice(final_polynomial_digest);
-    state = pseudo_blake3(&final_payload);
+    state = hash(&final_payload).into();
 
     let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
     query_payload.extend_from_slice(&state);
     query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
-    pseudo_blake3(&query_payload)
+    hash(&query_payload).into()
 }
 
 fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
@@ -511,7 +511,7 @@ fn hash_final_layer(values: &[FieldElement]) -> [u8; 32] {
         let bytes = value.to_bytes().expect("synthetic values are canonical");
         payload.extend_from_slice(&bytes);
     }
-    pseudo_blake3(&payload)
+    hash(&payload).into()
 }
 
 fn build_opening_artifacts(

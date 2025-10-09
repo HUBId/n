@@ -29,14 +29,8 @@ fn fri_rejects_fold_challenge_tampering() {
         _ => None,
     };
 
-    assert_debug_snapshot!(
-        "fri_rejects_fold_challenge_tampering_error",
-        error
-    );
-    assert_debug_snapshot!(
-        "fri_rejects_fold_challenge_tampering_issue",
-        issue
-    );
+    assert_debug_snapshot!("fri_rejects_fold_challenge_tampering_error", error);
+    assert_debug_snapshot!("fri_rejects_fold_challenge_tampering_issue", issue);
     assert_debug_snapshot!(
         "fri_rejects_fold_challenge_tampering_challenges",
         mutated.proof.fri_proof.fold_challenges
@@ -47,8 +41,7 @@ fn fri_rejects_fold_challenge_tampering() {
             error,
             VerifyError::FriVerifyFailed {
                 issue: FriVerifyIssue::FoldingConstraint
-            }
-                | VerifyError::FriVerifyFailed { .. }
+            } | VerifyError::FriVerifyFailed { .. }
                 | VerifyError::MerkleVerifyFailed {
                     section: MerkleSection::FriPath
                 }

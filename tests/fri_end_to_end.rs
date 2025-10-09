@@ -5,7 +5,7 @@ use rpp_stark::field::prime_field::FieldElementOps;
 use rpp_stark::field::FieldElement;
 use rpp_stark::fri::types::FriError;
 use rpp_stark::fri::{DeepOodsProof, FriProof, FriSecurityLevel, FriTranscriptSeed, FriVerifier};
-use rpp_stark::hash::{pseudo_blake3, FiatShamirChallengeRules, PseudoBlake3Xof};
+use rpp_stark::hash::{hash, Blake2sXof, FiatShamirChallengeRules};
 use rpp_stark::proof::params::canonical_stark_params;
 
 fn sample_evaluations() -> Vec<FieldElement> {
@@ -66,14 +66,14 @@ fn derive_query_positions_from_proof(proof: &FriProof, seed: FriTranscriptSeed) 
         payload.extend_from_slice(&state);
         payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
         payload.extend_from_slice(root);
-        state = pseudo_blake3(&payload);
+        state = hash(&payload).into();
 
         let label = format!("{}ETA-{layer_index}", FiatShamirChallengeRules::SALT_PREFIX);
         let mut challenge_payload = Vec::with_capacity(state.len() + label.len());
         challenge_payload.extend_from_slice(&state);
         challenge_payload.extend_from_slice(label.as_bytes());
-        let challenge = pseudo_blake3(&challenge_payload);
-        state = pseudo_blake3(&challenge);
+        let challenge: [u8; 32] = hash(&challenge_payload).into();
+        state = hash(&challenge).into();
 
         let _ = proof
             .fold_challenges
@@ -85,18 +85,18 @@ fn derive_query_positions_from_proof(proof: &FriProof, seed: FriTranscriptSeed) 
     final_payload.extend_from_slice(&state);
     final_payload.extend_from_slice(b"RPP-FS/FINAL");
     final_payload.extend_from_slice(&proof.final_polynomial_digest);
-    state = pseudo_blake3(&final_payload);
+    state = hash(&final_payload).into();
 
     let mut query_payload = Vec::with_capacity(64);
     query_payload.extend_from_slice(&state);
     query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
-    let query_seed = pseudo_blake3(&query_payload);
+    let query_seed: [u8; 32] = hash(&query_payload).into();
 
     let target = proof
         .security_level
         .query_budget()
         .min(proof.initial_domain_size);
-    let mut xof = PseudoBlake3Xof::new(&query_seed);
+    let mut xof = Blake2sXof::new(&query_seed);
     let mut unique = Vec::with_capacity(target);
     let mut seen = vec![false; proof.initial_domain_size];
 

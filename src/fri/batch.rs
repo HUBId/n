@@ -8,8 +8,8 @@
 use crate::field::FieldElement;
 
 use super::proof::{FriProof, FriVerifier};
-use super::pseudo_blake3;
 use super::types::{FriError, FriSecurityLevel, FriTranscriptSeed};
+use crate::hash::hash;
 
 /// Seed shared across the batch, typically derived from a transcript challenge.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -67,7 +67,7 @@ impl FriBatch {
             seed_input.extend_from_slice(&self.joint_seed.bytes);
             seed_input.extend_from_slice(&(proof_index as u64).to_le_bytes());
             seed_input.extend_from_slice(&transcript_seed);
-            let seed = pseudo_blake3(&seed_input);
+            let seed: [u8; 32] = hash(&seed_input).into();
             FriVerifier::verify(proof, security_level, seed, |final_index| {
                 final_value_oracle(proof_index, final_index)
             })?;

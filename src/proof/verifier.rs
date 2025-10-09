@@ -11,9 +11,8 @@ use crate::config::{
 };
 use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
-use crate::fri::pseudo_blake3;
 use crate::fri::types::{FriError, FriSecurityLevel};
-use crate::fri::{field_to_bytes, FriVerifier, PseudoBlake3Xof};
+use crate::fri::{field_to_bytes, hash, Blake2sXof, FriVerifier};
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::merkle::traits::MerkleHasher;
 use crate::merkle::verify_proof as verify_merkle_proof;
@@ -567,7 +566,7 @@ fn derive_fri_query_seed(fri_seed: [u8; 32], fri_proof: &crate::fri::FriProof) -
         payload.extend_from_slice(&state);
         payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
         payload.extend_from_slice(root);
-        state = pseudo_blake3(&payload);
+        state = hash(&payload).into();
 
         let label = format!(
             "{}ETA-{}",
@@ -577,20 +576,20 @@ fn derive_fri_query_seed(fri_seed: [u8; 32], fri_proof: &crate::fri::FriProof) -
         let mut eta_payload = Vec::with_capacity(state.len() + label.len());
         eta_payload.extend_from_slice(&state);
         eta_payload.extend_from_slice(label.as_bytes());
-        let challenge = pseudo_blake3(&eta_payload);
-        state = pseudo_blake3(&challenge);
+        let challenge: [u8; 32] = hash(&eta_payload).into();
+        state = hash(&challenge).into();
     }
 
     let mut final_payload = Vec::with_capacity(state.len() + b"RPP-FS/FINAL".len() + 32);
     final_payload.extend_from_slice(&state);
     final_payload.extend_from_slice(b"RPP-FS/FINAL");
     final_payload.extend_from_slice(&fri_proof.final_polynomial_digest);
-    state = pseudo_blake3(&final_payload);
+    state = hash(&final_payload).into();
 
     let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
     query_payload.extend_from_slice(&state);
     query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
-    pseudo_blake3(&query_payload)
+    hash(&query_payload).into()
 }
 
 fn derive_trace_query_indices(
@@ -649,13 +648,13 @@ fn validate_query_indices(provided: &[u32], expected: &[u32]) -> Result<(), Veri
 }
 
 struct QueryIndexSampler {
-    xof: PseudoBlake3Xof,
+    xof: Blake2sXof,
 }
 
 impl QueryIndexSampler {
     fn new(seed: [u8; 32]) -> Self {
         Self {
-            xof: PseudoBlake3Xof::new(&seed),
+            xof: Blake2sXof::new(&seed),
         }
     }
 

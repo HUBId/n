@@ -2,7 +2,7 @@
 //!
 //! The prover operates purely in-memory and produces fully deterministic proofs
 //! that can be re-verified using the [`FriVerifier`] helper.  Hashing and query
-//! sampling rely on the pseudo-BLAKE3 primitives from [`crate::fri`], keeping the
+//! sampling rely on the deterministic Blake2s primitives from [`crate::fri`], keeping the
 //! implementation self-contained and dependency free.
 
 use crate::field::prime_field::{CanonicalSerialize, FieldDeserializeError};
@@ -13,7 +13,7 @@ use crate::fri::types::{
 use crate::fri::{
     binary_fold, coset_shift_schedule, next_domain_size, parent_index, FriLayer, BINARY_FOLD_ARITY,
 };
-use crate::fri::{field_from_hash, field_to_bytes, pseudo_blake3, PseudoBlake3Xof};
+use crate::fri::{field_from_hash, field_to_bytes, hash, Blake2sXof};
 use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::hash::merkle::{
     compute_root_from_path, encode_leaf, MerkleError, MerkleIndex, MerklePathElement, DIGEST_SIZE,
@@ -499,7 +499,7 @@ impl FriTranscript {
         payload.extend_from_slice(&self.state);
         payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
         payload.extend_from_slice(root);
-        self.state = pseudo_blake3(&payload);
+        self.state = hash(&payload).into();
     }
 
     fn draw_eta(&mut self, layer_index: usize) -> FieldElement {
@@ -507,8 +507,8 @@ impl FriTranscript {
         let mut payload = Vec::with_capacity(self.state.len() + label.len());
         payload.extend_from_slice(&self.state);
         payload.extend_from_slice(label.as_bytes());
-        let challenge = pseudo_blake3(&payload);
-        self.state = pseudo_blake3(&challenge);
+        let challenge: [u8; 32] = hash(&payload).into();
+        self.state = hash(&challenge).into();
         field_from_hash(&challenge)
     }
 
@@ -517,15 +517,15 @@ impl FriTranscript {
         payload.extend_from_slice(&self.state);
         payload.extend_from_slice(b"RPP-FS/FINAL");
         payload.extend_from_slice(digest);
-        self.state = pseudo_blake3(&payload);
+        self.state = hash(&payload).into();
     }
 
     fn derive_query_seed(&mut self) -> [u8; 32] {
         let mut payload = Vec::with_capacity(64);
         payload.extend_from_slice(&self.state);
         payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
-        let seed = pseudo_blake3(&payload);
-        self.state = pseudo_blake3(&seed);
+        let seed: [u8; 32] = hash(&payload).into();
+        self.state = hash(&seed).into();
         seed
     }
 }
@@ -537,7 +537,7 @@ pub(crate) fn hash_final_layer(values: &[FieldElement]) -> Result<[u8; 32], FriE
     for value in values {
         payload.extend_from_slice(&field_to_bytes(value)?);
     }
-    Ok(pseudo_blake3(&payload))
+    Ok(hash(&payload).into())
 }
 
 fn default_fri_params() -> &'static StarkParams {
@@ -660,7 +660,7 @@ pub fn derive_query_plan_id(level: FriSecurityLevel, params: &StarkParams) -> [u
     payload.extend_from_slice(level.tag().as_bytes());
     payload.extend_from_slice(b"challenge-after-commit");
     payload.extend_from_slice(b"dedup-sort-stable");
-    pseudo_blake3(&payload)
+    hash(&payload).into()
 }
 
 /// Verifier entry point.
@@ -808,7 +808,7 @@ pub(crate) fn derive_query_positions(
     domain_size: usize,
 ) -> Result<Vec<usize>, FriError> {
     assert!(domain_size > 0, "domain size must be positive");
-    let mut xof = PseudoBlake3Xof::new(&seed);
+    let mut xof = Blake2sXof::new(&seed);
     let target = count.min(domain_size);
     let mut unique = Vec::with_capacity(target);
     let mut seen = vec![false; domain_size];
