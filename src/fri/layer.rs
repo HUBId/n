@@ -5,10 +5,13 @@
 //! over those values.  Leaves are encoded as described in the repository
 //! documentation: the prover hashes `len || payload` where `len` is the
 //! little-endian `u32` value `8` and `payload` is the eight byte
-//! little-endian representation of the evaluation.  Internal nodes hash the
-//! concatenation of their two children with the rightmost position padded by
+//! little-endian representation of the evaluation.  Leaf hashes prefix the
+//! [`LEAF_DOMAIN_TAG`](crate::hash::merkle::LEAF_DOMAIN_TAG) byte before
+//! hashing.  Internal nodes hash the concatenation of their two children with
+//! the rightmost position padded by
 //! [`EMPTY_DIGEST`](crate::hash::merkle::EMPTY_DIGEST) when the layer contains
-//! an odd number of leaves.
+//! an odd number of leaves, prefixing the
+//! [`NODE_DOMAIN_TAG`](crate::hash::merkle::NODE_DOMAIN_TAG) prior to hashing.
 //!
 //! Indices follow the standard binary layout where position `i` at layer `L`
 //! maps to parent `i / 2` at layer `L + 1`.  The prover therefore keeps the

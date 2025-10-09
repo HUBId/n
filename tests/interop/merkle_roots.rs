@@ -22,7 +22,8 @@ fn stwo_single_leaf_root_matches_reference() {
     let leaves = [encode_leaf(b"stwo-leaf-0")];
     let tree = Blake3MerkleTree::from_leaves(leaves.iter()).expect("tree");
     assert_eq!(tree.leaf_count(), 1);
-    let expected = hex_to_digest("af7424319f3641efc8170c036f932a42848183c651b027f6fc2f90c58c0c7b12");
+    let expected =
+        hex_to_digest("af7424319f3641efc8170c036f932a42848183c651b027f6fc2f90c58c0c7b12");
     assert_eq!(tree.root(), expected);
 
     let path: Vec<MerklePathElement> = Vec::new();
@@ -35,7 +36,8 @@ fn stwo_two_leaf_path_matches_reference() {
     let leaves = [encode_leaf(b"stwo-leaf-0"), encode_leaf(b"stwo-leaf-1")];
     let tree = Blake3MerkleTree::from_leaves(leaves.iter()).expect("tree");
     assert_eq!(tree.leaf_count(), 2);
-    let expected = hex_to_digest("27448c75832161aae392af81e24bddf5a0b58ab8bf58f345f78d4be1938ac29f");
+    let expected =
+        hex_to_digest("27448c75832161aae392af81e24bddf5a0b58ab8bf58f345f78d4be1938ac29f");
     assert_eq!(tree.root(), expected);
 
     let sibling = hex_to_digest("af7424319f3641efc8170c036f932a42848183c651b027f6fc2f90c58c0c7b12");
@@ -54,7 +56,8 @@ fn stwo_eight_leaf_path_matches_reference() {
         .collect();
     let tree = Blake3MerkleTree::from_leaves(leaves.iter()).expect("tree");
     assert_eq!(tree.leaf_count(), 8);
-    let expected = hex_to_digest("710956d974d3ff4028491fcf5855a72a15783d6af3d17a2d34bce60ee5952cd6");
+    let expected =
+        hex_to_digest("710956d974d3ff4028491fcf5855a72a15783d6af3d17a2d34bce60ee5952cd6");
     assert_eq!(tree.root(), expected);
 
     let siblings = [
