@@ -962,9 +962,19 @@ nightly-Abhängigkeiten.
 
 ### Spätere Chain-Integration (separat)
 
-- Adapter-Layer (Felt/Digest/Hasher), Feature-Gate `backend-rpp-stark`.
+- Adapter-Layer (Felt/Digest/Hasher) hinter dem Feature-Gate
+  `backend-rpp-stark`: die Wrapper `backend::Felt`, `backend::Digest` und
+  `backend::Hasher` spiegeln die Feld- und Hash-Primitiven der Lib. Der Hasher
+  stellt das Domain-Tag `rpp-stark:blake2s:commit` via
+  `backend::Hasher::DOMAIN_TAG` bereit und bietet mit
+  `backend::Hasher::new_with_domain_tag()` sowie
+  `backend::ChainHasher::absorb_domain_tag(...)` deterministisches Seeding für
+  32-Byte-Digests.
+- Mapping-Helfer: `backend::node_limit_to_params_kb(...)`,
+  `backend::params_limit_to_node_bytes(...)` und
+  `backend::ensure_proof_size_consistency(...)` halten das Proof-Size-Gate und
+  das Node-Limit synchron.
 - Zwei CLI-Binaries (`prove`, `verify`) für manuelle Tests.
-- Proof-Size-Gate an Node-Config mappen.
 
 ### Roadmap-Erweiterung – Kette komplett (Integration & Betriebsreife)
 

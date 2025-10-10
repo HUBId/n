@@ -22,6 +22,8 @@ jobs:
           grep -q '^## \[Unreleased\]' CHANGELOG.md
       - name: Cargo build
         run: cargo build --locked
+      - name: Cargo build (backend feature)
+        run: cargo build --locked --features backend-rpp-stark
       - name: Cargo clippy
         run: cargo clippy --locked -- -D warnings
       - name: Cargo test

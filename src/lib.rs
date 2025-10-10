@@ -22,6 +22,9 @@ pub mod transcript;
 pub mod utils;
 pub mod vrf;
 
+#[cfg(feature = "backend-rpp-stark")]
+pub mod backend;
+
 use config::{ProofSystemConfig, ProverContext, VerifierContext};
 use proof::aggregation;
 use proof::prover;

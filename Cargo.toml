@@ -17,6 +17,7 @@ default = []
 audit-lde = []
 audit-lde-hisec = ["audit-lde"]
 parallel = ["rayon"]
+backend-rpp-stark = []
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
