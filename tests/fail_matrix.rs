@@ -14,12 +14,15 @@ mod merkle;
 mod ood;
 #[path = "fail_matrix/snapshots.rs"]
 mod snapshots;
+#[path = "fail_matrix/telemetry.rs"]
+mod telemetry;
 
 pub use fixture::{
     corrupt_merkle_path, duplicate_composition_index, duplicate_trace_index,
     flip_composition_leaf_byte, flip_header_version, flip_ood_composition_value,
     flip_ood_trace_core_value, flip_param_digest_byte, flip_public_digest_byte,
-    mismatch_composition_indices, mismatch_trace_indices, mismatch_trace_root,
+    mismatch_composition_indices, mismatch_telemetry_body_length, mismatch_telemetry_header_length,
+    mismatch_telemetry_integrity_digest, mismatch_trace_indices, mismatch_trace_root,
     perturb_fri_fold_challenge, swap_composition_indices, swap_trace_indices, truncate_trace_paths,
     FailMatrixFixture, MutatedProof,
 };
