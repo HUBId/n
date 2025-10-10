@@ -131,7 +131,7 @@ impl FriHandle {
 }
 
 /// Fully decoded proof container mirroring the authoritative specification.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
     /// Declared proof version (currently `1`).
     #[serde(with = "proof_version_codec")]
@@ -161,6 +161,16 @@ pub struct Proof {
     has_telemetry: bool,
     /// Telemetry frame describing declared lengths and digests.
     telemetry: Telemetry,
+}
+
+impl Clone for Proof {
+    fn clone(&self) -> Self {
+        self.clone_using_parts()
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        *self = source.clone_using_parts();
+    }
 }
 
 impl Proof {
