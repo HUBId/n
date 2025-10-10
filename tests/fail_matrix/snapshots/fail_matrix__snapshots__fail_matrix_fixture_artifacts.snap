@@ -1,6 +1,5 @@
 ---
 source: tests/fail_matrix/snapshots.rs
-assertion_line: 128
 expression: snapshot
 ---
 {

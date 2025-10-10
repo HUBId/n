@@ -337,9 +337,16 @@ pub fn build_envelope(
             }
         }
 
+        let (declared_header_length, declared_body_length) = {
+            let telemetry = proof.telemetry().frame();
+            (telemetry.header_length(), telemetry.body_length())
+        };
+
         {
             let telemetry = proof.telemetry_mut().frame_mut();
             telemetry.set_integrity_digest(DigestBytes::default());
+            telemetry.set_header_length(0);
+            telemetry.set_body_length(0);
         }
 
         let canonical_body = proof.serialize_payload().map_err(ProverError::from)?;
@@ -350,6 +357,8 @@ pub fn build_envelope(
 
         {
             let telemetry = proof.telemetry_mut().frame_mut();
+            telemetry.set_header_length(declared_header_length);
+            telemetry.set_body_length(declared_body_length);
             telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
         }
 
