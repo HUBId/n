@@ -133,7 +133,7 @@ fn merkle_rejects_header_root_mismatch() {
 fn snapshot_path_nodes(mutated: &MutatedProof) {
     let nodes: Vec<(u8, String)> = mutated
         .proof
-        .openings
+        .openings()
         .trace
         .paths
         .first()
@@ -180,7 +180,7 @@ fn merkle_rejects_corrupted_trace_path() {
 fn snapshot_path_lengths(mutated: &MutatedProof) {
     let lengths: Vec<usize> = mutated
         .proof
-        .openings
+        .openings()
         .trace
         .paths
         .iter()
