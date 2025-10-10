@@ -172,10 +172,17 @@ The GitHub Actions workflow enforces the following gates:
 
 * `cargo build --locked`
 * `cargo test -p rpp-stark -- --nocapture`
+* `cargo test snapshot_profiles -- --exact`
 * `cargo clippy --locked -- -D warnings`
 * `cargo run --bin profile_reports -- --output reports --include-throughput`
 
 Pull requests must pass all of these checks before merging.
+
+> **Hinweis:** Jede Änderung an den eingebauten STARK-Profilen oder deren
+> Serialisierung erfordert eine Aktualisierung der gefrorenen `insta`-Snapshots
+> unter `tests/snapshots/params_roundtrip__*.snap`. Führe dazu lokal
+> `cargo test snapshot_profiles -- --exact` (oder `cargo insta review`) aus und
+> nimm die neuen Artefakte mit in den Commit auf.
 
 ## Projekt-Blueprint
 

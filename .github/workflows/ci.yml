@@ -22,6 +22,8 @@ jobs:
         run: cargo clippy --locked -- -D warnings
       - name: Cargo test
         run: cargo test -p rpp-stark -- --nocapture
+      - name: Cargo test snapshot profiles
+        run: cargo test snapshot_profiles -- --exact
       - name: Generate profile reports
         env:
           ENABLE_PROFILE_THR: "1"
