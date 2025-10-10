@@ -1,7 +1,7 @@
 use rpp_stark::config::{
     build_proof_system_config, build_prover_context, build_verifier_context, compute_param_digest,
-    ChunkingPolicy, ProfileConfig, ProofSystemConfig, ProverContext, ThreadPoolProfile,
-    VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
+    ChunkingPolicy, ParamDigest, ProfileConfig, ProofSystemConfig, ProverContext,
+    ThreadPoolProfile, VerifierContext, COMMON_IDENTIFIERS, PROFILE_STANDARD_CONFIG,
 };
 use rpp_stark::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use rpp_stark::field::FieldElement;
@@ -10,7 +10,9 @@ use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::proof::ser::{compute_integrity_digest, serialize_proof};
-use rpp_stark::proof::types::{Proof, Telemetry};
+use rpp_stark::proof::types::{
+    CompositionBinding, FriHandle, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
+};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use std::convert::TryInto;
 
@@ -97,7 +99,7 @@ impl FailMatrixFixture {
 
     /// Returns the decoded proof container.
     pub fn proof(&self) -> Proof {
-        self.proof.clone_using_parts()
+        ProofParts::from_proof(&self.proof).into_proof()
     }
 
     /// Returns the configured proof system configuration.
@@ -157,7 +159,7 @@ fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
 
 fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     if proof.has_telemetry() {
-        let mut canonical = proof.clone_using_parts();
+        let mut canonical = ProofParts::from_proof(proof).into_proof();
         let telemetry = canonical.telemetry_mut();
         telemetry.set_header_length(0);
         telemetry.set_body_length(0);
@@ -186,7 +188,7 @@ where
         return None;
     }
 
-    let mut mutated = proof.clone_using_parts();
+    let mut mutated = ProofParts::from_proof(proof).into_proof();
     let _ = reencode_proof(&mut mutated);
     mutator(mutated.telemetry_mut());
 
@@ -232,15 +234,17 @@ pub fn mismatch_telemetry_integrity_digest(proof: &Proof) -> Option<ProofBytes> 
 
 /// Flips the proof header version field.
 pub fn flip_header_version(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone_using_parts();
-    *mutated.version_mut() ^= 1;
+    let mut parts = ProofParts::from_proof(proof);
+    *parts.version_mut() ^= 1;
+    let mut mutated = parts.into_proof();
     reencode_proof(&mut mutated)
 }
 
 /// Corrupts a single byte inside the parameter digest.
 pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone_using_parts();
-    mutated.param_digest_mut().0.bytes[0] ^= 0x01;
+    let mut parts = ProofParts::from_proof(proof);
+    parts.param_digest_mut().0.bytes[0] ^= 0x01;
+    let mut mutated = parts.into_proof();
     reencode_proof(&mut mutated)
 }
 
@@ -312,8 +316,13 @@ pub fn flip_ood_trace_core_value(proof: &Proof) -> Option<MutatedProof> {
         return None;
     }
 
-    Some(mutate_proof(proof, |proof| {
-        if let Some(opening) = proof.openings_mut().out_of_domain.first_mut() {
+    Some(mutate_proof(proof, |parts| {
+        if let Some(opening) = parts
+            .openings_mut()
+            .openings_mut()
+            .out_of_domain
+            .first_mut()
+        {
             if let Some(value) = opening.core_values.first_mut() {
                 if let Some(byte) = value.first_mut() {
                     *byte ^= 0x01;
@@ -332,8 +341,13 @@ pub fn flip_ood_composition_value(proof: &Proof) -> Option<MutatedProof> {
         return None;
     }
 
-    Some(mutate_proof(proof, |proof| {
-        if let Some(opening) = proof.openings_mut().out_of_domain.first_mut() {
+    Some(mutate_proof(proof, |parts| {
+        if let Some(opening) = parts
+            .openings_mut()
+            .openings_mut()
+            .out_of_domain
+            .first_mut()
+        {
             if let Some(byte) = opening.composition_value.first_mut() {
                 *byte ^= 0x01;
             }
@@ -348,12 +362,83 @@ pub struct MutatedProof {
     pub proof: Proof,
 }
 
+#[derive(Debug, Clone)]
+struct ProofParts {
+    version: u16,
+    param_digest: ParamDigest,
+    public_digest: DigestBytes,
+    trace_commit: DigestBytes,
+    binding: CompositionBinding,
+    openings: OpeningsDescriptor,
+    fri: FriHandle,
+    telemetry: TelemetryOption,
+}
+
+impl ProofParts {
+    fn from_proof(proof: &Proof) -> Self {
+        let binding = CompositionBinding::new(
+            *proof.kind(),
+            proof.air_spec_id().clone(),
+            proof.public_inputs().to_vec(),
+            proof.composition_commit().cloned(),
+        );
+        let openings = OpeningsDescriptor::new(proof.merkle().clone(), proof.openings().clone());
+        let fri = FriHandle::new(proof.fri_proof().clone());
+        let telemetry = TelemetryOption::new(proof.has_telemetry(), proof.telemetry().clone());
+
+        Self {
+            version: proof.version(),
+            param_digest: proof.param_digest().clone(),
+            public_digest: proof.public_digest().clone(),
+            trace_commit: proof.trace_commit().clone(),
+            binding,
+            openings,
+            fri,
+            telemetry,
+        }
+    }
+
+    fn into_proof(self) -> Proof {
+        Proof::from_parts(
+            self.version,
+            self.param_digest,
+            self.public_digest,
+            self.trace_commit,
+            self.binding,
+            self.openings,
+            self.fri,
+            self.telemetry,
+        )
+    }
+
+    fn version_mut(&mut self) -> &mut u16 {
+        &mut self.version
+    }
+
+    fn param_digest_mut(&mut self) -> &mut ParamDigest {
+        &mut self.param_digest
+    }
+
+    fn openings(&self) -> &OpeningsDescriptor {
+        &self.openings
+    }
+
+    fn openings_mut(&mut self) -> &mut OpeningsDescriptor {
+        &mut self.openings
+    }
+
+    fn fri_mut(&mut self) -> &mut FriHandle {
+        &mut self.fri
+    }
+}
+
 fn mutate_proof<F>(proof: &Proof, mutator: F) -> MutatedProof
 where
-    F: FnOnce(&mut Proof),
+    F: FnOnce(&mut ProofParts),
 {
-    let mut mutated = proof.clone_using_parts();
-    mutator(&mut mutated);
+    let mut parts = ProofParts::from_proof(proof);
+    mutator(&mut parts);
+    let mut mutated = parts.into_proof();
     let bytes = reencode_proof(&mut mutated);
     MutatedProof {
         bytes,
@@ -365,8 +450,8 @@ fn mutate_trace_indices_with<F>(proof: &Proof, mutator: F) -> MutatedProof
 where
     F: FnOnce(&mut Vec<u32>),
 {
-    mutate_proof(proof, |proof| {
-        mutator(&mut proof.openings_mut().trace.indices);
+    mutate_proof(proof, |parts| {
+        mutator(&mut parts.openings_mut().openings_mut().trace.indices);
     })
 }
 
@@ -375,8 +460,8 @@ where
     F: FnOnce(&mut Vec<u32>),
 {
     if proof.openings().composition.is_some() {
-        Some(mutate_proof(proof, |proof| {
-            if let Some(composition) = proof.openings_mut().composition.as_mut() {
+        Some(mutate_proof(proof, |parts| {
+            if let Some(composition) = parts.openings_mut().openings_mut().composition.as_mut() {
                 mutator(&mut composition.indices);
             }
         }))
@@ -397,8 +482,8 @@ pub fn flip_composition_leaf_byte(proof: &Proof) -> Option<MutatedProof> {
         return None;
     }
 
-    Some(mutate_proof(proof, |proof| {
-        if let Some(composition) = proof.openings_mut().composition.as_mut() {
+    Some(mutate_proof(proof, |parts| {
+        if let Some(composition) = parts.openings_mut().openings_mut().composition.as_mut() {
             if let Some(leaf) = composition.leaves.first_mut() {
                 if let Some(byte) = leaf.first_mut() {
                     *byte ^= 0x01;
@@ -466,8 +551,8 @@ pub fn mismatch_composition_indices(proof: &Proof) -> Option<MutatedProof> {
 
 /// Corrupts the leading node within the first trace Merkle authentication path.
 pub fn corrupt_merkle_path(proof: &Proof) -> MutatedProof {
-    mutate_proof(proof, |proof| {
-        if let Some(path) = proof.openings_mut().trace.paths.first_mut() {
+    mutate_proof(proof, |parts| {
+        if let Some(path) = parts.openings_mut().openings_mut().trace.paths.first_mut() {
             if let Some(node) = path.nodes.first_mut() {
                 node.index = u8::MAX;
                 node.sibling[0] ^= 0xFF;
@@ -478,17 +563,17 @@ pub fn corrupt_merkle_path(proof: &Proof) -> MutatedProof {
 
 /// Shortens the trace authentication paths, creating a vector length mismatch.
 pub fn truncate_trace_paths(proof: &Proof) -> MutatedProof {
-    mutate_proof(proof, |proof| {
-        if !proof.openings().trace.paths.is_empty() {
-            proof.openings_mut().trace.paths.pop();
+    mutate_proof(proof, |parts| {
+        if !parts.openings().openings().trace.paths.is_empty() {
+            parts.openings_mut().openings_mut().trace.paths.pop();
         }
     })
 }
 
 /// Offsets the leading FRI fold challenge by one to violate folding constraints.
 pub fn perturb_fri_fold_challenge(proof: &Proof) -> MutatedProof {
-    mutate_proof(proof, |proof| {
-        if let Some(challenge) = proof.fri_proof_mut().fold_challenges.get_mut(0) {
+    mutate_proof(proof, |parts| {
+        if let Some(challenge) = parts.fri_mut().fri_proof_mut().fold_challenges.get_mut(0) {
             *challenge = challenge.add(&FieldElement::ONE);
         }
     })
