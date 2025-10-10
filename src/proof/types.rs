@@ -295,6 +295,7 @@ impl Proof {
     }
 
     /// Reassembles a proof from the provided building blocks.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         version: u16,
         param_digest: ParamDigest,
