@@ -16,8 +16,9 @@ use rpp_stark::proof::ser::{
     compute_integrity_digest, compute_public_digest, serialize_public_inputs,
 };
 use rpp_stark::proof::types::{
-    FriParametersMirror, MerkleAuthenticationPath, MerkleProofBundle, Openings, OutOfDomainOpening,
-    Proof, Telemetry, TraceOpenings, PROOF_VERSION,
+    CompositionBinding, FriHandle, FriParametersMirror, MerkleAuthenticationPath,
+    MerkleProofBundle, Openings, OpeningsDescriptor, OutOfDomainOpening, Proof, Telemetry,
+    TelemetryOption, TraceOpenings, PROOF_VERSION,
 };
 use rpp_stark::utils::serialization::DigestBytes;
 
@@ -184,29 +185,32 @@ fn build_sample_proof(
     };
 
     let trace_openings = build_trace_stub(&fri_proof);
-    let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: ProofKind::Tx,
-        param_digest: param_digest.clone(),
-        air_spec_id: profile.air_spec_ids.get(ProofKind::Tx).clone(),
+    let openings = Openings {
+        trace: trace_openings,
+        composition: None,
+        out_of_domain: ood_openings,
+    };
+    let binding = CompositionBinding::new(
+        ProofKind::Tx,
+        profile.air_spec_ids.get(ProofKind::Tx).clone(),
         public_inputs,
-        public_digest: DigestBytes {
+        None,
+    );
+    let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+    let fri_handle = FriHandle::new(fri_proof);
+    let telemetry_option = TelemetryOption::new(true, telemetry);
+    let mut proof = Proof::from_parts(
+        PROOF_VERSION,
+        param_digest.clone(),
+        DigestBytes {
             bytes: public_digest,
         },
-        trace_commit: DigestBytes {
-            bytes: merkle.core_root,
-        },
-        composition_commit: None,
-        merkle,
-        openings: Openings {
-            trace: trace_openings,
-            composition: None,
-            out_of_domain: ood_openings,
-        },
-        fri_proof,
-        has_telemetry: true,
-        telemetry,
-    };
+        DigestBytes { bytes: core_root },
+        binding,
+        openings_descriptor,
+        fri_handle,
+        telemetry_option,
+    );
 
     let payload = proof
         .serialize_payload()
