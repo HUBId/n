@@ -10,12 +10,22 @@ use rpp_stark::field::FieldElement;
 use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
-use rpp_stark::proof::ser::{compute_integrity_digest, map_public_to_config_kind, serialize_proof};
+use rpp_stark::proof::ser::{
+    compute_integrity_digest, compute_public_digest, map_public_to_config_kind, serialize_proof,
+};
 use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, Proof, VerifyError, PROOF_VERSION};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
     BlockContext, StarkError, VerificationVerdict,
+};
+
+#[allow(dead_code)]
+#[path = "fail_matrix/fixture.rs"]
+mod fail_matrix_fixture;
+
+use fail_matrix_fixture::{
+    flip_composition_leaf_byte, perturb_fri_fold_challenge, FailMatrixFixture,
 };
 
 struct TestSetup {
@@ -380,6 +390,207 @@ fn verification_report_flags_param_digest_flip() {
     assert!(!report.params_ok, "params stage must fail");
 }
 
+#[test]
+fn verification_report_marks_all_stages_on_success_path() {
+    let fixture = FailMatrixFixture::new();
+    let public_inputs = fixture.public_inputs();
+    let config = fixture.config();
+    let context = fixture.verifier_context();
+    let proof_bytes = fixture.proof_bytes();
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &proof_bytes,
+        &config,
+        &context,
+    )
+    .expect("verification report");
+
+    assert!(report.error.is_none(), "expected proof to succeed");
+    assert!(report.params_ok, "params stage should succeed");
+    assert!(report.public_ok, "public stage should succeed");
+    assert!(report.merkle_ok, "merkle stage should succeed");
+    assert!(report.composition_ok, "composition stage should succeed");
+    assert!(report.fri_ok, "fri stage should succeed");
+}
+
+#[test]
+fn verification_report_flags_public_stage_failure() {
+    let fixture = FailMatrixFixture::new();
+    let public_inputs = fixture.public_inputs();
+    let config = fixture.config();
+    let context = fixture.verifier_context();
+    let mut mutated_proof = fixture.proof();
+    if let Some(byte) = mutated_proof.public_inputs.first_mut() {
+        *byte ^= 0x01;
+    } else {
+        panic!("fixture must contain public input bytes");
+    }
+    mutated_proof.public_digest.bytes = compute_public_digest(&mutated_proof.public_inputs);
+    let mutated_bytes = reencode_proof(&mut mutated_proof);
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated_bytes,
+        &config,
+        &context,
+    )
+    .expect("verification report");
+
+    assert!(matches!(
+        report.error,
+        Some(VerifyError::PublicInputMismatch)
+    ));
+    assert!(
+        !report.params_ok,
+        "parameter stage should remain false when public inputs mismatch"
+    );
+    assert!(!report.public_ok, "public stage must fail");
+    assert!(
+        !report.merkle_ok,
+        "merkle stage should not execute after public failure"
+    );
+    assert!(
+        !report.composition_ok,
+        "composition stage should remain false after public failure"
+    );
+    assert!(
+        !report.fri_ok,
+        "fri stage should remain false after public failure"
+    );
+}
+
+#[test]
+fn verification_report_flags_merkle_stage_failure() {
+    let fixture = FailMatrixFixture::new();
+    let public_inputs = fixture.public_inputs();
+    let config = fixture.config();
+    let context = fixture.verifier_context();
+    let mutated_bytes = corrupt_fri_layer_root(&fixture.proof());
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated_bytes,
+        &config,
+        &context,
+    )
+    .expect("verification report");
+
+    assert!(matches!(
+        report.error,
+        Some(VerifyError::MerkleVerifyFailed {
+            section: MerkleSection::FriRoots
+        })
+    ));
+    assert!(
+        report.params_ok,
+        "parameter stage should succeed before merkle checks"
+    );
+    assert!(
+        report.public_ok,
+        "public stage should succeed before merkle checks"
+    );
+    assert!(!report.merkle_ok, "merkle stage must fail");
+    assert!(
+        !report.composition_ok,
+        "composition stage should remain false after merkle failure"
+    );
+    assert!(
+        !report.fri_ok,
+        "fri stage should remain false after merkle failure"
+    );
+}
+
+#[test]
+fn verification_report_flags_composition_stage_failure() {
+    let fixture = FailMatrixFixture::new();
+    let public_inputs = fixture.public_inputs();
+    let config = fixture.config();
+    let context = fixture.verifier_context();
+    let mutated =
+        flip_composition_leaf_byte(&fixture.proof()).expect("composition openings present");
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated.bytes,
+        &config,
+        &context,
+    )
+    .expect("verification report");
+
+    let reason = match report.error {
+        Some(VerifyError::CompositionInconsistent { ref reason }) => reason,
+        other => panic!("unexpected verification outcome: {other:?}"),
+    };
+    assert!(reason.starts_with("composition_leaf_bytes_mismatch"));
+    assert!(
+        report.params_ok,
+        "parameter stage should succeed before composition checks"
+    );
+    assert!(
+        report.public_ok,
+        "public stage should succeed before composition checks"
+    );
+    assert!(
+        report.merkle_ok,
+        "merkle stage should succeed before composition checks"
+    );
+    assert!(!report.composition_ok, "composition stage must fail");
+    assert!(
+        !report.fri_ok,
+        "fri stage should remain false after composition failure"
+    );
+}
+
+#[test]
+fn verification_report_flags_fri_stage_failure() {
+    let fixture = FailMatrixFixture::new();
+    let public_inputs = fixture.public_inputs();
+    let config = fixture.config();
+    let context = fixture.verifier_context();
+    let mutated = perturb_fri_fold_challenge(&fixture.proof());
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+
+    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+        declared_kind,
+        &public_inputs,
+        &mutated.bytes,
+        &config,
+        &context,
+    )
+    .expect("verification report");
+
+    assert!(matches!(
+        report.error,
+        Some(VerifyError::FriVerifyFailed { .. }) | Some(VerifyError::MerkleVerifyFailed { .. })
+    ));
+    assert!(
+        report.params_ok,
+        "parameter stage should succeed before fri checks"
+    );
+    assert!(
+        report.public_ok,
+        "public stage should succeed before fri checks"
+    );
+    assert!(
+        report.merkle_ok,
+        "merkle stage should succeed before fri checks"
+    );
+    assert!(
+        report.composition_ok,
+        "composition stage should succeed before fri checks"
+    );
+    assert!(!report.fri_ok, "fri stage must fail");
+}
+
 fn mutate_header_trace_root(bytes: &ProofBytes) -> ProofBytes {
     let mut mutated = bytes.as_slice().to_vec();
     let offset = header_trace_root_offset(&mutated);
@@ -396,6 +607,21 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
     cursor += 1;
     mutated[cursor] ^= 0x1;
     ProofBytes::new(mutated)
+}
+
+fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
+    let mut mutated = proof.clone();
+    if let Some(root) = mutated.merkle.fri_layer_roots.first_mut() {
+        if let Some(byte) = root.first_mut() {
+            *byte ^= 0x1;
+        } else {
+            panic!("fri layer root must contain bytes");
+        }
+    } else {
+        panic!("fri layer roots must be present");
+    }
+
+    reencode_proof(&mut mutated)
 }
 
 fn mutate_param_digest(proof: &mut Proof) {
