@@ -634,7 +634,7 @@ fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
 }
 
 fn mutate_param_digest(proof: &mut Proof) {
-    proof.param_digest_mut().0.bytes[0] ^= 0x1;
+    proof.params_hash_mut().0.bytes[0] ^= 0x1;
 }
 
 fn mutate_public_digest(bytes: &ProofBytes) -> ProofBytes {

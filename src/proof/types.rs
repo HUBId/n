@@ -50,7 +50,13 @@ pub const PROOF_TELEMETRY_MAX_CAP_SIZE: u32 = 128;
 /// bounded by the 128-query cap mandated by the specification.
 pub const PROOF_TELEMETRY_MAX_QUERY_BUDGET: u16 = 128;
 
-/// Helper wrapper bundling AIR selection and binding data for a proof.
+/// Wrapper owning the proof-kind binding section for envelope assembly.
+///
+/// The handle stores the AIR selection metadata together with the canonical
+/// public-input payload and optional composition-commitment digest. All fields
+/// are kept together to guarantee that cloning or transporting the wrapper
+/// preserves a consistent view of the binding information required by the
+/// specification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CompositionBinding {
     #[serde(with = "proof_kind_codec")]
@@ -81,9 +87,19 @@ impl CompositionBinding {
         &self.kind
     }
 
+    /// Returns a mutable reference to the proof kind advertised by this binding.
+    pub fn kind_mut(&mut self) -> &mut ProofKind {
+        &mut self.kind
+    }
+
     /// Returns the AIR specification identifier bound to the proof.
     pub fn air_spec_id(&self) -> &AirSpecId {
         &self.air_spec_id
+    }
+
+    /// Returns a mutable reference to the AIR specification identifier bound to the proof.
+    pub fn air_spec_id_mut(&mut self) -> &mut AirSpecId {
+        &mut self.air_spec_id
     }
 
     /// Returns the public-input payload associated with the binding.
@@ -108,6 +124,11 @@ impl CompositionBinding {
 }
 
 /// Wrapper storing the low-level FRI proof payload for assembly helpers.
+///
+/// The `FriHandle` keeps ownership of the decoded FRI proof section so that
+/// callers cloning or splitting a [`Proof`] can move the payload without
+/// touching unrelated metadata. The handle guarantees that the prover and
+/// verifier observe identical layer roots and query responses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FriHandle {
     fri_proof: FriProof,
@@ -136,31 +157,20 @@ pub struct Proof {
     /// Declared proof version (currently `1`).
     #[serde(with = "proof_version_codec")]
     version: u16,
-    /// Canonical proof kind stored in the envelope header.
-    #[serde(with = "proof_kind_codec")]
-    kind: ProofKind,
     /// Parameter digest binding configuration knobs.
-    param_digest: ParamDigest,
-    /// AIR specification identifier for the proof kind.
-    air_spec_id: AirSpecId,
-    /// Canonical public input encoding.
-    public_inputs: Vec<u8>,
+    params_hash: ParamDigest,
     /// Digest binding the canonical public-input payload.
     public_digest: DigestBytes,
     /// Digest mirroring the declared trace commitment.
     trace_commit: DigestBytes,
-    /// Optional digest mirroring the declared composition commitment.
-    composition_commit: Option<DigestBytes>,
-    /// Merkle commitment bundle for core, auxiliary and FRI layers.
-    merkle: MerkleProofBundle,
-    /// Out-of-domain opening payloads.
-    openings: Openings,
-    /// FRI proof payload accompanying the envelope.
-    fri_proof: FriProof,
-    /// Flag signalling whether the telemetry segment is present in the payload.
-    has_telemetry: bool,
-    /// Telemetry frame describing declared lengths and digests.
-    telemetry: Telemetry,
+    /// Wrapper storing proof kind, AIR selection and related bindings.
+    composition: CompositionBinding,
+    /// Wrapper around the FRI proof payload accompanying the envelope.
+    fri: FriHandle,
+    /// Wrapper combining Merkle commitments and opening payloads.
+    openings: OpeningsDescriptor,
+    /// Wrapper combining telemetry availability with the reported frame.
+    telemetry: TelemetryOption,
 }
 
 impl Clone for Proof {
@@ -185,43 +195,43 @@ impl Proof {
     }
 
     /// Returns the parameter digest binding configuration for the proof.
-    pub fn param_digest(&self) -> &ParamDigest {
-        &self.param_digest
+    pub fn params_hash(&self) -> &ParamDigest {
+        &self.params_hash
     }
 
     /// Returns a mutable reference to the parameter digest configuration.
-    pub fn param_digest_mut(&mut self) -> &mut ParamDigest {
-        &mut self.param_digest
+    pub fn params_hash_mut(&mut self) -> &mut ParamDigest {
+        &mut self.params_hash
     }
 
     /// Returns the canonical proof kind stored in the envelope header.
     pub fn kind(&self) -> &ProofKind {
-        &self.kind
+        self.composition.kind()
     }
 
     /// Returns a mutable reference to the canonical proof kind.
     pub fn kind_mut(&mut self) -> &mut ProofKind {
-        &mut self.kind
+        self.composition.kind_mut()
     }
 
     /// Returns the AIR specification identifier for the proof kind.
     pub fn air_spec_id(&self) -> &AirSpecId {
-        &self.air_spec_id
+        self.composition.air_spec_id()
     }
 
     /// Returns a mutable reference to the AIR specification identifier.
     pub fn air_spec_id_mut(&mut self) -> &mut AirSpecId {
-        &mut self.air_spec_id
+        self.composition.air_spec_id_mut()
     }
 
     /// Returns the canonical public input encoding.
     pub fn public_inputs(&self) -> &[u8] {
-        &self.public_inputs
+        self.composition.public_inputs()
     }
 
     /// Returns a mutable reference to the canonical public input encoding.
     pub fn public_inputs_mut(&mut self) -> &mut Vec<u8> {
-        &mut self.public_inputs
+        self.composition.public_inputs_mut()
     }
 
     /// Returns the digest binding the canonical public-input payload.
@@ -246,80 +256,74 @@ impl Proof {
 
     /// Returns the optional composition commitment digest, if present.
     pub fn composition_commit(&self) -> Option<&DigestBytes> {
-        self.composition_commit.as_ref()
+        self.composition.composition_commit()
     }
 
     /// Returns a mutable reference to the optional composition commitment digest.
     pub fn composition_commit_mut(&mut self) -> Option<&mut DigestBytes> {
-        self.composition_commit.as_mut()
+        self.composition.composition_commit_mut()
     }
 
     /// Returns the Merkle commitment bundle for the proof.
     pub fn merkle(&self) -> &MerkleProofBundle {
-        &self.merkle
+        self.openings.merkle()
     }
 
     /// Returns a mutable reference to the Merkle commitment bundle.
     pub fn merkle_mut(&mut self) -> &mut MerkleProofBundle {
-        &mut self.merkle
+        self.openings.merkle_mut()
     }
 
     /// Returns the out-of-domain opening payloads.
     pub fn openings(&self) -> &Openings {
-        &self.openings
+        self.openings.openings()
     }
 
     /// Returns a mutable reference to the out-of-domain opening payloads.
     pub fn openings_mut(&mut self) -> &mut Openings {
-        &mut self.openings
+        self.openings.openings_mut()
     }
 
     /// Returns the FRI proof payload accompanying the envelope.
     pub fn fri_proof(&self) -> &FriProof {
-        &self.fri_proof
+        self.fri.fri_proof()
     }
 
     /// Returns a mutable reference to the FRI proof payload accompanying the envelope.
     pub fn fri_proof_mut(&mut self) -> &mut FriProof {
-        &mut self.fri_proof
+        self.fri.fri_proof_mut()
     }
 
     /// Returns `true` when the proof payload contains telemetry data.
     pub fn has_telemetry(&self) -> bool {
-        self.has_telemetry
+        self.telemetry.has_telemetry()
     }
 
     /// Sets the telemetry presence flag for the proof payload.
     pub fn set_has_telemetry(&mut self, value: bool) {
-        self.has_telemetry = value;
+        self.telemetry.set_has_telemetry(value);
     }
 
     /// Returns the telemetry frame describing declared lengths and digests.
     pub fn telemetry(&self) -> &Telemetry {
-        &self.telemetry
+        self.telemetry.telemetry()
     }
 
     /// Returns a mutable reference to the telemetry frame.
     pub fn telemetry_mut(&mut self) -> &mut Telemetry {
-        &mut self.telemetry
+        self.telemetry.telemetry_mut()
     }
 
     /// Clones the proof by reassembling all sections through [`Proof::from_parts`].
     pub fn clone_using_parts(&self) -> Self {
-        let binding = CompositionBinding::new(
-            *self.kind(),
-            self.air_spec_id().clone(),
-            self.public_inputs().to_vec(),
-            self.composition_commit().cloned(),
-        );
-        let openings_descriptor =
-            OpeningsDescriptor::new(self.merkle().clone(), self.openings().clone());
-        let fri_handle = FriHandle::new(self.fri_proof().clone());
-        let telemetry_option = TelemetryOption::new(self.has_telemetry(), self.telemetry().clone());
+        let binding = self.composition.clone();
+        let openings_descriptor = self.openings.clone();
+        let fri_handle = self.fri.clone();
+        let telemetry_option = self.telemetry.clone();
 
         Proof::from_parts(
             self.version(),
-            self.param_digest().clone(),
+            self.params_hash().clone(),
             self.public_digest().clone(),
             self.trace_commit().clone(),
             binding,
@@ -333,7 +337,7 @@ impl Proof {
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(
         version: u16,
-        param_digest: ParamDigest,
+        params_hash: ParamDigest,
         public_digest: DigestBytes,
         trace_commit: DigestBytes,
         binding: CompositionBinding,
@@ -341,32 +345,14 @@ impl Proof {
         fri: FriHandle,
         telemetry: TelemetryOption,
     ) -> Self {
-        let CompositionBinding {
-            kind,
-            air_spec_id,
-            public_inputs,
-            composition_commit,
-        } = binding;
-        let OpeningsDescriptor { merkle, openings } = openings;
-        let FriHandle { fri_proof } = fri;
-        let TelemetryOption {
-            has_telemetry,
-            telemetry,
-        } = telemetry;
-
         Self {
             version,
-            kind,
-            param_digest,
-            air_spec_id,
-            public_inputs,
+            params_hash,
             public_digest,
             trace_commit,
-            composition_commit,
-            merkle,
+            composition: binding,
+            fri,
             openings,
-            fri_proof,
-            has_telemetry,
             telemetry,
         }
     }
@@ -421,6 +407,11 @@ impl MerkleProofBundle {
 }
 
 /// Wrapper collecting the Merkle bundle and opening payloads for assembly helpers.
+///
+/// A descriptor owns both the Merkle commitment bundle and the associated
+/// out-of-domain opening payloads. Keeping the structures coupled ensures the
+/// openings and the advertised roots always travel together, preventing callers
+/// from mixing mismatched Merkle data.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpeningsDescriptor {
     merkle: MerkleProofBundle,
@@ -672,6 +663,12 @@ impl Telemetry {
 }
 
 /// Wrapper combining the telemetry presence flag with the telemetry payload.
+///
+/// The wrapper keeps the availability bit together with the decoded telemetry
+/// frame to maintain the invariant that consumers interrogate both pieces of
+/// information through a single handle. The flag controls whether the frame is
+/// serialized while still allowing builders to pre-populate the structure with
+/// canonical defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetryOption {
     has_telemetry: bool,

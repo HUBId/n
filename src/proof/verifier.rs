@@ -224,10 +224,10 @@ fn validate_header(
         )));
     }
 
-    if proof.param_digest() != &config.param_digest {
+    if proof.params_hash() != &config.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
-    if proof.param_digest() != &context.param_digest {
+    if proof.params_hash() != &context.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
 

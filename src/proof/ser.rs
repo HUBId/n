@@ -282,7 +282,7 @@ fn serialize_proof_header_from_lengths(
     let mut buffer = Vec::new();
     write_u16(&mut buffer, proof.version());
     write_u8(&mut buffer, encode_proof_kind(*proof.kind()));
-    write_digest(&mut buffer, &proof.param_digest().0.bytes);
+    write_digest(&mut buffer, &proof.params_hash().0.bytes);
     let air_spec_bytes = proof.air_spec_id().clone().bytes();
     write_digest(&mut buffer, &air_spec_bytes.bytes);
 
