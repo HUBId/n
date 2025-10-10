@@ -1,7 +1,7 @@
 ---
 source: tests/fail_matrix/indices.rs
 assertion_line: 116
-expression: "&mutated.proof.openings.composition.as_ref().expect(\"composition openings available\").indices"
+expression: "&mutated.proof.openings().composition.as_ref().expect(\"composition openings available\").indices"
 ---
 [
     56,

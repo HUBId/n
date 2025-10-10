@@ -1,7 +1,7 @@
 ---
 source: tests/fail_matrix/fri.rs
 assertion_line: 34
-expression: mutated.proof.fri_proof.fold_challenges
+expression: mutated.proof.fri_proof().fold_challenges.clone()
 ---
 [
     FieldElement(

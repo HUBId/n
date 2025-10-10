@@ -185,15 +185,14 @@ pub(crate) fn precheck_proof_bytes(
 }
 
 pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerifyError> {
+    let fri_proof = proof.proof.fri_proof();
     FriVerifier::verify_with_params(
-        &proof.proof.fri_proof,
+        fri_proof,
         proof.security_level,
         proof.fri_seed,
         &proof.params,
         |index| {
-            proof
-                .proof
-                .fri_proof
+            fri_proof
                 .final_polynomial
                 .get(index)
                 .copied()
@@ -211,40 +210,44 @@ fn validate_header(
     context: &VerifierContext,
     stages: &mut VerificationStages,
 ) -> Result<(), VerifyError> {
-    if proof.version != PROOF_VERSION {
+    if proof.version() != PROOF_VERSION {
         return Err(VerifyError::VersionMismatch {
             expected: PROOF_VERSION,
-            actual: proof.version,
+            actual: proof.version(),
         });
     }
 
     let expected_kind = map_public_to_config_kind(public_inputs.kind());
-    if proof.kind != expected_kind || proof.kind != declared_kind {
-        return Err(VerifyError::UnknownProofKind(encode_proof_kind(proof.kind)));
+    if *proof.kind() != expected_kind || *proof.kind() != declared_kind {
+        return Err(VerifyError::UnknownProofKind(encode_proof_kind(
+            *proof.kind(),
+        )));
     }
 
-    if proof.param_digest != config.param_digest {
+    if proof.param_digest() != &config.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
-    if proof.param_digest != context.param_digest {
+    if proof.param_digest() != &context.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
 
     let expected_public_inputs =
         serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
-    if proof.public_inputs != expected_public_inputs {
+    if proof.public_inputs() != expected_public_inputs.as_slice() {
         return Err(VerifyError::PublicInputMismatch);
     }
 
-    let expected_digest = compute_public_digest(&proof.public_inputs);
-    if proof.public_digest.bytes != expected_digest {
+    let expected_digest = compute_public_digest(proof.public_inputs());
+    if proof.public_digest().bytes != expected_digest {
         return Err(VerifyError::PublicInputMismatch);
     }
     stages.public_ok = true;
 
-    let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, proof.kind);
-    if proof.air_spec_id != expected_air_spec {
-        return Err(VerifyError::UnknownProofKind(encode_proof_kind(proof.kind)));
+    let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, *proof.kind());
+    if proof.air_spec_id() != &expected_air_spec {
+        return Err(VerifyError::UnknownProofKind(encode_proof_kind(
+            *proof.kind(),
+        )));
     }
 
     stages.params_ok = true;
@@ -267,18 +270,18 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    if proof.trace_commit.bytes != proof.merkle.core_root {
+    if proof.trace_commit().bytes != proof.merkle().core_root {
         return Err(VerifyError::RootMismatch {
             section: MerkleSection::TraceCommit,
         });
     }
 
     match (
-        &proof.composition_commit,
-        proof.openings.composition.as_ref(),
+        proof.composition_commit(),
+        proof.openings().composition.as_ref(),
     ) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != proof.merkle.aux_root {
+            if commit.bytes != proof.merkle().aux_root {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -295,7 +298,7 @@ fn precheck_body(
             });
         }
         (None, None) => {
-            if proof.merkle.aux_root != [0u8; 32] {
+            if proof.merkle().aux_root != [0u8; 32] {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -303,7 +306,7 @@ fn precheck_body(
         }
     }
 
-    if proof.merkle.fri_layer_roots != proof.fri_proof.layer_roots {
+    if proof.merkle().fri_layer_roots != proof.fri_proof().layer_roots {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
         });
@@ -311,7 +314,7 @@ fn precheck_body(
 
     stages.merkle_ok = true;
 
-    let transcript_kind = proof.kind;
+    let transcript_kind = *proof.kind();
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
     let mut transcript = Transcript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
@@ -326,8 +329,8 @@ fn precheck_body(
     transcript
         .absorb_public_inputs(&public_inputs_bytes)
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    let trace_commit = proof.trace_commit.bytes;
-    let composition_commit = proof.composition_commit.as_ref().map(|commit| commit.bytes);
+    let trace_commit = proof.trace_commit().bytes;
+    let composition_commit = proof.composition_commit().map(|commit| commit.bytes);
     transcript
         .absorb_commitment_roots(trace_commit, composition_commit)
         .map_err(|_| VerifyError::TranscriptOrder)?;
@@ -357,7 +360,7 @@ fn precheck_body(
     let fri_seed = challenges
         .draw_fri_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    for (layer_index, _) in proof.merkle.fri_layer_roots.iter().enumerate() {
+    for (layer_index, _) in proof.merkle().fri_layer_roots.iter().enumerate() {
         challenges
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
@@ -367,28 +370,28 @@ fn precheck_body(
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let query_count = stark_params.fri().queries as usize;
-    let fri_query_seed = derive_fri_query_seed(fri_seed, &proof.fri_proof);
+    let fri_query_seed = derive_fri_query_seed(fri_seed, proof.fri_proof());
     let expected_indices = derive_trace_query_indices(
         fri_query_seed,
         query_count,
-        proof.fri_proof.initial_domain_size,
+        proof.fri_proof().initial_domain_size,
     )?;
 
-    validate_query_indices(&proof.openings.trace.indices, &expected_indices)?;
-    if let Some(composition_openings) = proof.openings.composition.as_ref() {
+    validate_query_indices(&proof.openings().trace.indices, &expected_indices)?;
+    if let Some(composition_openings) = proof.openings().composition.as_ref() {
         validate_query_indices(&composition_openings.indices, &expected_indices)?;
     }
 
     let trace_values = verify_trace_commitment(
         &stark_params,
-        &proof.trace_commit.bytes,
-        &proof.openings.trace,
+        &proof.trace_commit().bytes,
+        &proof.openings().trace,
     )?;
 
-    if let Some(composition_commit) = &proof.composition_commit {
+    if let Some(composition_commit) = proof.composition_commit() {
         let composition_openings =
             proof
-                .openings
+                .openings()
                 .composition
                 .as_ref()
                 .ok_or(VerifyError::CompositionInconsistent {
@@ -398,8 +401,8 @@ fn precheck_body(
         verify_composition_alignment(
             &alignment_values,
             &composition_openings.leaves,
-            &proof.openings.trace.indices,
-            &proof.fri_proof,
+            &proof.openings().trace.indices,
+            proof.fri_proof(),
         )?;
 
         let composition_values = verify_composition_commitment(
@@ -409,7 +412,7 @@ fn precheck_body(
         )?;
 
         verify_ood_openings(
-            &proof.openings.out_of_domain,
+            &proof.openings().out_of_domain,
             &trace_values,
             &composition_values,
             &ood_points,
@@ -417,7 +420,7 @@ fn precheck_body(
         )?;
         stages.composition_ok = true;
     } else {
-        if proof.openings.composition.is_some() {
+        if proof.openings().composition.is_some() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_commit".to_string(),
             });
@@ -426,7 +429,7 @@ fn precheck_body(
     }
 
     let security_level = map_security_level(&context.profile);
-    if proof.fri_proof.security_level != security_level {
+    if proof.fri_proof().security_level != security_level {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::SecurityLevelMismatch,
         });
@@ -459,13 +462,14 @@ fn precheck_body(
         return Err(VerifyError::BodyLengthMismatch { declared, actual });
     }
 
-    if proof.has_telemetry {
+    if proof.has_telemetry() {
+        let telemetry = proof.telemetry();
         let expected_body_with_digest = match payload_len.checked_add(32) {
             Some(value) => value,
             None => {
                 let actual = payload_len.min(u32::MAX as usize) as u32;
                 return Err(VerifyError::BodyLengthMismatch {
-                    declared: proof.telemetry.body_length,
+                    declared: telemetry.body_length,
                     actual,
                 });
             }
@@ -476,28 +480,28 @@ fn precheck_body(
             Err(_) => {
                 let actual = payload_len.min(u32::MAX as usize) as u32;
                 return Err(VerifyError::BodyLengthMismatch {
-                    declared: proof.telemetry.body_length,
+                    declared: telemetry.body_length,
                     actual,
                 });
             }
         };
 
-        if proof.telemetry.body_length != expected_body_length {
+        if telemetry.body_length != expected_body_length {
             return Err(VerifyError::BodyLengthMismatch {
-                declared: proof.telemetry.body_length,
+                declared: telemetry.body_length,
                 actual: expected_body_length,
             });
         }
 
-        if proof.telemetry.fri_parameters.fold != 2
-            || proof.telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
+        if telemetry.fri_parameters.fold != 2
+            || telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
         {
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
 
-        if proof.telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
-            || proof.telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
-            || proof.telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
+        if telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
+            || telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
+            || telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
         {
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
@@ -507,34 +511,35 @@ fn precheck_body(
             Err(_) => {
                 let actual = header_bytes.len().min(u32::MAX as usize) as u32;
                 return Err(VerifyError::HeaderLengthMismatch {
-                    declared: proof.telemetry.header_length,
+                    declared: telemetry.header_length,
                     actual,
                 });
             }
         };
 
-        if proof.telemetry.header_length != expected_header_length {
+        if telemetry.header_length != expected_header_length {
             return Err(VerifyError::HeaderLengthMismatch {
-                declared: proof.telemetry.header_length,
+                declared: telemetry.header_length,
                 actual: expected_header_length,
             });
         }
 
         let mut canonical = proof.clone();
-        canonical.telemetry.header_length = 0;
-        canonical.telemetry.body_length = 0;
-        canonical.telemetry.integrity_digest.bytes = [0u8; 32];
+        let canonical_telemetry = canonical.telemetry_mut();
+        canonical_telemetry.header_length = 0;
+        canonical_telemetry.body_length = 0;
+        canonical_telemetry.integrity_digest.bytes = [0u8; 32];
         let canonical_payload = canonical.serialize_payload().map_err(VerifyError::from)?;
         let canonical_header = canonical
             .serialize_header(&canonical_payload)
             .map_err(VerifyError::from)?;
         let integrity_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
-        if proof.telemetry.integrity_digest.bytes != integrity_digest {
+        if proof.telemetry().integrity_digest.bytes != integrity_digest {
             return Err(VerifyError::IntegrityDigestMismatch);
         }
     }
 
-    enforce_resource_limits(proof.kind, public_inputs, context, proof)?;
+    enforce_resource_limits(*proof.kind(), public_inputs, context, proof)?;
 
     Ok(PrecheckedBody {
         fri_seed,
@@ -967,25 +972,26 @@ fn enforce_resource_limits(
     context: &VerifierContext,
     proof: &Proof,
 ) -> Result<(), VerifyError> {
-    if proof.fri_proof.layer_roots.len() > context.limits.max_layers as usize {
+    let fri_proof = proof.fri_proof();
+    if fri_proof.layer_roots.len() > context.limits.max_layers as usize {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::LayerBudgetExceeded,
         });
     }
 
-    if proof.fri_proof.layer_roots.len() > PROOF_MAX_FRI_LAYERS {
+    if fri_proof.layer_roots.len() > PROOF_MAX_FRI_LAYERS {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::LayerBudgetExceeded,
         });
     }
 
-    if proof.fri_proof.queries.len() > context.limits.max_queries as usize {
+    if fri_proof.queries.len() > context.limits.max_queries as usize {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::QueryOutOfRange,
         });
     }
 
-    if proof.fri_proof.queries.len() > PROOF_MAX_QUERY_COUNT {
+    if fri_proof.queries.len() > PROOF_MAX_QUERY_COUNT {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::QueryOutOfRange,
         });

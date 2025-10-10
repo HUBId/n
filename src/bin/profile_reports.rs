@@ -214,10 +214,11 @@ fn build_sample_proof(
     let header_bytes = proof
         .serialize_header(&payload)
         .expect("sample proof header serialization");
-    proof.telemetry.body_length = (payload.len() + 32) as u32;
-    proof.telemetry.header_length = header_bytes.len() as u32;
+    let telemetry = proof.telemetry_mut();
+    telemetry.body_length = (payload.len() + 32) as u32;
+    telemetry.header_length = header_bytes.len() as u32;
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    telemetry.integrity_digest = DigestBytes { bytes: integrity };
 
     proof
 }

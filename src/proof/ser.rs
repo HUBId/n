@@ -206,7 +206,10 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         ));
     }
 
-    match (proof.composition_commit(), proof.openings().composition.as_ref()) {
+    match (
+        proof.composition_commit(),
+        proof.openings().composition.as_ref(),
+    ) {
         (Some(commit), Some(_)) => {
             if commit.bytes != proof.merkle().aux_root {
                 return Err(SerError::invalid_value(

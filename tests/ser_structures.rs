@@ -135,9 +135,10 @@ fn sample_proof() -> Proof {
     let header_bytes =
         serialize_proof_header(&proof, &payload).expect("proof header serialization");
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    proof.telemetry.header_length = header_bytes.len() as u32;
-    proof.telemetry.body_length = (payload.len() + 32) as u32;
-    proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    let telemetry = proof.telemetry_mut();
+    telemetry.header_length = header_bytes.len() as u32;
+    telemetry.body_length = (payload.len() + 32) as u32;
+    telemetry.integrity_digest = DigestBytes { bytes: integrity };
     proof
 }
 

@@ -133,27 +133,22 @@ fn proof_lifecycle_accepts_valid_inputs() {
     .expect("proof generation succeeds");
     let decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     assert_eq!(
-        decoded.fri_proof.queries.len(),
+        decoded.fri_proof().queries.len(),
         setup.config.profile.fri_queries as usize,
         "unexpected query count"
     );
 
+    let openings = decoded.openings();
     assert_eq!(
-        decoded.openings.trace.indices.len(),
-        decoded.openings.trace.leaves.len(),
+        openings.trace.indices.len(),
+        openings.trace.leaves.len(),
         "trace openings must align",
     );
     assert!(
-        decoded
-            .openings
-            .trace
-            .leaves
-            .iter()
-            .all(|leaf| !leaf.is_empty()),
+        openings.trace.leaves.iter().all(|leaf| !leaf.is_empty()),
         "trace leaves must contain bytes",
     );
-    let composition = decoded
-        .openings
+    let composition = openings
         .composition
         .as_ref()
         .expect("composition openings present");
@@ -189,11 +184,12 @@ fn decode_proof(bytes: &ProofBytes) -> Proof {
 }
 
 fn reencode_proof(proof: &mut Proof) -> ProofBytes {
-    if proof.has_telemetry {
+    if proof.has_telemetry() {
         let mut canonical = proof.clone();
-        canonical.telemetry.header_length = 0;
-        canonical.telemetry.body_length = 0;
-        canonical.telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+        let telemetry = canonical.telemetry_mut();
+        telemetry.header_length = 0;
+        telemetry.body_length = 0;
+        telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
         let payload = canonical
             .serialize_payload()
             .expect("serialize canonical payload");
@@ -201,9 +197,10 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
             .serialize_header(&payload)
             .expect("serialize canonical header");
         let integrity = compute_integrity_digest(&header, &payload);
-        proof.telemetry.header_length = header.len() as u32;
-        proof.telemetry.body_length = (payload.len() + 32) as u32;
-        proof.telemetry.integrity_digest = DigestBytes { bytes: integrity };
+        let telemetry = proof.telemetry_mut();
+        telemetry.header_length = header.len() as u32;
+        telemetry.body_length = (payload.len() + 32) as u32;
+        telemetry.integrity_digest = DigestBytes { bytes: integrity };
     }
 
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
@@ -248,7 +245,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
     );
 
     assert!(
-        report.proof.has_telemetry,
+        report.proof.has_telemetry(),
         "fixture proof should include telemetry"
     );
     let payload = report.proof.serialize_payload().expect("serialize payload");
@@ -258,25 +255,28 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize header");
     let expected_body_length = (payload.len() + 32) as u32;
     assert_eq!(
-        report.proof.telemetry.body_length, expected_body_length,
+        report.proof.telemetry().body_length,
+        expected_body_length,
         "telemetry body length must match payload"
     );
     let expected_header_length = header.len() as u32;
     assert_eq!(
-        report.proof.telemetry.header_length, expected_header_length,
+        report.proof.telemetry().header_length,
+        expected_header_length,
         "telemetry header length must match header bytes"
     );
+    let telemetry = report.proof.telemetry();
     assert_eq!(
-        u64::from(report.proof.telemetry.header_length)
-            + u64::from(report.proof.telemetry.body_length),
+        u64::from(telemetry.header_length) + u64::from(telemetry.body_length),
         report.total_bytes + 32,
         "telemetry lengths must sum to total bytes plus the integrity digest"
     );
 
     let mut canonical = report.proof.clone();
-    canonical.telemetry.header_length = 0;
-    canonical.telemetry.body_length = 0;
-    canonical.telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+    let canonical_telemetry = canonical.telemetry_mut();
+    canonical_telemetry.header_length = 0;
+    canonical_telemetry.body_length = 0;
+    canonical_telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
     let canonical_payload = canonical
         .serialize_payload()
         .expect("serialize canonical payload");
@@ -285,7 +285,8 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize canonical header");
     let expected_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
     assert_eq!(
-        report.proof.telemetry.integrity_digest.bytes, expected_digest,
+        report.proof.telemetry().integrity_digest.bytes,
+        expected_digest,
         "telemetry integrity digest must remain stable"
     );
 }
@@ -309,8 +310,10 @@ fn verification_rejects_tampered_telemetry_fields() {
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
 
     let mut tampered_header = decode_proof(&proof_bytes);
-    tampered_header.telemetry.header_length =
-        tampered_header.telemetry.header_length.saturating_add(4);
+    {
+        let telemetry = tampered_header.telemetry_mut();
+        telemetry.header_length = telemetry.header_length.saturating_add(4);
+    }
     let tampered_header_bytes = ProofBytes::new(
         serialize_proof(&tampered_header).expect("serialize tampered header proof"),
     );
@@ -325,7 +328,8 @@ fn verification_rejects_tampered_telemetry_fields() {
     match header_report.error {
         Some(VerifyError::HeaderLengthMismatch { declared, actual }) => {
             assert_eq!(
-                declared, tampered_header.telemetry.header_length,
+                declared,
+                tampered_header.telemetry().header_length,
                 "report must echo tampered header length"
             );
             assert_ne!(declared, actual, "mismatch must surface differing lengths");
@@ -334,7 +338,7 @@ fn verification_rejects_tampered_telemetry_fields() {
     }
 
     let mut tampered_digest = decode_proof(&proof_bytes);
-    tampered_digest.telemetry.integrity_digest.bytes[0] ^= 0x1;
+    tampered_digest.telemetry_mut().integrity_digest.bytes[0] ^= 0x1;
     let tampered_digest_bytes = ProofBytes::new(
         serialize_proof(&tampered_digest).expect("serialize tampered digest proof"),
     );
@@ -700,7 +704,7 @@ fn verification_rejects_tampered_ood_core_value() {
 
     let mut proof = decode_proof(&proof_bytes);
     let ood = proof
-        .openings
+        .openings_mut()
         .out_of_domain
         .first_mut()
         .expect("ood payload present");
@@ -741,7 +745,7 @@ fn verification_rejects_tampered_ood_composition_value() {
 
     let mut proof = decode_proof(&proof_bytes);
     let ood = proof
-        .openings
+        .openings_mut()
         .out_of_domain
         .first_mut()
         .expect("ood payload present");
@@ -838,7 +842,7 @@ fn verification_rejects_tampered_trace_leaf() {
     .expect("proof generation succeeds");
 
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
-    proof.openings.trace.leaves[0][0] ^= 1;
+    proof.openings_mut().trace.leaves[0][0] ^= 1;
     let mutated = serialize_proof(&proof).expect("serialize proof");
     let mutated_bytes = ProofBytes::new(mutated);
 
@@ -925,11 +929,11 @@ fn verification_rejects_tampered_fri_fold_challenge() {
 
     let mut proof = decode_proof(&proof_bytes);
     assert!(
-        !proof.fri_proof.fold_challenges.is_empty(),
+        !proof.fri_proof().fold_challenges.is_empty(),
         "expected fold challenges"
     );
-    proof.fri_proof.final_polynomial[0] =
-        proof.fri_proof.final_polynomial[0].add(&FieldElement::from(1u64));
+    let fri_proof = proof.fri_proof_mut();
+    fri_proof.final_polynomial[0] = fri_proof.final_polynomial[0].add(&FieldElement::from(1u64));
     let mutated_bytes = reencode_proof(&mut proof);
 
     let verify_inputs = make_public_inputs(&setup.header, &setup.body);
@@ -968,11 +972,12 @@ fn verification_report_flags_fri_challenge_flip() {
 
     let mut proof = decode_proof(&proof_bytes);
     assert!(
-        !proof.fri_proof.fold_challenges.is_empty(),
+        !proof.fri_proof().fold_challenges.is_empty(),
         "expected at least one fold challenge"
     );
-    let first = proof.fri_proof.fold_challenges[0];
-    proof.fri_proof.fold_challenges[0] = first.add(&FieldElement::from(1u64));
+    let fri_proof = proof.fri_proof_mut();
+    let first = fri_proof.fold_challenges[0];
+    fri_proof.fold_challenges[0] = first.add(&FieldElement::from(1u64));
     let mutated_bytes = reencode_proof(&mut proof);
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
@@ -1012,7 +1017,7 @@ fn verification_rejects_composition_leaf_misalignment_with_fri() {
     let mut proof = decode_proof(&proof_bytes);
     let composition_index = {
         let composition = proof
-            .openings
+            .openings()
             .composition
             .as_ref()
             .expect("composition openings present");
@@ -1024,13 +1029,13 @@ fn verification_rejects_composition_leaf_misalignment_with_fri() {
     };
     let target_index = composition_index as usize;
     let query_position = proof
-        .fri_proof
+        .fri_proof()
         .queries
         .iter()
         .position(|query| query.position == target_index)
         .expect("matching FRI query");
     let query = proof
-        .fri_proof
+        .fri_proof_mut()
         .queries
         .get_mut(query_position)
         .expect("query index");
@@ -1225,7 +1230,7 @@ fn verification_rejects_tampered_ood_values() {
     .expect("proof generation succeeds");
 
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
-    if let Some(first) = proof.openings.out_of_domain.first_mut() {
+    if let Some(first) = proof.openings_mut().out_of_domain.first_mut() {
         first.composition_value[0] ^= 1;
     }
     let mutated = serialize_proof(&proof).expect("serialize proof");
@@ -1264,10 +1269,10 @@ fn verification_rejects_trace_indices_not_sorted() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    if decoded.openings.trace.indices.len() < 2 {
+    if decoded.openings().trace.indices.len() < 2 {
         panic!("expected at least two trace indices");
     }
-    decoded.openings.trace.indices.swap(0, 1);
+    decoded.openings_mut().trace.indices.swap(0, 1);
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
 
@@ -1303,10 +1308,11 @@ fn verification_rejects_trace_indices_duplicate() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    if decoded.openings.trace.indices.len() < 2 {
+    if decoded.openings().trace.indices.len() < 2 {
         panic!("expected at least two trace indices");
     }
-    decoded.openings.trace.indices[1] = decoded.openings.trace.indices[0];
+    let indices = &mut decoded.openings_mut().trace.indices;
+    indices[1] = indices[0];
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
 
@@ -1342,7 +1348,7 @@ fn verification_rejects_trace_indices_mismatch() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    for index in &mut decoded.openings.trace.indices {
+    for index in decoded.openings_mut().trace.indices.iter_mut() {
         *index = index.saturating_add(1);
     }
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
@@ -1381,7 +1387,7 @@ fn verification_rejects_composition_indices_not_sorted() {
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
-        .openings
+        .openings_mut()
         .composition
         .as_mut()
         .expect("composition openings present");
@@ -1425,7 +1431,7 @@ fn verification_rejects_composition_indices_duplicate() {
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
-        .openings
+        .openings_mut()
         .composition
         .as_mut()
         .expect("composition openings present");
@@ -1469,7 +1475,7 @@ fn verification_rejects_composition_indices_mismatch() {
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
-        .openings
+        .openings_mut()
         .composition
         .as_mut()
         .expect("composition openings present");
