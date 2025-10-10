@@ -517,7 +517,7 @@ impl MerkleProofBundle {
     /// individual roots to verify that the redundant data is internally
     /// consistent.
     pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
-        if self.fri_layer_roots() != &fri_proof.layer_roots {
+        if self.fri_layer_roots() != fri_proof.layer_roots.as_slice() {
             return Err(VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriRoots,
             });
