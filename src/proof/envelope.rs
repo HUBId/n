@@ -211,12 +211,12 @@ impl ProofBuilder {
             telemetry_option,
         );
 
-        proof.telemetry_mut().set_present(true);
+        proof.set_has_telemetry(true);
 
         let payload = serialize_proof_payload(&proof).map_err(VerifyError::from)?;
         let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
 
-        let telemetry = proof.telemetry_mut().frame_mut();
+        let telemetry = proof.telemetry_frame_mut();
         telemetry.set_header_length(header_bytes.len() as u32);
         telemetry.set_body_length((payload.len() + 32) as u32);
         let integrity = compute_integrity_digest(&header_bytes, &payload);
@@ -503,6 +503,56 @@ mod tests {
         let bytes = proof.to_bytes().expect("serialize proof");
         let decoded = Proof::from_bytes(&bytes).expect("decode proof");
         assert_eq!(proof, decoded);
+    }
+
+    #[test]
+    fn proof_header_payload_helpers() {
+        let proof = build_sample_proof();
+        let payload = proof
+            .serialize_payload()
+            .expect("serialize payload from helper");
+        let header = proof
+            .serialize_header(&payload)
+            .expect("serialize header from helper");
+        let full_bytes = proof.to_bytes().expect("serialize proof");
+
+        assert!(!header.is_empty(), "header must contain fields");
+        assert!(!payload.is_empty(), "payload must contain sections");
+        assert_eq!(
+            header.len() + payload.len(),
+            full_bytes.len(),
+            "full serialization must match helper output",
+        );
+
+        let telemetry = proof.telemetry_frame();
+        assert_eq!(
+            telemetry.header_length() as usize,
+            header.len(),
+            "telemetry header length mirrors helper",
+        );
+        assert_eq!(
+            telemetry.body_length() as usize,
+            payload.len() + 32,
+            "telemetry body length mirrors helper",
+        );
+        let mut canonical = proof.clone_using_parts();
+        let telemetry_mut = canonical.telemetry_frame_mut();
+        telemetry_mut.set_header_length(0);
+        telemetry_mut.set_body_length(0);
+        telemetry_mut.set_integrity_digest(DigestBytes::default());
+        let canonical_payload = canonical
+            .serialize_payload()
+            .expect("serialize canonical payload");
+        let canonical_header = canonical
+            .serialize_header(&canonical_payload)
+            .expect("serialize canonical header");
+        let expected_integrity =
+            compute_integrity_digest(&canonical_header, &canonical_payload);
+        assert_eq!(
+            telemetry.integrity_digest().bytes,
+            expected_integrity,
+            "telemetry integrity digest matches recomputed value",
+        );
     }
 
     #[test]
