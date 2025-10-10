@@ -22,6 +22,12 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 
 - Proof envelope, transcript, and Merkle bundle serialization are frozen at `PROOF_VERSION = 1`; deterministic snapshots gate regressions in `tests/snapshots/proof_artifacts__execution_proof_artifacts.snap`.
 
+### Added
+
+- Optional `backend-rpp-stark` feature exposing chain-integration adapters for
+  felts, digests and deterministic hashing, including proof-size limit mapping
+  helpers and STWO fixture tests.
+
 ### Changed
 
 - Raised the minimum supported Rust version (MSRV) and CI toolchain to 1.79 to align with deterministic builds (see `RELEASE_NOTES.md`).
