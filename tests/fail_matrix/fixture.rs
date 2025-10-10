@@ -246,6 +246,47 @@ pub fn mismatch_trace_root(bytes: &ProofBytes) -> ProofBytes {
     ProofBytes::new(mutated)
 }
 
+/// Flips the leading byte of the first trace core OOD evaluation (if present).
+pub fn flip_ood_trace_core_value(proof: &Proof) -> Option<MutatedProof> {
+    let Some(opening) = proof.openings.out_of_domain.first() else {
+        return None;
+    };
+    let Some(value) = opening.core_values.first() else {
+        return None;
+    };
+    if value.is_empty() {
+        return None;
+    }
+
+    Some(mutate_proof(proof, |proof| {
+        if let Some(opening) = proof.openings.out_of_domain.first_mut() {
+            if let Some(value) = opening.core_values.first_mut() {
+                if let Some(byte) = value.first_mut() {
+                    *byte ^= 0x01;
+                }
+            }
+        }
+    }))
+}
+
+/// Flips the leading byte of the first composition OOD evaluation (if present).
+pub fn flip_ood_composition_value(proof: &Proof) -> Option<MutatedProof> {
+    let Some(opening) = proof.openings.out_of_domain.first() else {
+        return None;
+    };
+    if opening.composition_value.is_empty() {
+        return None;
+    }
+
+    Some(mutate_proof(proof, |proof| {
+        if let Some(opening) = proof.openings.out_of_domain.first_mut() {
+            if let Some(byte) = opening.composition_value.first_mut() {
+                *byte ^= 0x01;
+            }
+        }
+    }))
+}
+
 /// Helper bundling mutated proof bytes with their decoded representation.
 #[derive(Debug, Clone)]
 pub struct MutatedProof {
