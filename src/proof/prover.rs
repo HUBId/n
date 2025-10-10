@@ -420,12 +420,11 @@ fn map_witness_to_schema(
     if witness.rows != expected_rows {
         return Err(ProverError::MalformedWitness("trace_length"));
     }
-    if !witness.permutation.is_empty() || !witness.lookup.is_empty() {
-        return Err(ProverError::MalformedWitness("unsupported_witness_segment"));
-    }
 
     let mut main_ix = 0usize;
     let mut aux_ix = 0usize;
+    let mut perm_ix = 0usize;
+    let mut lookup_ix = 0usize;
     let mut columns = Vec::with_capacity(schema.columns.len());
     for meta in &schema.columns {
         let source = match meta.role {
@@ -445,6 +444,22 @@ fn map_witness_to_schema(
                 aux_ix += 1;
                 column
             }
+            TraceRole::Permutation => {
+                let column = witness
+                    .permutation
+                    .get(perm_ix)
+                    .ok_or(ProverError::MalformedWitness("perm_columns"))?;
+                perm_ix += 1;
+                column
+            }
+            TraceRole::Lookup => {
+                let column = witness
+                    .lookup
+                    .get(lookup_ix)
+                    .ok_or(ProverError::MalformedWitness("lookup_columns"))?;
+                lookup_ix += 1;
+                column
+            }
         };
         if source.len() != witness.rows {
             return Err(ProverError::MalformedWitness("column_length"));
@@ -452,11 +467,101 @@ fn map_witness_to_schema(
         columns.push(source.clone());
     }
 
-    if main_ix != witness.main.len() || aux_ix != witness.auxiliary.len() {
+    if main_ix != witness.main.len()
+        || aux_ix != witness.auxiliary.len()
+        || perm_ix != witness.permutation.len()
+        || lookup_ix != witness.lookup.len()
+    {
         return Err(ProverError::MalformedWitness("column_count_mismatch"));
     }
 
     Ok(columns)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::air::types::{DegreeBounds, LdeOrder, TraceColMeta};
+    use crate::utils::serialization::WitnessBlob;
+
+    fn witness_fixture() -> WitnessColumns {
+        let rows = 2u32;
+        let main = [[1u64, 2u64]];
+        let auxiliary = [[3u64, 4u64]];
+        let permutation = [[5u64, 6u64]];
+        let lookup = [[7u64, 8u64]];
+
+        let mut bytes = Vec::new();
+        for value in [rows, 1, 1, 1, 1] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        for column in main
+            .iter()
+            .chain(auxiliary.iter())
+            .chain(permutation.iter())
+            .chain(lookup.iter())
+        {
+            for value in column {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+        }
+
+        parse_witness(WitnessBlob { bytes: &bytes }).expect("fixture witness must parse")
+    }
+
+    fn schema_with_all_roles() -> TraceSchema {
+        let columns = vec![
+            TraceColMeta::new("main", TraceRole::Main),
+            TraceColMeta::new("aux", TraceRole::Auxiliary),
+            TraceColMeta::new("perm", TraceRole::Permutation),
+            TraceColMeta::new("lookup", TraceRole::Lookup),
+        ];
+        let lde = LdeOrder::new(2).expect("valid lde order");
+        let degree = DegreeBounds::new(1, 1).expect("valid degree bounds");
+        TraceSchema::new(columns, lde, degree).expect("valid trace schema")
+    }
+
+    #[test]
+    fn map_witness_handles_all_trace_roles() {
+        let witness = witness_fixture();
+        let schema = schema_with_all_roles();
+        let mapped = map_witness_to_schema(&witness, &schema, 2).expect("witness should map");
+        assert_eq!(mapped.len(), 4);
+        assert_eq!(
+            mapped[0],
+            vec![FieldElement::from(1u64), FieldElement::from(2u64)]
+        );
+        assert_eq!(
+            mapped[1],
+            vec![FieldElement::from(3u64), FieldElement::from(4u64)]
+        );
+        assert_eq!(
+            mapped[2],
+            vec![FieldElement::from(5u64), FieldElement::from(6u64)]
+        );
+        assert_eq!(
+            mapped[3],
+            vec![FieldElement::from(7u64), FieldElement::from(8u64)]
+        );
+    }
+
+    #[test]
+    fn map_witness_detects_unused_segments() {
+        let witness = witness_fixture();
+        let columns = vec![
+            TraceColMeta::new("main", TraceRole::Main),
+            TraceColMeta::new("aux", TraceRole::Auxiliary),
+        ];
+        let lde = LdeOrder::new(2).expect("valid lde order");
+        let degree = DegreeBounds::new(1, 1).expect("valid degree bounds");
+        let schema = TraceSchema::new(columns, lde, degree).expect("valid schema");
+        let err =
+            map_witness_to_schema(&witness, &schema, 2).expect_err("should reject extra segments");
+        assert!(matches!(
+            err,
+            ProverError::MalformedWitness("column_count_mismatch")
+        ));
+    }
 }
 
 fn map_lfsr_public_inputs(
