@@ -16,6 +16,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Verify changelog scaffold
+        run: |
+          test -f CHANGELOG.md
+          grep -q '^## \[Unreleased\]' CHANGELOG.md
       - name: Cargo build
         run: cargo build --locked
       - name: Cargo clippy
