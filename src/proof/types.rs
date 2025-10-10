@@ -465,6 +465,38 @@ pub struct Openings {
     pub out_of_domain: Vec<OutOfDomainOpening>,
 }
 
+impl Openings {
+    /// Returns the Merkle openings covering core trace queries.
+    pub fn trace(&self) -> &TraceOpenings {
+        &self.trace
+    }
+
+    /// Returns a mutable reference to the Merkle openings covering core trace queries.
+    pub fn trace_mut(&mut self) -> &mut TraceOpenings {
+        &mut self.trace
+    }
+
+    /// Returns the optional composition openings, when present.
+    pub fn composition(&self) -> Option<&CompositionOpenings> {
+        self.composition.as_ref()
+    }
+
+    /// Returns a mutable reference to the optional composition openings, when present.
+    pub fn composition_mut(&mut self) -> Option<&mut CompositionOpenings> {
+        self.composition.as_mut()
+    }
+
+    /// Returns the individual out-of-domain openings accompanying the proof.
+    pub fn out_of_domain(&self) -> &Vec<OutOfDomainOpening> {
+        &self.out_of_domain
+    }
+
+    /// Returns a mutable reference to the individual out-of-domain openings.
+    pub fn out_of_domain_mut(&mut self) -> &mut Vec<OutOfDomainOpening> {
+        &mut self.out_of_domain
+    }
+}
+
 /// Merkle opening data covering trace commitments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceOpenings {
@@ -474,6 +506,38 @@ pub struct TraceOpenings {
     pub leaves: Vec<Vec<u8>>,
     /// Authentication paths proving membership for each query.
     pub paths: Vec<MerkleAuthenticationPath>,
+}
+
+impl TraceOpenings {
+    /// Returns the query indices sampled from the FRI transcript.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    /// Returns a mutable reference to the query indices sampled from the FRI transcript.
+    pub fn indices_mut(&mut self) -> &mut Vec<u32> {
+        &mut self.indices
+    }
+
+    /// Returns the leaf payloads revealed for each queried index.
+    pub fn leaves(&self) -> &[Vec<u8>] {
+        &self.leaves
+    }
+
+    /// Returns a mutable reference to the leaf payloads revealed for each queried index.
+    pub fn leaves_mut(&mut self) -> &mut Vec<Vec<u8>> {
+        &mut self.leaves
+    }
+
+    /// Returns the authentication paths proving membership for each query.
+    pub fn paths(&self) -> &[MerkleAuthenticationPath] {
+        &self.paths
+    }
+
+    /// Returns a mutable reference to the authentication paths proving membership for each query.
+    pub fn paths_mut(&mut self) -> &mut Vec<MerkleAuthenticationPath> {
+        &mut self.paths
+    }
 }
 
 /// Merkle opening data covering composition commitments.
@@ -487,11 +551,55 @@ pub struct CompositionOpenings {
     pub paths: Vec<MerkleAuthenticationPath>,
 }
 
+impl CompositionOpenings {
+    /// Returns the query indices sampled from the FRI transcript.
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    /// Returns a mutable reference to the query indices sampled from the FRI transcript.
+    pub fn indices_mut(&mut self) -> &mut Vec<u32> {
+        &mut self.indices
+    }
+
+    /// Returns the leaf payloads revealed for each queried index.
+    pub fn leaves(&self) -> &[Vec<u8>] {
+        &self.leaves
+    }
+
+    /// Returns a mutable reference to the leaf payloads revealed for each queried index.
+    pub fn leaves_mut(&mut self) -> &mut Vec<Vec<u8>> {
+        &mut self.leaves
+    }
+
+    /// Returns the authentication paths proving membership for each query.
+    pub fn paths(&self) -> &[MerkleAuthenticationPath] {
+        &self.paths
+    }
+
+    /// Returns a mutable reference to the authentication paths proving membership for each query.
+    pub fn paths_mut(&mut self) -> &mut Vec<MerkleAuthenticationPath> {
+        &mut self.paths
+    }
+}
+
 /// Authentication path for a Merkle opening.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerkleAuthenticationPath {
     /// Sequence of nodes from the leaf to the root.
     pub nodes: Vec<MerklePathNode>,
+}
+
+impl MerkleAuthenticationPath {
+    /// Returns the sequence of nodes from the leaf to the root.
+    pub fn nodes(&self) -> &[MerklePathNode] {
+        &self.nodes
+    }
+
+    /// Returns a mutable reference to the sequence of nodes from the leaf to the root.
+    pub fn nodes_mut(&mut self) -> &mut Vec<MerklePathNode> {
+        &mut self.nodes
+    }
 }
 
 /// Single node within an authentication path.

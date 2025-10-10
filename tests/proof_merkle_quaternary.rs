@@ -137,8 +137,8 @@ fn quaternary_profile_merkle_tamper_rejected() {
     .expect("proof generation succeeds");
 
     let mut proof = Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
-    if let Some(path) = proof.openings_mut().trace.paths.first_mut() {
-        if let Some(node) = path.nodes.get_mut(1) {
+    if let Some(path) = proof.openings_mut().trace_mut().paths_mut().first_mut() {
+        if let Some(node) = path.nodes_mut().get_mut(1) {
             node.sibling[0] ^= 0x01;
         }
     }

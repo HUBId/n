@@ -29,7 +29,7 @@ fn trace_ood_rejects_core_value_mismatch() {
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::TraceOodMismatch));
 
-    let ood_openings = mutated.proof.openings().out_of_domain.clone();
+    let ood_openings = mutated.proof.openings().out_of_domain().clone();
     assert!(!ood_openings.is_empty(), "mutated proof lost OOD payloads");
 
     assert_debug_snapshot!("trace_ood_mismatch__tampered_out_of_domain", ood_openings);
@@ -59,7 +59,7 @@ fn composition_ood_rejects_value_mismatch() {
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::CompositionOodMismatch));
 
-    let ood_openings = mutated.proof.openings().out_of_domain.clone();
+    let ood_openings = mutated.proof.openings().out_of_domain().clone();
     assert!(!ood_openings.is_empty(), "mutated proof lost OOD payloads");
 
     assert_debug_snapshot!(

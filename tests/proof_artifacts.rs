@@ -124,23 +124,22 @@ fn snapshot_execution_proof_artifacts() {
 
     let trace_paths: Vec<usize> = decoded
         .openings()
-        .trace
-        .paths
+        .trace()
+        .paths()
         .iter()
-        .map(|path| path.nodes.len())
+        .map(|path| path.nodes().len())
         .collect();
     let composition_paths: Option<Vec<usize>> = decoded
         .openings()
-        .composition
-        .as_ref()
-        .map(|comp| comp.paths.iter().map(|path| path.nodes.len()).collect());
+        .composition()
+        .map(|comp| comp.paths().iter().map(|path| path.nodes().len()).collect());
     let trace_indices = {
-        let mut indices = decoded.openings().trace.indices.clone();
+        let mut indices = decoded.openings().trace().indices().to_vec();
         indices.sort_unstable();
         indices
     };
-    let composition_indices = decoded.openings().composition.as_ref().map(|comp| {
-        let mut indices = comp.indices.clone();
+    let composition_indices = decoded.openings().composition().map(|comp| {
+        let mut indices = comp.indices().to_vec();
         indices.sort_unstable();
         indices
     });

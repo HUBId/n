@@ -207,10 +207,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         ));
     }
 
-    match (
-        proof.composition_commit(),
-        proof.openings().composition.as_ref(),
-    ) {
+    match (proof.composition_commit(), proof.openings().composition()) {
         (Some(commit), Some(_)) => {
             if commit.bytes != proof.merkle().aux_root {
                 return Err(SerError::invalid_value(
@@ -428,7 +425,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         });
     }
 
-    match (&composition_commit, openings.composition.as_ref()) {
+    match (&composition_commit, openings.composition()) {
         (Some(commit), Some(_)) => {
             if commit.bytes != merkle.aux_root {
                 return Err(VerifyError::RootMismatch {
@@ -516,26 +513,26 @@ fn encode_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
     let mut buffer = Vec::new();
     encode_merkle_openings(
         &mut buffer,
-        &openings.trace.indices,
-        &openings.trace.leaves,
-        &openings.trace.paths,
+        openings.trace().indices(),
+        openings.trace().leaves(),
+        openings.trace().paths(),
     )?;
-    match &openings.composition {
+    match openings.composition() {
         Some(section) => {
             write_u8(&mut buffer, 1);
             encode_merkle_openings(
                 &mut buffer,
-                &section.indices,
-                &section.leaves,
-                &section.paths,
+                section.indices(),
+                section.leaves(),
+                section.paths(),
             )?;
         }
         None => write_u8(&mut buffer, 0),
     }
 
-    let count = ensure_u32(openings.out_of_domain.len(), SerKind::Openings, "ood_len")?;
+    let count = ensure_u32(openings.out_of_domain().len(), SerKind::Openings, "ood_len")?;
     write_u32(&mut buffer, count);
-    for opening in &openings.out_of_domain {
+    for opening in openings.out_of_domain() {
         let encoded = serialize_out_of_domain_opening(opening)?;
         let encoded_len = ensure_u32(encoded.len(), SerKind::Openings, "ood_block")?;
         write_u32(&mut buffer, encoded_len);

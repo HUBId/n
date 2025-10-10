@@ -276,10 +276,7 @@ fn precheck_body(
         });
     }
 
-    match (
-        proof.composition_commit(),
-        proof.openings().composition.as_ref(),
-    ) {
+    match (proof.composition_commit(), proof.openings().composition()) {
         (Some(commit), Some(_)) => {
             if commit.bytes != proof.merkle().aux_root {
                 return Err(VerifyError::RootMismatch {
@@ -377,31 +374,30 @@ fn precheck_body(
         proof.fri_proof().initial_domain_size,
     )?;
 
-    validate_query_indices(&proof.openings().trace.indices, &expected_indices)?;
-    if let Some(composition_openings) = proof.openings().composition.as_ref() {
-        validate_query_indices(&composition_openings.indices, &expected_indices)?;
+    validate_query_indices(proof.openings().trace().indices(), &expected_indices)?;
+    if let Some(composition_openings) = proof.openings().composition() {
+        validate_query_indices(composition_openings.indices(), &expected_indices)?;
     }
 
     let trace_values = verify_trace_commitment(
         &stark_params,
         &proof.trace_commit().bytes,
-        &proof.openings().trace,
+        proof.openings().trace(),
     )?;
 
     if let Some(composition_commit) = proof.composition_commit() {
         let composition_openings =
             proof
                 .openings()
-                .composition
-                .as_ref()
+                .composition()
                 .ok_or(VerifyError::CompositionInconsistent {
                     reason: "missing_composition_openings".to_string(),
                 })?;
-        let alignment_values = extract_composition_leaf_values(&composition_openings.leaves)?;
+        let alignment_values = extract_composition_leaf_values(composition_openings.leaves())?;
         verify_composition_alignment(
             &alignment_values,
-            &composition_openings.leaves,
-            &proof.openings().trace.indices,
+            composition_openings.leaves(),
+            proof.openings().trace().indices(),
             proof.fri_proof(),
         )?;
 
@@ -412,7 +408,7 @@ fn precheck_body(
         )?;
 
         verify_ood_openings(
-            &proof.openings().out_of_domain,
+            proof.openings().out_of_domain(),
             &trace_values,
             &composition_values,
             &ood_points,
@@ -420,7 +416,7 @@ fn precheck_body(
         )?;
         stages.composition_ok = true;
     } else {
-        if proof.openings().composition.is_some() {
+        if proof.openings().composition().is_some() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_commit".to_string(),
             });
@@ -684,9 +680,9 @@ fn verify_trace_commitment(
     verify_merkle_section(
         params,
         root,
-        &openings.indices,
-        &openings.leaves,
-        &openings.paths,
+        openings.indices(),
+        openings.leaves(),
+        openings.paths(),
         MerkleSection::TraceCommit,
         LeafSource::Trace,
     )
@@ -700,9 +696,9 @@ fn verify_composition_commitment(
     verify_merkle_section(
         params,
         root,
-        &openings.indices,
-        &openings.leaves,
-        &openings.paths,
+        openings.indices(),
+        openings.leaves(),
+        openings.paths(),
         MerkleSection::CompositionCommit,
         LeafSource::Composition,
     )
@@ -776,14 +772,14 @@ fn convert_path(
     section: MerkleSection,
     arity: MerkleArity,
 ) -> Result<Vec<ProofNode>, VerifyError> {
-    if path.nodes.is_empty() {
+    if path.nodes().is_empty() {
         return Err(VerifyError::MerkleVerifyFailed { section });
     }
 
     match arity {
         MerkleArity::Binary => {
-            let mut nodes = Vec::with_capacity(path.nodes.len());
-            for node in &path.nodes {
+            let mut nodes = Vec::with_capacity(path.nodes().len());
+            for node in path.nodes() {
                 if node.index > 1 {
                     return Err(VerifyError::MerkleVerifyFailed { section });
                 }
@@ -798,8 +794,8 @@ fn convert_path(
             let branching = 4u8;
             let mut cursor = 0usize;
 
-            while cursor < path.nodes.len() {
-                let first = &path.nodes[cursor];
+            while cursor < path.nodes().len() {
+                let first = &path.nodes()[cursor];
                 if first.index >= branching {
                     return Err(VerifyError::MerkleVerifyFailed { section });
                 }
@@ -812,11 +808,11 @@ fn convert_path(
 
                 let additional_count = missing_positions.len().saturating_sub(1);
                 let required = 1 + additional_count;
-                if cursor + required > path.nodes.len() {
+                if cursor + required > path.nodes().len() {
                     return Err(VerifyError::MerkleVerifyFailed { section });
                 }
 
-                let additional_slice = &path.nodes[cursor + 1..cursor + required];
+                let additional_slice = &path.nodes()[cursor + 1..cursor + required];
                 let mut seen = [false; 4];
                 let mut digest_map = BTreeMap::new();
 
