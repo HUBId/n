@@ -1,0 +1,5 @@
+---
+source: tests/fail_matrix/telemetry.rs
+expression: hex_bytes(&telemetry_bytes)
+---
+ee000000f00b0200020c0020000000400012769de887a74ef90dfd1e7cb75dc9660ae8f8986c9d562a5f4e72d09c86610f

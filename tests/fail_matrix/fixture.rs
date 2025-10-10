@@ -10,7 +10,7 @@ use rpp_stark::proof::public_inputs::{
     ExecutionHeaderV1, ProofKind, PublicInputVersion, PublicInputs,
 };
 use rpp_stark::proof::ser::{compute_integrity_digest, serialize_proof};
-use rpp_stark::proof::types::Proof;
+use rpp_stark::proof::types::{Proof, Telemetry};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use std::convert::TryInto;
 
@@ -174,6 +174,56 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     }
 
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
+}
+
+fn mutate_telemetry_with<F>(proof: &Proof, mutator: F) -> Option<ProofBytes>
+where
+    F: FnOnce(&mut Telemetry),
+{
+    if !proof.has_telemetry {
+        return None;
+    }
+
+    let mut mutated = proof.clone();
+    let _ = reencode_proof(&mut mutated);
+    mutator(&mut mutated.telemetry);
+
+    Some(ProofBytes::new(
+        serialize_proof(&mutated).expect("serialize mutated proof"),
+    ))
+}
+
+/// Declares an incorrect telemetry header length to trigger the mismatch guard.
+pub fn mismatch_telemetry_header_length(proof: &Proof) -> Option<ProofBytes> {
+    mutate_telemetry_with(proof, |telemetry| {
+        let declared = telemetry.header_length;
+        let bumped = telemetry.header_length.saturating_add(4);
+        telemetry.header_length = if bumped == declared {
+            declared.saturating_sub(1)
+        } else {
+            bumped
+        };
+    })
+}
+
+/// Declares an incorrect telemetry body length to trigger the mismatch guard.
+pub fn mismatch_telemetry_body_length(proof: &Proof) -> Option<ProofBytes> {
+    mutate_telemetry_with(proof, |telemetry| {
+        let declared = telemetry.body_length;
+        let bumped = telemetry.body_length.saturating_add(16);
+        telemetry.body_length = if bumped == declared {
+            declared.saturating_sub(1)
+        } else {
+            bumped
+        };
+    })
+}
+
+/// Corrupts the telemetry integrity digest to trigger the mismatch guard.
+pub fn mismatch_telemetry_integrity_digest(proof: &Proof) -> Option<ProofBytes> {
+    mutate_telemetry_with(proof, |telemetry| {
+        telemetry.integrity_digest.bytes[0] ^= 0x01;
+    })
 }
 
 /// Flips the proof header version field.
