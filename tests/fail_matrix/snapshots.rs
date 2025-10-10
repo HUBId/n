@@ -30,35 +30,30 @@ fn freeze_fixture_artifacts() {
     let proof = fixture.proof();
     let config = fixture.config();
 
-    let trace_indices = proof.openings.trace.indices.clone();
-    let composition_indices = proof
-        .openings
-        .composition
-        .as_ref()
-        .map(|c| c.indices.clone());
+    let openings = proof.openings();
+    let trace_indices = openings.trace.indices.clone();
+    let composition_indices = openings.composition.as_ref().map(|c| c.indices.clone());
 
-    let trace_path_lengths = proof
-        .openings
+    let trace_path_lengths = openings
         .trace
         .paths
         .iter()
         .map(|path| path.nodes.len())
         .collect::<Vec<_>>();
-    let composition_path_lengths = proof.openings.composition.as_ref().map(|c| {
+    let composition_path_lengths = openings.composition.as_ref().map(|c| {
         c.paths
             .iter()
             .map(|path| path.nodes.len())
             .collect::<Vec<_>>()
     });
 
-    let fri_query_positions = proof
-        .fri_proof
+    let fri_proof = proof.fri_proof();
+    let fri_query_positions = fri_proof
         .queries
         .iter()
         .map(|query| query.position)
         .collect::<Vec<_>>();
-    let fri_query_path_lengths = proof
-        .fri_proof
+    let fri_query_path_lengths = fri_proof
         .queries
         .iter()
         .map(|query| {
@@ -75,36 +70,33 @@ fn freeze_fixture_artifacts() {
         "proof_bytes_hex": hex_encode(proof_bytes.as_slice()),
         "param_digest_hex": hex_encode(&config.param_digest.0.bytes),
         "roots": {
-            "core": hex_encode(&proof.merkle.core_root),
-            "aux": hex_encode(&proof.merkle.aux_root),
+            "core": hex_encode(&proof.merkle().core_root),
+            "aux": hex_encode(&proof.merkle().aux_root),
             "fri_from_merkle": proof
-                .merkle
+                .merkle()
                 .fri_layer_roots
                 .iter()
                 .map(hex_encode)
                 .collect::<Vec<_>>(),
-            "fri_from_proof": proof
-                .fri_proof
+            "fri_from_proof": fri_proof
                 .layer_roots
                 .iter()
                 .map(hex_encode)
                 .collect::<Vec<_>>(),
-            "final_polynomial_digest": hex_encode(&proof.fri_proof.final_polynomial_digest),
+            "final_polynomial_digest": hex_encode(&fri_proof.final_polynomial_digest),
         },
         "challenges": {
-            "fri_fold": proof
-                .fri_proof
+            "fri_fold": fri_proof
                 .fold_challenges
                 .iter()
                 .map(field_hex)
                 .collect::<Vec<_>>(),
-            "fri_final_polynomial": proof
-                .fri_proof
+            "fri_final_polynomial": fri_proof
                 .final_polynomial
                 .iter()
                 .map(field_hex)
                 .collect::<Vec<_>>(),
-            "deep_oods": proof.fri_proof.deep_oods.as_ref().map(|oods| json!({
+            "deep_oods": fri_proof.deep_oods.as_ref().map(|oods| json!({
                 "point": field_hex(&oods.point),
                 "evaluations": oods
                     .evaluations

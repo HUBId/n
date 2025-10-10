@@ -33,7 +33,7 @@ fn fri_rejects_fold_challenge_tampering() {
     assert_debug_snapshot!("fri_rejects_fold_challenge_tampering_issue", issue);
     assert_debug_snapshot!(
         "fri_rejects_fold_challenge_tampering_challenges",
-        mutated.proof.fri_proof.fold_challenges
+        mutated.proof.fri_proof().fold_challenges.clone()
     );
 
     assert!(

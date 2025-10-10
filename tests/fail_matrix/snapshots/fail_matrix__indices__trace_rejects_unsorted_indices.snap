@@ -1,7 +1,7 @@
 ---
 source: tests/fail_matrix/indices.rs
 assertion_line: 32
-expression: "&mutated.proof.openings.trace.indices"
+expression: "&mutated.proof.openings().trace.indices"
 ---
 [
     56,

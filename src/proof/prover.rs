@@ -300,11 +300,12 @@ pub fn build_envelope(
     let header_bytes = proof
         .serialize_header(&body_payload)
         .map_err(ProverError::from)?;
-    proof.telemetry.body_length = (body_payload.len() + 32) as u32;
-    proof.telemetry.header_length = header_bytes.len() as u32;
+    let telemetry = proof.telemetry_mut();
+    telemetry.body_length = (body_payload.len() + 32) as u32;
+    telemetry.header_length = header_bytes.len() as u32;
 
     let integrity_digest = compute_integrity_digest(&header_bytes, &body_payload);
-    proof.telemetry.integrity_digest = DigestBytes {
+    telemetry.integrity_digest = DigestBytes {
         bytes: integrity_digest,
     };
 
