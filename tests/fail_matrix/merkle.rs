@@ -134,7 +134,7 @@ fn snapshot_path_nodes(mutated: &MutatedProof) {
     let nodes: Vec<(u8, String)> = mutated
         .proof
         .openings()
-        .trace
+        .trace()
         .paths
         .first()
         .map(|path| {
@@ -181,7 +181,7 @@ fn snapshot_path_lengths(mutated: &MutatedProof) {
     let lengths: Vec<usize> = mutated
         .proof
         .openings()
-        .trace
+        .trace()
         .paths
         .iter()
         .map(|path| path.nodes.len())
