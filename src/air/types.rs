@@ -38,6 +38,10 @@ pub enum TraceRole {
     Main,
     /// Auxiliary columns are derived from witness relations.
     Auxiliary,
+    /// Permutation columns encode lookup and permutation arguments.
+    Permutation,
+    /// Lookup columns capture table values used in lookup arguments.
+    Lookup,
 }
 
 impl fmt::Display for TraceRole {
@@ -45,7 +49,21 @@ impl fmt::Display for TraceRole {
         match self {
             TraceRole::Main => f.write_str("main"),
             TraceRole::Auxiliary => f.write_str("auxiliary"),
+            TraceRole::Permutation => f.write_str("permutation"),
+            TraceRole::Lookup => f.write_str("lookup"),
         }
+    }
+}
+
+impl TraceRole {
+    /// Returns all role variants in declaration order.
+    pub const fn all() -> [TraceRole; 4] {
+        [
+            TraceRole::Main,
+            TraceRole::Auxiliary,
+            TraceRole::Permutation,
+            TraceRole::Lookup,
+        ]
     }
 }
 
@@ -117,7 +135,7 @@ impl DegreeBounds {
     fn check_role(&self, role: TraceRole, observed_degree: usize) -> Result<(), AirError> {
         let bound = match role {
             TraceRole::Main => self.main,
-            TraceRole::Auxiliary => self.auxiliary,
+            TraceRole::Auxiliary | TraceRole::Permutation | TraceRole::Lookup => self.auxiliary,
         };
         if observed_degree > bound {
             Err(AirError::DegreeOverflow {
@@ -278,6 +296,20 @@ impl TraceSchema {
         self.columns.get(ix.as_usize())
     }
 
+    /// Returns an iterator over the columns belonging to the supplied role.
+    pub fn columns_by_role(&self, role: TraceRole) -> impl Iterator<Item = &TraceColMeta> {
+        self.columns.iter().filter(move |meta| meta.role == role)
+    }
+
+    /// Returns the number of columns declared for each role.
+    pub fn role_counts(&self) -> TraceRoleCounts {
+        let mut counts = TraceRoleCounts::default();
+        for meta in &self.columns {
+            counts.increment(meta.role);
+        }
+        counts
+    }
+
     /// Validates an execution trace against the schema.
     pub fn validate_trace(&self, trace: &TraceData) -> Result<(), AirError> {
         if self.columns.len() != trace.num_columns() {
@@ -304,6 +336,41 @@ impl TraceSchema {
 pub struct TraceData {
     columns: Vec<Vec<Felt>>,
     rows: usize,
+}
+
+/// Cardinality descriptor for trace segments grouped by [`TraceRole`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TraceRoleCounts {
+    /// Number of main trace columns.
+    pub main: usize,
+    /// Number of auxiliary trace columns.
+    pub auxiliary: usize,
+    /// Number of permutation trace columns.
+    pub permutation: usize,
+    /// Number of lookup trace columns.
+    pub lookup: usize,
+}
+
+impl TraceRoleCounts {
+    /// Increments the counter associated with `role`.
+    pub fn increment(&mut self, role: TraceRole) {
+        match role {
+            TraceRole::Main => self.main += 1,
+            TraceRole::Auxiliary => self.auxiliary += 1,
+            TraceRole::Permutation => self.permutation += 1,
+            TraceRole::Lookup => self.lookup += 1,
+        }
+    }
+
+    /// Returns the column count registered for `role`.
+    pub fn get(&self, role: TraceRole) -> usize {
+        match role {
+            TraceRole::Main => self.main,
+            TraceRole::Auxiliary => self.auxiliary,
+            TraceRole::Permutation => self.permutation,
+            TraceRole::Lookup => self.lookup,
+        }
+    }
 }
 
 impl TraceData {
@@ -548,6 +615,8 @@ mod tests {
                 .with_boundary(BoundaryAt::First)
                 .with_boundary(BoundaryAt::Last),
             TraceColMeta::new("aux", TraceRole::Auxiliary).with_boundary(BoundaryAt::Row(1)),
+            TraceColMeta::new("perm", TraceRole::Permutation),
+            TraceColMeta::new("lookup", TraceRole::Lookup),
         ];
         let lde = LdeOrder::new(4)?;
         let degree = DegreeBounds::new(3, 4)?;
@@ -567,6 +636,18 @@ mod tests {
                 Felt::from(6u64),
                 Felt::from(7u64),
                 Felt::from(8u64),
+            ],
+            vec![
+                Felt::from(9u64),
+                Felt::from(10u64),
+                Felt::from(11u64),
+                Felt::from(12u64),
+            ],
+            vec![
+                Felt::from(13u64),
+                Felt::from(14u64),
+                Felt::from(15u64),
+                Felt::from(16u64),
             ],
         ])
     }
@@ -598,7 +679,7 @@ mod tests {
                 if what != "trace column count" {
                     return Err(AirError::LayoutViolation("unexpected mismatch kind"));
                 }
-                if expected != 2 || actual != 1 {
+                if expected != 4 || actual != 1 {
                     return Err(AirError::LayoutViolation("unexpected mismatch values"));
                 }
                 Ok(())
@@ -606,6 +687,17 @@ mod tests {
             Err(err) => Err(err),
             Ok(_) => Err(AirError::LayoutViolation("schema should reject trace")),
         }
+    }
+
+    #[test]
+    fn role_counts_report_segment_widths() -> Result<(), AirError> {
+        let schema = sample_schema()?;
+        let counts = schema.role_counts();
+        assert_eq!(counts.get(TraceRole::Main), 1);
+        assert_eq!(counts.get(TraceRole::Auxiliary), 1);
+        assert_eq!(counts.get(TraceRole::Permutation), 1);
+        assert_eq!(counts.get(TraceRole::Lookup), 1);
+        Ok(())
     }
 
     #[test]
