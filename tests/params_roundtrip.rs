@@ -167,7 +167,6 @@ proptest! {
 }
 
 #[test]
-#[ignore]
 fn snapshot_profiles() {
     let profile_x8 = StarkParamsBuilder::new().build().unwrap();
     let hisec = StarkParamsBuilder::from_profile(BuiltinProfile::PROFILE_HISEC_X16)
