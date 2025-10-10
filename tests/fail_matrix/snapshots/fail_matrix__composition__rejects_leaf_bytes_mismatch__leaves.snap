@@ -1,6 +1,5 @@
 ---
 source: tests/fail_matrix/composition.rs
-assertion_line: 52
 expression: leaves
 ---
 [
@@ -75,14 +74,14 @@ expression: leaves
         0,
     ],
     [
-        97,
-        6,
-        55,
-        2,
-        98,
-        111,
-        95,
-        142,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
     ],
     [
         0,

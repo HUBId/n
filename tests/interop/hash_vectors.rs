@@ -57,8 +57,8 @@ fn load_fixture(base: &Path) -> Result<(Vec<Vec<u8>>, [u8; 32]), String> {
         .try_into()
         .expect("root length was checked");
 
-    let bin_root = fs::read(&bin_path)
-        .map_err(|err| format!("failed to read {bin_path:?}: {err}"))?;
+    let bin_root =
+        fs::read(&bin_path).map_err(|err| format!("failed to read {bin_path:?}: {err}"))?;
     if bin_root.len() != 32 {
         return Err(format!("binary root length mismatch: {}", bin_root.len()));
     }
@@ -80,8 +80,16 @@ fn verify_backend<B: DeterministicHasherBackend>(
         hasher.update(leaf);
     }
     let digest = hasher.finalize();
-    assert_eq!(digest.as_bytes(), expected, "streamed digest mismatch for {name}");
-    assert_eq!(digest.as_bytes().len(), expected.len(), "digest length gate failed for {name}");
+    assert_eq!(
+        digest.as_bytes(),
+        expected,
+        "streamed digest mismatch for {name}"
+    );
+    assert_eq!(
+        digest.as_bytes().len(),
+        expected.len(),
+        "digest length gate failed for {name}"
+    );
 
     let direct: [u8; 32] = hash_with_backend::<B>(flattened).into();
     assert_eq!(&direct, expected, "direct digest mismatch for {name}");
@@ -101,6 +109,11 @@ fn stwo_blake2s_vectors_match() {
     assert_eq!(default_digest.as_bytes(), &expected_root);
 
     verify_backend::<Blake2sInteropHasher>("blake2s", &leaves, &flattened, &expected_root);
-    verify_backend::<PoseidonInteropHasher>("poseidon-adapter", &leaves, &flattened, &expected_root);
+    verify_backend::<PoseidonInteropHasher>(
+        "poseidon-adapter",
+        &leaves,
+        &flattened,
+        &expected_root,
+    );
     verify_backend::<RescueInteropHasher>("rescue-adapter", &leaves, &flattened, &expected_root);
 }

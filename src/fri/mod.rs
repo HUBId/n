@@ -93,7 +93,8 @@ mod prover;
 pub mod types;
 mod verifier;
 
-pub(crate) use crate::hash::{hash, Blake2sXof};
+use crate::hash::merkle::{LEAF_DOMAIN_TAG, NODE_DOMAIN_TAG};
+pub(crate) use crate::hash::{hash, Blake2sXof, Hasher};
 pub use batch::{BatchDigest, BatchQueryPosition, BatchSeed, FriBatch, FriBatchVerificationApi};
 pub use folding::{
     binary_fold, coset_shift_schedule, next_domain_size, parent_index, phi, FoldingLayer,
@@ -193,15 +194,19 @@ pub(crate) fn hash_leaf(value: &FieldElement) -> Result<[u8; 32], FieldConstrain
     let mut payload = Vec::with_capacity(12);
     payload.extend_from_slice(&(8u32.to_le_bytes()));
     payload.extend_from_slice(&field_to_bytes(value)?);
-    Ok(hash(&payload).into())
+    let mut hasher = Hasher::new();
+    hasher.update(&[LEAF_DOMAIN_TAG]);
+    hasher.update(&payload);
+    Ok(hasher.finalize().into())
 }
 
 /// Hashes two child digests into their parent digest.
 #[inline]
 pub(crate) fn hash_internal(children: &[[u8; 32]; 2]) -> [u8; 32] {
-    let mut payload = Vec::with_capacity(64);
+    let mut hasher = Hasher::new();
+    hasher.update(&[NODE_DOMAIN_TAG]);
     for child in children {
-        payload.extend_from_slice(child);
+        hasher.update(child);
     }
-    hash(&payload).into()
+    hasher.finalize().into()
 }

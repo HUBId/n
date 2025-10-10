@@ -1,24 +1,23 @@
 ---
 source: tests/fail_matrix/merkle.rs
-assertion_line: 148
 expression: nodes
 ---
 [
     (
         255,
-        "cebf82b86481211305630fccfa5880a539652b6784d83c740c2f35e3ef2907e1",
+        "fd62b3e3deb8a002cd64391d60b330363f7a7a893f42095181ab88c523d0e99b",
     ),
     (
-        1,
-        "ff739492b1c66e23fd06f9e3a83e54773b86941ebb70c41ed7709d67ef052f14",
+        0,
+        "b6b71c580a5ce11efbc2ba7468d358a771e874da59409d631c0aa7acdc8ee690",
     ),
     (
-        1,
-        "46c613cb770bb9492a1611c39b8c268d9ac07173cc55d329d7718c8cabee75c2",
+        0,
+        "b6dc2f845a9095c730b46cba203a041a0541dd09218752695fccad10a586ef77",
     ),
     (
-        1,
-        "9c19dbde23e669f3ce8a8b0a1c0fc01f3dbced33e29ec5d94880c723330f8bec",
+        0,
+        "cde40f8a479a05ba956f5d454456f643d1a155a09785fce4becdead800dce249",
     ),
     (
         0,

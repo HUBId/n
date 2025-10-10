@@ -1,9 +1,12 @@
-//! Blake2s-based binary Merkle tree implementation used by the proving system.
+//! Blake2s-based binary Merkle tree specification mirroring the STWO layout.
 //!
-//! The tree adheres to the specification circulated with the repository:
+//! The tree adheres to the documented framing rules:
 //!
-//! * Inner nodes hash the concatenation of their two children in order.
-//! * Leaves are hashed as `Blake2s(u32_le(len) || payload)`.
+//! * Fan-out is fixed to arity 2.
+//! * Leaves are encoded as `len: u32 (little-endian) || payload` and hashed as
+//!   `Blake2s(LEAF_DOMAIN_TAG || len || payload)`.
+//! * Internal nodes concatenate their ordered children and hash them as
+//!   `Blake2s(NODE_DOMAIN_TAG || left || right)`.
 //! * Missing children on the right-hand side are padded with a fixed
 //!   `EMPTY` digest derived from the string `"RPP-MERKLE-EMPTY\0"`.
 //! * Authentication paths serialise an index byte followed by the sibling
@@ -14,11 +17,17 @@
 //! caller attempts to verify malformed paths (e.g. mismatched padding or
 //! tampered length prefixes).
 
-use crate::hash::{hash, Hasher};
+use crate::hash::Hasher;
 use core::fmt;
 
 /// Number of children per internal node.
 const ARITY: usize = 2;
+
+/// Domain separation tag applied to leaf hashes.
+pub const LEAF_DOMAIN_TAG: u8 = 0x00;
+
+/// Domain separation tag applied to internal node hashes.
+pub const NODE_DOMAIN_TAG: u8 = 0x01;
 
 /// Size of a digest emitted by the tree (Blake2s output size).
 pub const DIGEST_SIZE: usize = 32;
@@ -210,12 +219,16 @@ pub fn hash_leaf(encoded_leaf: &[u8]) -> Result<[u8; DIGEST_SIZE], MerkleError> 
         return Err(MerkleError::ErrMerkleLeafLength);
     }
 
-    Ok(hash(encoded_leaf).into())
+    let mut hasher = Hasher::new();
+    hasher.update(&[LEAF_DOMAIN_TAG]);
+    hasher.update(encoded_leaf);
+    Ok(hasher.finalize().into())
 }
 
 /// Hashes two child digests into their parent digest.
 pub fn hash_internal(children: &[[u8; DIGEST_SIZE]; ARITY]) -> [u8; DIGEST_SIZE] {
     let mut hasher = Hasher::new();
+    hasher.update(&[NODE_DOMAIN_TAG]);
     for child in children {
         hasher.update(child);
     }
@@ -302,6 +315,7 @@ pub fn verify_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hash::hash;
 
     #[test]
     fn empty_digest_matches_reference() {
