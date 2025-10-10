@@ -272,7 +272,7 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    if proof.trace_commit().bytes != proof.openings().merkle().core_root {
+    if proof.trace_commit().bytes != *proof.openings().merkle().core_root() {
         return Err(VerifyError::RootMismatch {
             section: MerkleSection::TraceCommit,
         });
@@ -283,7 +283,7 @@ fn precheck_body(
         proof.openings().composition(),
     ) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != proof.openings().merkle().aux_root {
+            if commit.bytes != *proof.openings().merkle().aux_root() {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -300,7 +300,7 @@ fn precheck_body(
             });
         }
         (None, None) => {
-            if proof.openings().merkle().aux_root != [0u8; 32] {
+            if proof.openings().merkle().aux_root() != &[0u8; 32] {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -308,7 +308,7 @@ fn precheck_body(
         }
     }
 
-    if proof.openings().merkle().fri_layer_roots != proof.fri().fri_proof().layer_roots {
+    if proof.openings().merkle().fri_layer_roots() != &proof.fri().fri_proof().layer_roots {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
         });
@@ -365,7 +365,13 @@ fn precheck_body(
     let fri_seed = challenges
         .draw_fri_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    for (layer_index, _) in proof.openings().merkle().fri_layer_roots.iter().enumerate() {
+    for (layer_index, _) in proof
+        .openings()
+        .merkle()
+        .fri_layer_roots()
+        .iter()
+        .enumerate()
+    {
         challenges
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;

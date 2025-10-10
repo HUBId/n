@@ -470,6 +470,36 @@ impl MerkleProofBundle {
         }
     }
 
+    /// Returns the core commitment root stored in the bundle.
+    pub fn core_root(&self) -> &[u8; 32] {
+        &self.core_root
+    }
+
+    /// Returns a mutable reference to the core commitment root stored in the bundle.
+    pub fn core_root_mut(&mut self) -> &mut [u8; 32] {
+        &mut self.core_root
+    }
+
+    /// Returns the auxiliary commitment root recorded in the bundle.
+    pub fn aux_root(&self) -> &[u8; 32] {
+        &self.aux_root
+    }
+
+    /// Returns a mutable reference to the auxiliary commitment root recorded in the bundle.
+    pub fn aux_root_mut(&mut self) -> &mut [u8; 32] {
+        &mut self.aux_root
+    }
+
+    /// Returns the FRI layer roots mirrored by the bundle.
+    pub fn fri_layer_roots(&self) -> &[[u8; 32]] {
+        &self.fri_layer_roots
+    }
+
+    /// Returns a mutable reference to the FRI layer roots mirrored by the bundle.
+    pub fn fri_layer_roots_mut(&mut self) -> &mut Vec<[u8; 32]> {
+        &mut self.fri_layer_roots
+    }
+
     /// Assembles a bundle and validates that the provided FRI proof advertises
     /// compatible layer roots. The layer ordering must be identical.
     pub fn from_fri_proof(
@@ -487,7 +517,7 @@ impl MerkleProofBundle {
     /// individual roots to verify that the redundant data is internally
     /// consistent.
     pub fn ensure_consistency(&self, fri_proof: &crate::fri::FriProof) -> Result<(), VerifyError> {
-        if self.fri_layer_roots != fri_proof.layer_roots {
+        if self.fri_layer_roots() != &fri_proof.layer_roots {
             return Err(VerifyError::MerkleVerifyFailed {
                 section: MerkleSection::FriRoots,
             });

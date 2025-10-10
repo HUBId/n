@@ -200,7 +200,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         ));
     }
 
-    if proof.trace_commit().bytes != proof.openings().merkle().core_root {
+    if proof.trace_commit().bytes != *proof.openings().merkle().core_root() {
         return Err(SerError::invalid_value(
             SerKind::TraceCommitment,
             "trace_root_mismatch",
@@ -212,7 +212,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         proof.openings().composition(),
     ) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != proof.openings().merkle().aux_root {
+            if commit.bytes != *proof.openings().merkle().aux_root() {
                 return Err(SerError::invalid_value(
                     SerKind::CompositionCommitment,
                     "composition_root_mismatch",
@@ -232,7 +232,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
             ));
         }
         (None, None) => {
-            if proof.openings().merkle().aux_root != [0u8; 32] {
+            if proof.openings().merkle().aux_root() != &[0u8; 32] {
                 return Err(SerError::invalid_value(
                     SerKind::CompositionCommitment,
                     "aux_root_without_commit",
@@ -425,7 +425,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         return Err(VerifyError::PublicDigestMismatch);
     }
 
-    if trace_commit.bytes != merkle.core_root {
+    if trace_commit.bytes != *merkle.core_root() {
         return Err(VerifyError::RootMismatch {
             section: MerkleSection::TraceCommit,
         });
@@ -433,7 +433,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
 
     match (&composition_commit, openings.composition()) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != merkle.aux_root {
+            if commit.bytes != *merkle.aux_root() {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -450,7 +450,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
             });
         }
         (None, None) => {
-            if merkle.aux_root != [0u8; 32] {
+            if merkle.aux_root() != &[0u8; 32] {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -480,15 +480,15 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
 
 fn serialize_merkle_bundle(bundle: &MerkleProofBundle) -> Result<Vec<u8>, SerError> {
     let mut out = Vec::new();
-    write_digest(&mut out, &bundle.core_root);
-    write_digest(&mut out, &bundle.aux_root);
+    write_digest(&mut out, bundle.core_root());
+    write_digest(&mut out, bundle.aux_root());
     let layer_count = ensure_u32(
-        bundle.fri_layer_roots.len(),
+        bundle.fri_layer_roots().len(),
         SerKind::TraceCommitment,
         "fri_roots",
     )?;
     write_u32(&mut out, layer_count);
-    for root in &bundle.fri_layer_roots {
+    for root in bundle.fri_layer_roots() {
         write_digest(&mut out, root);
     }
     Ok(out)
@@ -508,11 +508,7 @@ fn deserialize_merkle_bundle(bytes: &[u8]) -> Result<MerkleProofBundle, SerError
         )?);
     }
     ensure_consumed(&cursor, SerKind::TraceCommitment)?;
-    Ok(MerkleProofBundle {
-        core_root,
-        aux_root,
-        fri_layer_roots,
-    })
+    Ok(MerkleProofBundle::new(core_root, aux_root, fri_layer_roots))
 }
 
 fn encode_openings(openings: &Openings) -> Result<Vec<u8>, SerError> {
