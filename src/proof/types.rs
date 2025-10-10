@@ -164,6 +164,16 @@ pub struct Proof {
 }
 
 impl Proof {
+    /// Returns the declared proof version stored in the envelope header.
+    pub fn version(&self) -> u16 {
+        self.version
+    }
+
+    /// Returns a mutable reference to the declared proof version.
+    pub fn version_mut(&mut self) -> &mut u16 {
+        &mut self.version
+    }
+
     /// Returns the parameter digest binding configuration for the proof.
     pub fn param_digest(&self) -> &ParamDigest {
         &self.param_digest
@@ -179,9 +189,19 @@ impl Proof {
         &self.kind
     }
 
+    /// Returns a mutable reference to the canonical proof kind.
+    pub fn kind_mut(&mut self) -> &mut ProofKind {
+        &mut self.kind
+    }
+
     /// Returns the AIR specification identifier for the proof kind.
     pub fn air_spec_id(&self) -> &AirSpecId {
         &self.air_spec_id
+    }
+
+    /// Returns a mutable reference to the AIR specification identifier.
+    pub fn air_spec_id_mut(&mut self) -> &mut AirSpecId {
+        &mut self.air_spec_id
     }
 
     /// Returns the canonical public input encoding.
@@ -192,6 +212,26 @@ impl Proof {
     /// Returns a mutable reference to the canonical public input encoding.
     pub fn public_inputs_mut(&mut self) -> &mut Vec<u8> {
         &mut self.public_inputs
+    }
+
+    /// Returns the digest binding the canonical public-input payload.
+    pub fn public_digest(&self) -> &DigestBytes {
+        &self.public_digest
+    }
+
+    /// Returns a mutable reference to the public-input digest binding.
+    pub fn public_digest_mut(&mut self) -> &mut DigestBytes {
+        &mut self.public_digest
+    }
+
+    /// Returns the digest mirroring the declared trace commitment.
+    pub fn trace_commit(&self) -> &DigestBytes {
+        &self.trace_commit
+    }
+
+    /// Returns a mutable reference to the trace commitment digest.
+    pub fn trace_commit_mut(&mut self) -> &mut DigestBytes {
+        &mut self.trace_commit
     }
 
     /// Returns the optional composition commitment digest, if present.
