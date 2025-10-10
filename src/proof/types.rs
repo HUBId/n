@@ -50,6 +50,143 @@ pub const PROOF_TELEMETRY_MAX_CAP_SIZE: u32 = 128;
 /// bounded by the 128-query cap mandated by the specification.
 pub const PROOF_TELEMETRY_MAX_QUERY_BUDGET: u16 = 128;
 
+/// Minimal header container mirroring the canonical byte layout.
+///
+/// The header only carries the fields required to bind the remainder of the
+/// proof body. The field ordering matches the byte-level specification:
+///
+/// 1. [`version`](Self::version)
+/// 2. [`params_hash`](Self::params_hash)
+/// 3. [`public_digest`](Self::public_digest)
+/// 4. [`trace_commit`](Self::trace_commit)
+/// 5. [`composition`](Self::composition)
+/// 6. [`fri_handle`](Self::fri_handle)
+/// 7. [`openings`](Self::openings)
+/// 8. [`telemetry`](Self::telemetry)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofHeaderFrame {
+    /// Declared proof version.
+    #[serde(with = "proof_version_codec")]
+    pub version: u16,
+    /// Digest binding the configuration parameters.
+    pub params_hash: ParamDigest,
+    /// Digest binding the canonical public input payload.
+    pub public_digest: DigestBytes,
+    /// Declared trace commitment digest.
+    pub trace_commit: DigestBytes,
+    /// Optional composition commitment indicator and digest.
+    pub composition: CompositionCommitmentHeader,
+    /// Placeholder describing where the FRI payload is stored.
+    pub fri_handle: FriPlaceholderHandle,
+    /// Descriptor of the Merkle and OOD openings encoded in the body.
+    pub openings: OpeningsDescriptor,
+    /// Optional marker signalling the presence of telemetry bytes.
+    #[serde(default)]
+    pub telemetry: Option<TelemetryMarker>,
+}
+
+impl ProofHeaderFrame {
+    fn from_proof(proof: &Proof) -> Self {
+        Self {
+            version: proof.version,
+            params_hash: proof.param_digest.clone(),
+            public_digest: proof.public_digest.clone(),
+            trace_commit: proof.trace_commit.clone(),
+            composition: CompositionCommitmentHeader::from_optional(
+                proof.composition_commit.as_ref(),
+            ),
+            fri_handle: FriPlaceholderHandle::from(&proof.fri_proof),
+            openings: OpeningsDescriptor::from(&proof.openings),
+            telemetry: TelemetryMarker::optional(proof.has_telemetry),
+        }
+    }
+}
+
+/// Composition commitment advertisement stored in the header.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompositionCommitmentHeader {
+    /// Flag signalling the presence of a composition commitment digest.
+    #[serde(with = "bool_u8")]
+    pub has_composition: bool,
+    /// Optional digest mirroring the composition commitment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<DigestBytes>,
+}
+
+impl CompositionCommitmentHeader {
+    fn from_optional(digest: Option<&DigestBytes>) -> Self {
+        match digest {
+            Some(digest) => Self {
+                has_composition: true,
+                digest: Some(digest.clone()),
+            },
+            None => Self {
+                has_composition: false,
+                digest: None,
+            },
+        }
+    }
+}
+
+/// Placeholder pointing at the FRI proof payload inside the envelope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct FriPlaceholderHandle {
+    /// Number of layer roots advertised by the FRI proof.
+    pub layer_root_count: u16,
+    /// Number of query openings carried by the FRI proof.
+    pub query_count: u16,
+}
+
+impl FriPlaceholderHandle {
+    fn new(layer_root_count: usize, query_count: usize) -> Self {
+        Self {
+            layer_root_count: saturating_u16(layer_root_count),
+            query_count: saturating_u16(query_count),
+        }
+    }
+}
+
+impl From<&FriProof> for FriPlaceholderHandle {
+    fn from(proof: &FriProof) -> Self {
+        Self::new(proof.layer_roots.len(), proof.queries.len())
+    }
+}
+
+/// Descriptor summarising the openings payload declared in the header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct OpeningsDescriptor {
+    /// Number of trace queries revealed in the body.
+    pub trace_query_count: u32,
+    /// Number of composition queries revealed in the body.
+    pub composition_query_count: u32,
+    /// Number of out-of-domain openings provided by the prover.
+    pub ood_point_count: u32,
+}
+
+impl OpeningsDescriptor {
+    fn new(trace_queries: usize, composition_queries: usize, ood_points: usize) -> Self {
+        Self {
+            trace_query_count: saturating_u32(trace_queries),
+            composition_query_count: saturating_u32(composition_queries),
+            ood_point_count: saturating_u32(ood_points),
+        }
+    }
+}
+
+/// Marker emitted when telemetry bytes follow the openings section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct TelemetryMarker {
+    /// Reserved byte set to one when telemetry data follows.
+    #[serde(with = "bool_u8")]
+    pub present: bool,
+}
+
+impl TelemetryMarker {
+    fn optional(has_telemetry: bool) -> Option<Self> {
+        has_telemetry.then(|| Self { present: true })
+    }
+}
+
 /// Fully decoded proof container mirroring the authoritative specification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Proof {
@@ -81,6 +218,13 @@ pub struct Proof {
     pub has_telemetry: bool,
     /// Telemetry frame describing declared lengths and digests.
     pub telemetry: Telemetry,
+}
+
+impl Proof {
+    /// Returns the minimal header frame extracted from the proof.
+    pub fn header_frame(&self) -> ProofHeaderFrame {
+        ProofHeaderFrame::from_proof(self)
+    }
 }
 
 /// Merkle commitment bundle covering core, auxiliary and FRI layer roots.
@@ -142,6 +286,21 @@ pub struct Openings {
     pub out_of_domain: Vec<OutOfDomainOpening>,
 }
 
+impl From<&Openings> for OpeningsDescriptor {
+    fn from(openings: &Openings) -> Self {
+        let composition_queries = openings
+            .composition
+            .as_ref()
+            .map(|composition| composition.indices.len())
+            .unwrap_or_default();
+        Self::new(
+            openings.trace.indices.len(),
+            composition_queries,
+            openings.out_of_domain.len(),
+        )
+    }
+}
+
 /// Merkle opening data covering trace commitments.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceOpenings {
@@ -193,7 +352,7 @@ pub struct Telemetry {
     pub integrity_digest: DigestBytes,
 }
 
-/// Structured verification report pairing a decoded proof with the outcome.
+/// Structured verification report pairing a decoded proof with header metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyReport {
     /// Fully decoded proof container.
@@ -218,6 +377,13 @@ pub struct VerifyReport {
     pub total_bytes: u64,
     /// Optional verification error captured during decoding or checks.
     pub error: Option<VerifyError>,
+}
+
+impl VerifyReport {
+    /// Returns the minimal header frame extracted from the decoded proof.
+    pub fn header(&self) -> ProofHeaderFrame {
+        self.proof.header_frame()
+    }
 }
 
 /// Errors surfaced while decoding or validating a proof envelope.
@@ -418,6 +584,41 @@ mod proof_kind_codec {
             7 => ProofKind::VRF,
             _ => return Err("unknown proof kind"),
         })
+    }
+}
+
+mod bool_u8 {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &bool, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_u8(u8::from(*value))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<bool, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let byte = u8::deserialize(deserializer)?;
+        Ok(byte != 0)
+    }
+}
+
+fn saturating_u16(value: usize) -> u16 {
+    if value > u16::MAX as usize {
+        u16::MAX
+    } else {
+        value as u16
+    }
+}
+
+fn saturating_u32(value: usize) -> u32 {
+    if value > u32::MAX as usize {
+        u32::MAX
+    } else {
+        value as u32
     }
 }
 
