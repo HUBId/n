@@ -31,7 +31,7 @@ fn trace_rejects_unsorted_indices() {
 
     assert_debug_snapshot!(
         "trace_rejects_unsorted_indices",
-        &mutated.proof.openings().trace.indices
+        mutated.proof.openings().trace().indices()
     );
 }
 
@@ -58,7 +58,7 @@ fn trace_rejects_duplicate_indices() {
 
     assert_debug_snapshot!(
         "trace_rejects_duplicate_indices",
-        &mutated.proof.openings().trace.indices
+        mutated.proof.openings().trace().indices()
     );
 }
 
@@ -85,7 +85,7 @@ fn trace_rejects_mismatched_indices() {
 
     assert_debug_snapshot!(
         "trace_rejects_mismatched_indices",
-        &mutated.proof.openings().trace.indices
+        mutated.proof.openings().trace().indices()
     );
 }
 
@@ -115,13 +115,12 @@ fn composition_rejects_unsorted_indices() {
 
     assert_debug_snapshot!(
         "composition_rejects_unsorted_indices",
-        &mutated
+        mutated
             .proof
             .openings()
-            .composition
-            .as_ref()
+            .composition()
             .expect("composition openings available")
-            .indices
+            .indices()
     );
 }
 
@@ -151,13 +150,12 @@ fn composition_rejects_duplicate_indices() {
 
     assert_debug_snapshot!(
         "composition_rejects_duplicate_indices",
-        &mutated
+        mutated
             .proof
             .openings()
-            .composition
-            .as_ref()
+            .composition()
             .expect("composition openings available")
-            .indices
+            .indices()
     );
 }
 
@@ -187,12 +185,11 @@ fn composition_rejects_mismatched_indices() {
 
     assert_debug_snapshot!(
         "composition_rejects_mismatched_indices",
-        &mutated
+        mutated
             .proof
             .openings()
-            .composition
-            .as_ref()
+            .composition()
             .expect("composition openings available")
-            .indices
+            .indices()
     );
 }

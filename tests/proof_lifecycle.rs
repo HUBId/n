@@ -140,25 +140,28 @@ fn proof_lifecycle_accepts_valid_inputs() {
 
     let openings = decoded.openings();
     assert_eq!(
-        openings.trace.indices.len(),
-        openings.trace.leaves.len(),
+        openings.trace().indices().len(),
+        openings.trace().leaves().len(),
         "trace openings must align",
     );
     assert!(
-        openings.trace.leaves.iter().all(|leaf| !leaf.is_empty()),
+        openings
+            .trace()
+            .leaves()
+            .iter()
+            .all(|leaf| !leaf.is_empty()),
         "trace leaves must contain bytes",
     );
     let composition = openings
-        .composition
-        .as_ref()
+        .composition()
         .expect("composition openings present");
     assert_eq!(
-        composition.indices.len(),
-        composition.leaves.len(),
+        composition.indices().len(),
+        composition.leaves().len(),
         "composition openings must align",
     );
     assert!(
-        composition.leaves.iter().all(|leaf| !leaf.is_empty()),
+        composition.leaves().iter().all(|leaf| !leaf.is_empty()),
         "composition leaves must contain bytes",
     );
 
@@ -844,7 +847,7 @@ fn verification_rejects_tampered_trace_leaf() {
     .expect("proof generation succeeds");
 
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
-    proof.openings_mut().trace.leaves[0][0] ^= 1;
+    proof.openings_mut().trace_mut().leaves_mut()[0][0] ^= 1;
     let mutated = serialize_proof(&proof).expect("serialize proof");
     let mutated_bytes = ProofBytes::new(mutated);
 
@@ -885,11 +888,10 @@ fn verification_rejects_tampered_composition_leaf() {
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
     let composition = proof
         .openings_mut()
-        .composition
-        .as_mut()
+        .composition_mut()
         .expect("composition openings present");
-    composition.leaves[0][0] ^= 1;
-    let composition_index = composition.indices[0];
+    composition.leaves_mut()[0][0] ^= 1;
+    let composition_index = composition.indices()[0];
     let mutated = serialize_proof(&proof).expect("serialize proof");
     let mutated_bytes = ProofBytes::new(mutated);
 
@@ -1020,14 +1022,13 @@ fn verification_rejects_composition_leaf_misalignment_with_fri() {
     let composition_index = {
         let composition = proof
             .openings()
-            .composition
-            .as_ref()
+            .composition()
             .expect("composition openings present");
         assert!(
-            !composition.indices.is_empty(),
+            !composition.indices().is_empty(),
             "expected composition indices"
         );
-        composition.indices[0]
+        composition.indices()[0]
     };
     let target_index = composition_index as usize;
     let query_position = proof
@@ -1232,7 +1233,7 @@ fn verification_rejects_tampered_ood_values() {
     .expect("proof generation succeeds");
 
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
-    if let Some(first) = proof.openings_mut().out_of_domain.first_mut() {
+    if let Some(first) = proof.openings_mut().out_of_domain_mut().first_mut() {
         first.composition_value[0] ^= 1;
     }
     let mutated = serialize_proof(&proof).expect("serialize proof");
@@ -1271,10 +1272,10 @@ fn verification_rejects_trace_indices_not_sorted() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    if decoded.openings().trace.indices.len() < 2 {
+    if decoded.openings().trace().indices().len() < 2 {
         panic!("expected at least two trace indices");
     }
-    decoded.openings_mut().trace.indices.swap(0, 1);
+    decoded.openings_mut().trace_mut().indices_mut().swap(0, 1);
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
 
@@ -1310,10 +1311,10 @@ fn verification_rejects_trace_indices_duplicate() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    if decoded.openings().trace.indices.len() < 2 {
+    if decoded.openings().trace().indices().len() < 2 {
         panic!("expected at least two trace indices");
     }
-    let indices = &mut decoded.openings_mut().trace.indices;
+    let indices = decoded.openings_mut().trace_mut().indices_mut();
     indices[1] = indices[0];
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
@@ -1350,8 +1351,11 @@ fn verification_rejects_trace_indices_mismatch() {
     .expect("proof generation succeeds");
 
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
-    for index in decoded.openings_mut().trace.indices.iter_mut() {
-        *index = index.saturating_add(1);
+    {
+        let indices = decoded.openings_mut().trace_mut().indices_mut();
+        for index in indices.iter_mut() {
+            *index = index.saturating_add(1);
+        }
     }
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
@@ -1390,13 +1394,12 @@ fn verification_rejects_composition_indices_not_sorted() {
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
         .openings_mut()
-        .composition
-        .as_mut()
+        .composition_mut()
         .expect("composition openings present");
-    if composition.indices.len() < 2 {
+    if composition.indices().len() < 2 {
         panic!("expected at least two composition indices");
     }
-    composition.indices.swap(0, 1);
+    composition.indices_mut().swap(0, 1);
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
 
@@ -1434,13 +1437,13 @@ fn verification_rejects_composition_indices_duplicate() {
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
         .openings_mut()
-        .composition
-        .as_mut()
+        .composition_mut()
         .expect("composition openings present");
-    if composition.indices.len() < 2 {
+    if composition.indices().len() < 2 {
         panic!("expected at least two composition indices");
     }
-    composition.indices[1] = composition.indices[0];
+    let indices = composition.indices_mut();
+    indices[1] = indices[0];
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");
     let mutated = ProofBytes::new(mutated_bytes);
 
@@ -1478,10 +1481,9 @@ fn verification_rejects_composition_indices_mismatch() {
     let mut decoded = rpp_stark::Proof::from_bytes(proof.as_slice()).expect("decode proof");
     let composition = decoded
         .openings_mut()
-        .composition
-        .as_mut()
+        .composition_mut()
         .expect("composition openings present");
-    for index in &mut composition.indices {
+    for index in composition.indices_mut().iter_mut() {
         *index = index.saturating_add(1);
     }
     let mutated_bytes = serialize_proof(&decoded).expect("serialize mutated proof");

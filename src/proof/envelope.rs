@@ -159,7 +159,7 @@ impl ProofBuilder {
         let fri_handle = FriHandle::new(fri_proof);
         let telemetry_option = TelemetryOption::new(true, telemetry);
 
-        if openings_descriptor.openings().out_of_domain.is_empty() {
+        if openings_descriptor.openings().out_of_domain().is_empty() {
             return Err(VerifyError::EmptyOpenings);
         }
 
@@ -170,7 +170,7 @@ impl ProofBuilder {
 
         let public_digest = compute_public_digest(&public_inputs);
 
-        if openings_descriptor.openings().composition.is_some()
+        if openings_descriptor.openings().composition().is_some()
             && openings_descriptor.merkle().aux_root == [0u8; 32]
         {
             return Err(VerifyError::CompositionInconsistent {
@@ -178,7 +178,7 @@ impl ProofBuilder {
             });
         }
 
-        if openings_descriptor.openings().composition.is_none()
+        if openings_descriptor.openings().composition().is_none()
             && openings_descriptor.merkle().aux_root != [0u8; 32]
         {
             return Err(VerifyError::CompositionInconsistent {
@@ -186,7 +186,7 @@ impl ProofBuilder {
             });
         }
 
-        let composition_commit = if openings_descriptor.openings().composition.is_some() {
+        let composition_commit = if openings_descriptor.openings().composition().is_some() {
             Some(DigestBytes {
                 bytes: openings_descriptor.merkle().aux_root,
             })

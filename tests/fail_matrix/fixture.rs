@@ -306,7 +306,7 @@ pub fn mismatch_trace_root(bytes: &ProofBytes) -> ProofBytes {
 
 /// Flips the leading byte of the first trace core OOD evaluation (if present).
 pub fn flip_ood_trace_core_value(proof: &Proof) -> Option<MutatedProof> {
-    let Some(opening) = proof.openings().out_of_domain.first() else {
+    let Some(opening) = proof.openings().out_of_domain().first() else {
         return None;
     };
     let Some(value) = opening.core_values.first() else {
@@ -320,7 +320,7 @@ pub fn flip_ood_trace_core_value(proof: &Proof) -> Option<MutatedProof> {
         if let Some(opening) = parts
             .openings_mut()
             .openings_mut()
-            .out_of_domain
+            .out_of_domain_mut()
             .first_mut()
         {
             if let Some(value) = opening.core_values.first_mut() {
@@ -334,7 +334,7 @@ pub fn flip_ood_trace_core_value(proof: &Proof) -> Option<MutatedProof> {
 
 /// Flips the leading byte of the first composition OOD evaluation (if present).
 pub fn flip_ood_composition_value(proof: &Proof) -> Option<MutatedProof> {
-    let Some(opening) = proof.openings().out_of_domain.first() else {
+    let Some(opening) = proof.openings().out_of_domain().first() else {
         return None;
     };
     if opening.composition_value.is_empty() {
@@ -345,7 +345,7 @@ pub fn flip_ood_composition_value(proof: &Proof) -> Option<MutatedProof> {
         if let Some(opening) = parts
             .openings_mut()
             .openings_mut()
-            .out_of_domain
+            .out_of_domain_mut()
             .first_mut()
         {
             if let Some(byte) = opening.composition_value.first_mut() {
@@ -451,7 +451,8 @@ where
     F: FnOnce(&mut Vec<u32>),
 {
     mutate_proof(proof, |parts| {
-        mutator(&mut parts.openings_mut().openings_mut().trace.indices);
+        let trace = parts.openings_mut().openings_mut().trace_mut();
+        mutator(trace.indices_mut());
     })
 }
 
@@ -459,10 +460,10 @@ fn mutate_composition_indices_with<F>(proof: &Proof, mutator: F) -> Option<Mutat
 where
     F: FnOnce(&mut Vec<u32>),
 {
-    if proof.openings().composition.is_some() {
+    if proof.openings().composition().is_some() {
         Some(mutate_proof(proof, |parts| {
-            if let Some(composition) = parts.openings_mut().openings_mut().composition.as_mut() {
-                mutator(&mut composition.indices);
+            if let Some(composition) = parts.openings_mut().openings_mut().composition_mut() {
+                mutator(composition.indices_mut());
             }
         }))
     } else {
@@ -472,10 +473,10 @@ where
 
 /// Flips the first byte of the leading composition opening leaf (if present).
 pub fn flip_composition_leaf_byte(proof: &Proof) -> Option<MutatedProof> {
-    let Some(composition) = proof.openings().composition.as_ref() else {
+    let Some(composition) = proof.openings().composition() else {
         return None;
     };
-    let Some(leaf) = composition.leaves.first() else {
+    let Some(leaf) = composition.leaves().first() else {
         return None;
     };
     if leaf.is_empty() {
@@ -483,8 +484,8 @@ pub fn flip_composition_leaf_byte(proof: &Proof) -> Option<MutatedProof> {
     }
 
     Some(mutate_proof(proof, |parts| {
-        if let Some(composition) = parts.openings_mut().openings_mut().composition.as_mut() {
-            if let Some(leaf) = composition.leaves.first_mut() {
+        if let Some(composition) = parts.openings_mut().openings_mut().composition_mut() {
+            if let Some(leaf) = composition.leaves_mut().first_mut() {
                 if let Some(byte) = leaf.first_mut() {
                     *byte ^= 0x01;
                 }
@@ -552,8 +553,14 @@ pub fn mismatch_composition_indices(proof: &Proof) -> Option<MutatedProof> {
 /// Corrupts the leading node within the first trace Merkle authentication path.
 pub fn corrupt_merkle_path(proof: &Proof) -> MutatedProof {
     mutate_proof(proof, |parts| {
-        if let Some(path) = parts.openings_mut().openings_mut().trace.paths.first_mut() {
-            if let Some(node) = path.nodes.first_mut() {
+        if let Some(path) = parts
+            .openings_mut()
+            .openings_mut()
+            .trace_mut()
+            .paths_mut()
+            .first_mut()
+        {
+            if let Some(node) = path.nodes_mut().first_mut() {
                 node.index = u8::MAX;
                 node.sibling[0] ^= 0xFF;
             }
@@ -564,8 +571,13 @@ pub fn corrupt_merkle_path(proof: &Proof) -> MutatedProof {
 /// Shortens the trace authentication paths, creating a vector length mismatch.
 pub fn truncate_trace_paths(proof: &Proof) -> MutatedProof {
     mutate_proof(proof, |parts| {
-        if !parts.openings().openings().trace.paths.is_empty() {
-            parts.openings_mut().openings_mut().trace.paths.pop();
+        if !parts.openings().openings().trace().paths().is_empty() {
+            parts
+                .openings_mut()
+                .openings_mut()
+                .trace_mut()
+                .paths_mut()
+                .pop();
         }
     })
 }

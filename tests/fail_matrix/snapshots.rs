@@ -31,19 +31,19 @@ fn freeze_fixture_artifacts() {
     let config = fixture.config();
 
     let openings = proof.openings();
-    let trace_indices = openings.trace.indices.clone();
-    let composition_indices = openings.composition.as_ref().map(|c| c.indices.clone());
+    let trace_indices = openings.trace().indices().to_vec();
+    let composition_indices = openings.composition().map(|c| c.indices().to_vec());
 
     let trace_path_lengths = openings
-        .trace
-        .paths
+        .trace()
+        .paths()
         .iter()
-        .map(|path| path.nodes.len())
+        .map(|path| path.nodes().len())
         .collect::<Vec<_>>();
-    let composition_path_lengths = openings.composition.as_ref().map(|c| {
-        c.paths
+    let composition_path_lengths = openings.composition().map(|c| {
+        c.paths()
             .iter()
-            .map(|path| path.nodes.len())
+            .map(|path| path.nodes().len())
             .collect::<Vec<_>>()
     });
 
