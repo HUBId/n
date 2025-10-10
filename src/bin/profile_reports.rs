@@ -218,7 +218,7 @@ fn build_sample_proof(
     let header_bytes = proof
         .serialize_header(&payload)
         .expect("sample proof header serialization");
-    let telemetry = proof.telemetry_mut();
+    let telemetry = proof.telemetry_mut().frame_mut();
     telemetry.set_body_length((payload.len() + 32) as u32);
     telemetry.set_header_length(header_bytes.len() as u32);
     let integrity = compute_integrity_digest(&header_bytes, &payload);

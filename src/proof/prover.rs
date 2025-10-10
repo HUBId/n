@@ -301,7 +301,7 @@ pub fn build_envelope(
     let header_bytes = proof
         .serialize_header(&body_payload)
         .map_err(ProverError::from)?;
-    let telemetry = proof.telemetry_mut();
+    let telemetry = proof.telemetry_mut().frame_mut();
     telemetry.set_body_length((body_payload.len() + 32) as u32);
     telemetry.set_header_length(header_bytes.len() as u32);
 
