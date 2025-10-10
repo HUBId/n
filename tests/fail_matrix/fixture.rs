@@ -159,9 +159,9 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     if proof.has_telemetry() {
         let mut canonical = proof.clone();
         let telemetry = canonical.telemetry_mut();
-        telemetry.header_length = 0;
-        telemetry.body_length = 0;
-        telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+        telemetry.set_header_length(0);
+        telemetry.set_body_length(0);
+        telemetry.set_integrity_digest(DigestBytes { bytes: [0u8; 32] });
         let payload = canonical
             .serialize_payload()
             .expect("serialize canonical payload");
@@ -170,9 +170,9 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
             .expect("serialize canonical header");
         let integrity = compute_integrity_digest(&header, &payload);
         let telemetry = proof.telemetry_mut();
-        telemetry.header_length = header.len() as u32;
-        telemetry.body_length = (payload.len() + 32) as u32;
-        telemetry.integrity_digest = DigestBytes { bytes: integrity };
+        telemetry.set_header_length(header.len() as u32);
+        telemetry.set_body_length((payload.len() + 32) as u32);
+        telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
     }
 
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
@@ -198,33 +198,35 @@ where
 /// Declares an incorrect telemetry header length to trigger the mismatch guard.
 pub fn mismatch_telemetry_header_length(proof: &Proof) -> Option<ProofBytes> {
     mutate_telemetry_with(proof, |telemetry| {
-        let declared = telemetry.header_length;
-        let bumped = telemetry.header_length.saturating_add(4);
-        telemetry.header_length = if bumped == declared {
+        let declared = telemetry.header_length();
+        let bumped = telemetry.header_length().saturating_add(4);
+        let updated = if bumped == declared {
             declared.saturating_sub(1)
         } else {
             bumped
         };
+        telemetry.set_header_length(updated);
     })
 }
 
 /// Declares an incorrect telemetry body length to trigger the mismatch guard.
 pub fn mismatch_telemetry_body_length(proof: &Proof) -> Option<ProofBytes> {
     mutate_telemetry_with(proof, |telemetry| {
-        let declared = telemetry.body_length;
-        let bumped = telemetry.body_length.saturating_add(16);
-        telemetry.body_length = if bumped == declared {
+        let declared = telemetry.body_length();
+        let bumped = telemetry.body_length().saturating_add(16);
+        let updated = if bumped == declared {
             declared.saturating_sub(1)
         } else {
             bumped
         };
+        telemetry.set_body_length(updated);
     })
 }
 
 /// Corrupts the telemetry integrity digest to trigger the mismatch guard.
 pub fn mismatch_telemetry_integrity_digest(proof: &Proof) -> Option<ProofBytes> {
     mutate_telemetry_with(proof, |telemetry| {
-        telemetry.integrity_digest.bytes[0] ^= 0x01;
+        telemetry.integrity_digest_mut().bytes[0] ^= 0x01;
     })
 }
 

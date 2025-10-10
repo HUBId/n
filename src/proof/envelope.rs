@@ -217,10 +217,10 @@ impl ProofBuilder {
         let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
 
         let telemetry = proof.telemetry_mut();
-        telemetry.header_length = header_bytes.len() as u32;
-        telemetry.body_length = (payload.len() + 32) as u32;
+        telemetry.set_header_length(header_bytes.len() as u32);
+        telemetry.set_body_length((payload.len() + 32) as u32);
         let integrity = compute_integrity_digest(&header_bytes, &payload);
-        telemetry.integrity_digest = DigestBytes { bytes: integrity };
+        telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
 
         let bytes_total = header_bytes.len() + payload.len() + 32;
         let limit_bytes = (self.params.max_size_kb as usize) * 1024;
@@ -491,7 +491,7 @@ mod tests {
 
         assert!(proof.has_telemetry());
         assert!(proof.composition_commit().is_some());
-        assert!(proof.telemetry().header_length > 0);
+        assert!(proof.telemetry().header_length() > 0);
         assert_ne!(proof.trace_commit().bytes, [0u8; 32]);
 
         proof

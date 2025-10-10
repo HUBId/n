@@ -366,10 +366,10 @@ fn build_envelope(
         .serialize_header(&payload)
         .expect("proof header serialization");
     let telemetry = proof.telemetry_mut();
-    telemetry.body_length = (payload.len() + 32) as u32;
-    telemetry.header_length = header_bytes.len() as u32;
+    telemetry.set_body_length((payload.len() + 32) as u32);
+    telemetry.set_header_length(header_bytes.len() as u32);
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
 
     ProofBytes::new(proof.to_bytes().expect("serialize proof"))
 }

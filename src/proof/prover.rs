@@ -302,13 +302,13 @@ pub fn build_envelope(
         .serialize_header(&body_payload)
         .map_err(ProverError::from)?;
     let telemetry = proof.telemetry_mut();
-    telemetry.body_length = (body_payload.len() + 32) as u32;
-    telemetry.header_length = header_bytes.len() as u32;
+    telemetry.set_body_length((body_payload.len() + 32) as u32);
+    telemetry.set_header_length(header_bytes.len() as u32);
 
     let integrity_digest = compute_integrity_digest(&header_bytes, &body_payload);
-    telemetry.integrity_digest = DigestBytes {
+    telemetry.set_integrity_digest(DigestBytes {
         bytes: integrity_digest,
-    };
+    });
 
     let total_size = header_bytes.len() + body_payload.len() + 32;
     if total_size > context.limits.max_proof_size_bytes as usize {

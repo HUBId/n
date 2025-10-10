@@ -33,7 +33,7 @@ use crate::proof::types::{
     PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
     PROOF_VERSION,
 };
-use crate::utils::serialization::ProofBytes;
+use crate::utils::serialization::{DigestBytes, ProofBytes};
 use std::collections::BTreeMap;
 use std::convert::TryInto;
 
@@ -469,7 +469,7 @@ fn precheck_body(
             None => {
                 let actual = payload_len.min(u32::MAX as usize) as u32;
                 return Err(VerifyError::BodyLengthMismatch {
-                    declared: telemetry.body_length,
+                    declared: telemetry.body_length(),
                     actual,
                 });
             }
@@ -480,28 +480,28 @@ fn precheck_body(
             Err(_) => {
                 let actual = payload_len.min(u32::MAX as usize) as u32;
                 return Err(VerifyError::BodyLengthMismatch {
-                    declared: telemetry.body_length,
+                    declared: telemetry.body_length(),
                     actual,
                 });
             }
         };
 
-        if telemetry.body_length != expected_body_length {
+        if telemetry.body_length() != expected_body_length {
             return Err(VerifyError::BodyLengthMismatch {
-                declared: telemetry.body_length,
+                declared: telemetry.body_length(),
                 actual: expected_body_length,
             });
         }
 
-        if telemetry.fri_parameters.fold != 2
-            || telemetry.fri_parameters.query_budget as usize != security_level.query_budget()
+        if telemetry.fri_parameters().fold != 2
+            || telemetry.fri_parameters().query_budget as usize != security_level.query_budget()
         {
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
 
-        if telemetry.fri_parameters.cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
-            || telemetry.fri_parameters.cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
-            || telemetry.fri_parameters.query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
+        if telemetry.fri_parameters().cap_degree > PROOF_TELEMETRY_MAX_CAP_DEGREE
+            || telemetry.fri_parameters().cap_size > PROOF_TELEMETRY_MAX_CAP_SIZE
+            || telemetry.fri_parameters().query_budget > PROOF_TELEMETRY_MAX_QUERY_BUDGET
         {
             return Err(VerifyError::InvalidFriSection("telemetry".to_string()));
         }
@@ -511,30 +511,30 @@ fn precheck_body(
             Err(_) => {
                 let actual = header_bytes.len().min(u32::MAX as usize) as u32;
                 return Err(VerifyError::HeaderLengthMismatch {
-                    declared: telemetry.header_length,
+                    declared: telemetry.header_length(),
                     actual,
                 });
             }
         };
 
-        if telemetry.header_length != expected_header_length {
+        if telemetry.header_length() != expected_header_length {
             return Err(VerifyError::HeaderLengthMismatch {
-                declared: telemetry.header_length,
+                declared: telemetry.header_length(),
                 actual: expected_header_length,
             });
         }
 
         let mut canonical = proof.clone();
         let canonical_telemetry = canonical.telemetry_mut();
-        canonical_telemetry.header_length = 0;
-        canonical_telemetry.body_length = 0;
-        canonical_telemetry.integrity_digest.bytes = [0u8; 32];
+        canonical_telemetry.set_header_length(0);
+        canonical_telemetry.set_body_length(0);
+        canonical_telemetry.set_integrity_digest(DigestBytes::default());
         let canonical_payload = canonical.serialize_payload().map_err(VerifyError::from)?;
         let canonical_header = canonical
             .serialize_header(&canonical_payload)
             .map_err(VerifyError::from)?;
         let integrity_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
-        if proof.telemetry().integrity_digest.bytes != integrity_digest {
+        if proof.telemetry().integrity_digest().bytes != integrity_digest {
             return Err(VerifyError::IntegrityDigestMismatch);
         }
     }

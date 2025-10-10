@@ -187,9 +187,9 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     if proof.has_telemetry() {
         let mut canonical = proof.clone();
         let telemetry = canonical.telemetry_mut();
-        telemetry.header_length = 0;
-        telemetry.body_length = 0;
-        telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+        telemetry.set_header_length(0);
+        telemetry.set_body_length(0);
+        telemetry.set_integrity_digest(DigestBytes { bytes: [0u8; 32] });
         let payload = canonical
             .serialize_payload()
             .expect("serialize canonical payload");
@@ -198,9 +198,9 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
             .expect("serialize canonical header");
         let integrity = compute_integrity_digest(&header, &payload);
         let telemetry = proof.telemetry_mut();
-        telemetry.header_length = header.len() as u32;
-        telemetry.body_length = (payload.len() + 32) as u32;
-        telemetry.integrity_digest = DigestBytes { bytes: integrity };
+        telemetry.set_header_length(header.len() as u32);
+        telemetry.set_body_length((payload.len() + 32) as u32);
+        telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
     }
 
     ProofBytes::new(serialize_proof(proof).expect("serialize proof"))
@@ -255,28 +255,28 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize header");
     let expected_body_length = (payload.len() + 32) as u32;
     assert_eq!(
-        report.proof.telemetry().body_length,
+        report.proof.telemetry().body_length(),
         expected_body_length,
         "telemetry body length must match payload"
     );
     let expected_header_length = header.len() as u32;
     assert_eq!(
-        report.proof.telemetry().header_length,
+        report.proof.telemetry().header_length(),
         expected_header_length,
         "telemetry header length must match header bytes"
     );
     let telemetry = report.proof.telemetry();
     assert_eq!(
-        u64::from(telemetry.header_length) + u64::from(telemetry.body_length),
+        u64::from(telemetry.header_length()) + u64::from(telemetry.body_length()),
         report.total_bytes + 32,
         "telemetry lengths must sum to total bytes plus the integrity digest"
     );
 
     let mut canonical = report.proof.clone();
     let canonical_telemetry = canonical.telemetry_mut();
-    canonical_telemetry.header_length = 0;
-    canonical_telemetry.body_length = 0;
-    canonical_telemetry.integrity_digest = DigestBytes { bytes: [0u8; 32] };
+    canonical_telemetry.set_header_length(0);
+    canonical_telemetry.set_body_length(0);
+    canonical_telemetry.set_integrity_digest(DigestBytes { bytes: [0u8; 32] });
     let canonical_payload = canonical
         .serialize_payload()
         .expect("serialize canonical payload");
@@ -285,7 +285,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize canonical header");
     let expected_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
     assert_eq!(
-        report.proof.telemetry().integrity_digest.bytes,
+        report.proof.telemetry().integrity_digest().bytes,
         expected_digest,
         "telemetry integrity digest must remain stable"
     );
@@ -312,7 +312,8 @@ fn verification_rejects_tampered_telemetry_fields() {
     let mut tampered_header = decode_proof(&proof_bytes);
     {
         let telemetry = tampered_header.telemetry_mut();
-        telemetry.header_length = telemetry.header_length.saturating_add(4);
+        let updated = telemetry.header_length().saturating_add(4);
+        telemetry.set_header_length(updated);
     }
     let tampered_header_bytes = ProofBytes::new(
         serialize_proof(&tampered_header).expect("serialize tampered header proof"),
@@ -329,7 +330,7 @@ fn verification_rejects_tampered_telemetry_fields() {
         Some(VerifyError::HeaderLengthMismatch { declared, actual }) => {
             assert_eq!(
                 declared,
-                tampered_header.telemetry().header_length,
+                tampered_header.telemetry().header_length(),
                 "report must echo tampered header length"
             );
             assert_ne!(declared, actual, "mismatch must surface differing lengths");
@@ -338,7 +339,7 @@ fn verification_rejects_tampered_telemetry_fields() {
     }
 
     let mut tampered_digest = decode_proof(&proof_bytes);
-    tampered_digest.telemetry_mut().integrity_digest.bytes[0] ^= 0x1;
+    tampered_digest.telemetry_mut().integrity_digest_mut().bytes[0] ^= 0x1;
     let tampered_digest_bytes = ProofBytes::new(
         serialize_proof(&tampered_digest).expect("serialize tampered digest proof"),
     );
@@ -616,11 +617,7 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
 
 fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
     let mut mutated = proof.clone();
-    if let Some(root) = mutated
-        .merkle_mut()
-        .fri_layer_roots
-        .first_mut()
-    {
+    if let Some(root) = mutated.merkle_mut().fri_layer_roots.first_mut() {
         if let Some(byte) = root.first_mut() {
             *byte ^= 0x1;
         } else {

@@ -481,6 +481,53 @@ pub struct Telemetry {
     pub integrity_digest: DigestBytes,
 }
 
+impl Telemetry {
+    /// Returns the declared header length for the proof payload.
+    pub fn header_length(&self) -> u32 {
+        self.header_length
+    }
+
+    /// Updates the declared header length for the proof payload.
+    pub fn set_header_length(&mut self, value: u32) {
+        self.header_length = value;
+    }
+
+    /// Returns the declared body length for the proof payload.
+    pub fn body_length(&self) -> u32 {
+        self.body_length
+    }
+
+    /// Updates the declared body length for the proof payload.
+    pub fn set_body_length(&mut self, value: u32) {
+        self.body_length = value;
+    }
+
+    /// Returns the mirrored FRI parameters stored in the telemetry frame.
+    pub fn fri_parameters(&self) -> &FriParametersMirror {
+        &self.fri_parameters
+    }
+
+    /// Returns a mutable reference to the mirrored FRI parameters.
+    pub fn fri_parameters_mut(&mut self) -> &mut FriParametersMirror {
+        &mut self.fri_parameters
+    }
+
+    /// Returns the integrity digest covering the header and body payload.
+    pub fn integrity_digest(&self) -> &DigestBytes {
+        &self.integrity_digest
+    }
+
+    /// Returns a mutable reference to the integrity digest.
+    pub fn integrity_digest_mut(&mut self) -> &mut DigestBytes {
+        &mut self.integrity_digest
+    }
+
+    /// Replaces the integrity digest covering the proof payload.
+    pub fn set_integrity_digest(&mut self, digest: DigestBytes) {
+        self.integrity_digest = digest;
+    }
+}
+
 /// Wrapper combining the telemetry presence flag with the telemetry payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TelemetryOption {

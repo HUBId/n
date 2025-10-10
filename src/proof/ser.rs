@@ -589,13 +589,13 @@ fn deserialize_openings(bytes: &[u8]) -> Result<Openings, SerError> {
 
 fn serialize_telemetry_frame(telemetry: &Telemetry) -> Result<Vec<u8>, SerError> {
     let mut out = Vec::new();
-    write_u32(&mut out, telemetry.header_length);
-    write_u32(&mut out, telemetry.body_length);
-    write_u8(&mut out, telemetry.fri_parameters.fold);
-    write_u16(&mut out, telemetry.fri_parameters.cap_degree);
-    write_u32(&mut out, telemetry.fri_parameters.cap_size);
-    write_u16(&mut out, telemetry.fri_parameters.query_budget);
-    write_digest(&mut out, &telemetry.integrity_digest.bytes);
+    write_u32(&mut out, telemetry.header_length());
+    write_u32(&mut out, telemetry.body_length());
+    write_u8(&mut out, telemetry.fri_parameters().fold);
+    write_u16(&mut out, telemetry.fri_parameters().cap_degree);
+    write_u32(&mut out, telemetry.fri_parameters().cap_size);
+    write_u16(&mut out, telemetry.fri_parameters().query_budget);
+    write_digest(&mut out, &telemetry.integrity_digest().bytes);
     Ok(out)
 }
 
@@ -910,9 +910,9 @@ mod tests {
             .expect("proof header serialization");
         let integrity = compute_integrity_digest(&header_bytes, &payload);
         let telemetry = proof.telemetry_mut();
-        telemetry.header_length = header_bytes.len() as u32;
-        telemetry.body_length = (payload.len() + 32) as u32;
-        telemetry.integrity_digest = DigestBytes { bytes: integrity };
+        telemetry.set_header_length(header_bytes.len() as u32);
+        telemetry.set_body_length((payload.len() + 32) as u32);
+        telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
 
         proof
     }

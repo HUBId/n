@@ -219,10 +219,10 @@ fn build_sample_proof(
         .serialize_header(&payload)
         .expect("sample proof header serialization");
     let telemetry = proof.telemetry_mut();
-    telemetry.body_length = (payload.len() + 32) as u32;
-    telemetry.header_length = header_bytes.len() as u32;
+    telemetry.set_body_length((payload.len() + 32) as u32);
+    telemetry.set_header_length(header_bytes.len() as u32);
     let integrity = compute_integrity_digest(&header_bytes, &payload);
-    telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
 
     proof
 }
