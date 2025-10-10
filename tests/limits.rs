@@ -407,7 +407,7 @@ fn build_ood_openings(
         poseidon_param_id: context.profile.poseidon_param_id.clone(),
         air_spec_id,
         proof_kind,
-        param_digest: context.param_digest.clone(),
+        params_hash: context.param_digest.clone(),
     })
     .expect("transcript");
 

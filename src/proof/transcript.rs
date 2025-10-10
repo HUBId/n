@@ -89,8 +89,8 @@ pub struct TranscriptHeader {
     pub air_spec_id: AirSpecId,
     /// Proof kind currently being processed.
     pub proof_kind: ProofKind,
-    /// Parameter digest binding global configuration.
-    pub param_digest: ParamDigest,
+    /// Parameter hash binding global configuration.
+    pub params_hash: ParamDigest,
 }
 
 /// Block context fields absorbed into the transcript.
@@ -269,7 +269,7 @@ impl Transcript {
         transcript.absorb_section_raw(TRANSCRIPT_DOMAIN_TAG);
         let proof_kind_code = transcript.proof_kind_code();
         transcript.absorb_section_raw(&proof_kind_code);
-        transcript.absorb_section_raw(&header.param_digest.0.bytes);
+        transcript.absorb_section_raw(&header.params_hash.0.bytes);
 
         Ok(transcript)
     }
@@ -784,7 +784,7 @@ mod tests {
             poseidon_param_id: PoseidonParamId(digest(2)),
             air_spec_id: AirSpecId(digest(3)),
             proof_kind: kind,
-            param_digest: ParamDigest(digest(param_byte)),
+            params_hash: ParamDigest(digest(param_byte)),
         }
     }
 

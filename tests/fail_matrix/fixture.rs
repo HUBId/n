@@ -240,7 +240,7 @@ pub fn flip_header_version(proof: &Proof) -> ProofBytes {
     reencode_proof(&mut mutated)
 }
 
-/// Corrupts a single byte inside the parameter digest.
+/// Corrupts a single byte inside the parameter hash.
 pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
     let mut parts = ProofParts::from_proof(proof);
     parts.params_hash_mut().0.bytes[0] ^= 0x01;
@@ -256,7 +256,7 @@ pub fn flip_public_digest_byte(bytes: &ProofBytes) -> ProofBytes {
     let mut cursor = 0usize;
     cursor += 2; // version
     cursor += 1; // kind
-    cursor += 32; // param digest
+    cursor += 32; // params hash
     cursor += 32; // air spec identifier
 
     let public_len_start = cursor;
@@ -283,7 +283,7 @@ pub fn mismatch_trace_root(bytes: &ProofBytes) -> ProofBytes {
     let mut cursor = 0usize;
     cursor += 2; // version
     cursor += 1; // kind
-    cursor += 32; // param digest
+    cursor += 32; // params hash
     cursor += 32; // air spec identifier
 
     let public_len_start = cursor;

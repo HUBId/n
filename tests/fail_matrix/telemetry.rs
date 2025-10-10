@@ -19,7 +19,7 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     let mut cursor = 0usize;
     cursor += 2; // version
     cursor += 1; // kind
-    cursor += 32; // param digest
+    cursor += 32; // params hash
     cursor += 32; // air spec id
 
     let public_len = u32::from_le_bytes(

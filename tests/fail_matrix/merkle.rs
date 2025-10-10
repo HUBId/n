@@ -23,7 +23,7 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     let mut cursor = 0usize;
     cursor += 2; // version
     cursor += 1; // kind
-    cursor += 32; // param digest
+    cursor += 32; // params hash
     cursor += 32; // air spec identifier
 
     let public_len_start = cursor;
