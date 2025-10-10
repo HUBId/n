@@ -221,7 +221,14 @@ fn build_twiddle_tables(
 
 fn generator_table_for(log2_size: usize) -> Radix2GeneratorTable<FieldElement> {
     let cache = generator_cache();
-    let mut guard = cache.lock().expect("generator cache mutex poisoned");
+    let mut guard = match cache.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            guard.remove(&log2_size);
+            guard
+        }
+    };
     let entry = guard.entry(log2_size).or_insert_with(|| {
         let primitive_root = derive_primitive_root(log2_size);
         let (forward, inverse) = build_twiddle_tables(primitive_root, log2_size);
@@ -499,6 +506,24 @@ mod tests {
         }
 
         values
+    }
+
+    #[test]
+    fn generator_cache_recovers_from_poisoning() {
+        let baseline = super::generator_table_for(3);
+        let baseline_forward = baseline.forward;
+        let baseline_inverse = baseline.inverse;
+
+        let cache = super::generator_cache();
+        let poison_result = std::panic::catch_unwind(|| {
+            let _guard = cache.lock().unwrap();
+            panic!("intentional cache poison");
+        });
+        assert!(poison_result.is_err(), "poison simulation must panic");
+
+        let recovered = super::generator_table_for(3);
+        assert_eq!(recovered.forward, baseline_forward);
+        assert_eq!(recovered.inverse, baseline_inverse);
     }
 
     #[test]

@@ -536,7 +536,7 @@ impl fmt::Display for AirError {
     }
 }
 
-impl core::error::Error for AirError {}
+impl std::error::Error for AirError {}
 
 #[cfg(test)]
 mod tests {
