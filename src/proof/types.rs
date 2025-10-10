@@ -355,6 +355,8 @@ pub struct Telemetry {
 /// Structured verification report pairing a decoded proof with header metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyReport {
+    /// Minimal header frame extracted from the decoded proof.
+    pub header: ProofHeaderFrame,
     /// Fully decoded proof container.
     pub proof: Proof,
     /// Flag indicating whether parameter hashing checks succeeded.
@@ -382,7 +384,7 @@ pub struct VerifyReport {
 impl VerifyReport {
     /// Returns the minimal header frame extracted from the decoded proof.
     pub fn header(&self) -> ProofHeaderFrame {
-        self.proof.header_frame()
+        self.header.clone()
     }
 }
 
