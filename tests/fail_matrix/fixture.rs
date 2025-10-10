@@ -97,7 +97,7 @@ impl FailMatrixFixture {
 
     /// Returns the decoded proof container.
     pub fn proof(&self) -> Proof {
-        self.proof.clone()
+        self.proof.clone_using_parts()
     }
 
     /// Returns the configured proof system configuration.
@@ -157,7 +157,7 @@ fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
 
 fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     if proof.has_telemetry() {
-        let mut canonical = proof.clone();
+        let mut canonical = proof.clone_using_parts();
         let telemetry = canonical.telemetry_mut();
         telemetry.set_header_length(0);
         telemetry.set_body_length(0);
@@ -186,7 +186,7 @@ where
         return None;
     }
 
-    let mut mutated = proof.clone();
+    let mut mutated = proof.clone_using_parts();
     let _ = reencode_proof(&mut mutated);
     mutator(mutated.telemetry_mut());
 
@@ -232,14 +232,14 @@ pub fn mismatch_telemetry_integrity_digest(proof: &Proof) -> Option<ProofBytes> 
 
 /// Flips the proof header version field.
 pub fn flip_header_version(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone();
+    let mut mutated = proof.clone_using_parts();
     *mutated.version_mut() ^= 1;
     reencode_proof(&mut mutated)
 }
 
 /// Corrupts a single byte inside the parameter digest.
 pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone();
+    let mut mutated = proof.clone_using_parts();
     mutated.param_digest_mut().0.bytes[0] ^= 0x01;
     reencode_proof(&mut mutated)
 }
@@ -352,7 +352,7 @@ fn mutate_proof<F>(proof: &Proof, mutator: F) -> MutatedProof
 where
     F: FnOnce(&mut Proof),
 {
-    let mut mutated = proof.clone();
+    let mut mutated = proof.clone_using_parts();
     mutator(&mut mutated);
     let bytes = reencode_proof(&mut mutated);
     MutatedProof {
