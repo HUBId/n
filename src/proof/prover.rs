@@ -310,7 +310,7 @@ pub fn build_envelope(
             let body_length = body_payload
                 .len()
                 .checked_add(DIGEST_SIZE)
-                .ok_or_else(|| ProverError::Serialization(SerKind::Telemetry))?;
+                .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
             let body_length = u32::try_from(body_length)
                 .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
             let header_length = u32::try_from(header_bytes.len())
@@ -343,7 +343,7 @@ pub fn build_envelope(
         .len()
         .checked_add(body_payload.len())
         .and_then(|value| value.checked_add(DIGEST_SIZE))
-        .ok_or_else(|| ProverError::Serialization(SerKind::Proof))?;
+        .ok_or(ProverError::Serialization(SerKind::Proof))?;
     if total_size > context.limits.max_proof_size_bytes as usize {
         return Err(ProverError::ProofTooLarge {
             actual: total_size,
