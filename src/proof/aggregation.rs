@@ -277,8 +277,8 @@ mod tests {
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     };
     use crate::proof::types::{
-        FriParametersMirror, MerkleProofBundle, Openings, Proof, Telemetry, TraceOpenings,
-        PROOF_VERSION,
+        CompositionBinding, FriHandle, FriParametersMirror, MerkleProofBundle, Openings,
+        OpeningsDescriptor, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_VERSION,
     };
     use crate::proof::verifier::PrecheckedProof;
     use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
@@ -366,50 +366,59 @@ mod tests {
 
     fn dummy_prechecked_proof() -> PrecheckedProof {
         let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
+        let binding = CompositionBinding::new(
+            crate::config::ProofKind::Tx,
+            crate::config::AIR_SPEC_IDS_V1.tx.clone(),
+            Vec::new(),
+            None,
+        );
+        let openings = OpeningsDescriptor::new(
+            MerkleProofBundle::new([0u8; 32], [0u8; 32], Vec::new()),
+            Openings {
+                trace: TraceOpenings {
+                    indices: Vec::new(),
+                    leaves: Vec::new(),
+                    paths: Vec::new(),
+                },
+                composition: None,
+                out_of_domain: Vec::new(),
+            },
+        );
+        let fri_handle = FriHandle::new(
+            crate::fri::FriProof::new(
+                crate::fri::FriSecurityLevel::Standard,
+                1,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                [0u8; 32],
+                Vec::new(),
+            )
+            .expect("empty fri proof"),
+        );
+        let telemetry = TelemetryOption::new(
+            true,
+            Telemetry {
+                header_length: 0,
+                body_length: 0,
+                fri_parameters: FriParametersMirror::default(),
+                integrity_digest: DigestBytes { bytes: [9u8; 32] },
+            },
+        );
+
         PrecheckedProof {
-            proof: Proof {
-                version: PROOF_VERSION,
-                kind: crate::config::ProofKind::Tx,
-                param_digest: ParamDigest(DigestBytes { bytes: [7u8; 32] }),
-                air_spec_id: crate::config::AIR_SPEC_IDS_V1.tx.clone(),
-                public_inputs: Vec::new(),
-                public_digest: DigestBytes {
+            proof: Proof::from_parts(
+                PROOF_VERSION,
+                ParamDigest(DigestBytes { bytes: [7u8; 32] }),
+                DigestBytes {
                     bytes: crate::proof::ser::compute_public_digest(&[]),
                 },
-                trace_commit: DigestBytes { bytes: [0u8; 32] },
-                composition_commit: None,
-                merkle: MerkleProofBundle {
-                    core_root: [0u8; 32],
-                    aux_root: [0u8; 32],
-                    fri_layer_roots: Vec::new(),
-                },
-                openings: Openings {
-                    trace: TraceOpenings {
-                        indices: Vec::new(),
-                        leaves: Vec::new(),
-                        paths: Vec::new(),
-                    },
-                    composition: None,
-                    out_of_domain: Vec::new(),
-                },
-                fri_proof: crate::fri::FriProof::new(
-                    crate::fri::FriSecurityLevel::Standard,
-                    1,
-                    Vec::new(),
-                    Vec::new(),
-                    Vec::new(),
-                    [0u8; 32],
-                    Vec::new(),
-                )
-                .expect("empty fri proof"),
-                has_telemetry: true,
-                telemetry: Telemetry {
-                    header_length: 0,
-                    body_length: 0,
-                    fri_parameters: FriParametersMirror::default(),
-                    integrity_digest: DigestBytes { bytes: [9u8; 32] },
-                },
-            },
+                DigestBytes { bytes: [0u8; 32] },
+                binding,
+                openings,
+                fri_handle,
+                telemetry,
+            ),
             fri_seed: [10u8; 32],
             security_level: crate::fri::FriSecurityLevel::Standard,
             params,
