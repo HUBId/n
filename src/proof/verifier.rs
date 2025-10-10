@@ -308,8 +308,7 @@ fn precheck_body(
         }
     }
 
-    if proof.openings().merkle().fri_layer_roots()
-        != proof.fri().fri_proof().layer_roots.as_slice()
+    if proof.openings().merkle().fri_layer_roots() != proof.fri().fri_proof().layer_roots.as_slice()
     {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
