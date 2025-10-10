@@ -836,6 +836,7 @@ nightly-Abhängigkeiten.
 - Size-Gate misst echte Serialisierung?
 - Fehler präzise (richtige Variante)?
 - Snapshot-Diffs erklärbar (und ggf. `PROOF_VERSION` erhöht)?
+- `CHANGELOG.md` aktualisiert (Unreleased-Eintrag, PROOF_VERSION-/Snapshot-Hinweis)?
 - Clippy clean, keine `unwrap`/`expect`, kein `unsafe`?
 
 **Risiken & Gegenmaßnahmen**
@@ -920,9 +921,15 @@ nightly-Abhängigkeiten.
 - Negative Property-Tests (gezielte Fail-Injection).
 - README/Docs: Layout-Tabellen (Proof/Openings/Bundle), Label-Reihenfolge, Versionierungspolitik, Size-Gates, STWO-Adapterhinweise.
 - Benchmarks (stable): Parse/Verify für kleine/mittlere Größen; Artefakte speichern.
-- Version taggen; CHANGELOG.
+- Version taggen; [`CHANGELOG.md`](CHANGELOG.md) mit Release-Abschnitt und PROOF-ABI-Hinweisen aktualisieren.
 
 **DoD:** Doku vollständig, CI grün, Bench-Artefakte vorhanden, Tag v1.0.0.
+
+#### CHANGELOG- & Proof-ABI-Pflege
+
+- Jede Änderung am Serialisierungs-Layout des Proofs (Envelope, Openings, Transcript, Merkle-Bundles, Telemetry) erfordert einen `PROOF_VERSION`-Bump und einen dokumentierten Eintrag im [`CHANGELOG.md`](CHANGELOG.md).
+- Snapshots werden nach ABI-Änderungen via `cargo test -p rpp-stark -- --nocapture` ausgeführt und anschließend mit `cargo insta review` geprüft; nur genehmigte Diffs landen im Repo.
+- Vor dem Merge prüft das Review-Team, ob `CHANGELOG.md` gepflegt wurde (Unreleased-Eintrag, PROOF_VERSION-Notiz) und ob der Snapshot-Diff mit der dokumentierten Änderung übereinstimmt.
 
 ### PR-Plan (empfohlen, klein & linear)
 
@@ -943,6 +950,7 @@ nightly-Abhängigkeiten.
 - `cargo clippy -D warnings`
 - deterministische Snapshots (keine Umgebungsabhängigkeiten)
 - Kein `unsafe`, keine `unwrap`/`expect` in Lib-Logik
+- `CHANGELOG.md` gepflegt (Unreleased-Eintrag, PROOF_VERSION-/Snapshot-Hinweis)
 - Review-Checklist: Endianness, Längenfelder, Fehlerpfade, deterministische Reihenfolge
 
 ### Risiken & Gegenmaßnahmen
