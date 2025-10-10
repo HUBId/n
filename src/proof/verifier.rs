@@ -1127,7 +1127,9 @@ fn build_report(
     total_bytes: u64,
     error: Option<VerifyError>,
 ) -> VerifyReport {
+    let header = proof.header_frame();
     VerifyReport {
+        header,
         proof,
         params_ok: stages.params_ok,
         public_ok: stages.public_ok,
