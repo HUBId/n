@@ -269,7 +269,7 @@ impl Transcript {
         transcript.absorb_section_raw(TRANSCRIPT_DOMAIN_TAG);
         let proof_kind_code = transcript.proof_kind_code();
         transcript.absorb_section_raw(&proof_kind_code);
-        transcript.absorb_section_raw(&header.params_hash.0.bytes);
+        transcript.absorb_section_raw(header.params_hash.as_bytes());
 
         Ok(transcript)
     }

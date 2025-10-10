@@ -68,7 +68,7 @@ fn freeze_fixture_artifacts() {
     let snapshot = json!({
         "proof_version": PROOF_VERSION,
         "proof_bytes_hex": hex_encode(proof_bytes.as_slice()),
-        "param_digest_hex": hex_encode(&config.param_digest.0.bytes),
+        "param_digest_hex": hex_encode(config.param_digest.as_bytes()),
         "roots": {
             "core": hex_encode(&proof.merkle().core_root),
             "aux": hex_encode(&proof.merkle().aux_root),

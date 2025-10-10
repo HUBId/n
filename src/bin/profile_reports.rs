@@ -100,7 +100,7 @@ fn main() {
 fn build_report(descriptor: ProfileDescriptor, common: &CommonIdentifiers) -> ProfileReport {
     let profile = descriptor.profile.clone();
     let param_digest = compute_param_digest(&profile, common);
-    let param_digest_hex = hex_string(&param_digest.0.bytes);
+    let param_digest_hex = hex_string(param_digest.as_bytes());
 
     let (run_a_hash, proof_size) = sample_hash(&profile, &param_digest, "duplicate-run");
     let (run_b_hash, _) = sample_hash(&profile, &param_digest, "duplicate-run");
