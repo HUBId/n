@@ -228,7 +228,9 @@ pub fn mismatch_telemetry_body_length(proof: &Proof) -> Option<ProofBytes> {
 /// Corrupts the telemetry integrity digest to trigger the mismatch guard.
 pub fn mismatch_telemetry_integrity_digest(proof: &Proof) -> Option<ProofBytes> {
     mutate_telemetry_with(proof, |telemetry| {
-        telemetry.integrity_digest_mut().bytes[0] ^= 0x01;
+        let mut digest = telemetry.integrity_digest().bytes;
+        digest[0] ^= 0x01;
+        telemetry.set_integrity_digest(DigestBytes { bytes: digest });
     })
 }
 
@@ -243,7 +245,9 @@ pub fn flip_header_version(proof: &Proof) -> ProofBytes {
 /// Corrupts a single byte inside the parameter hash.
 pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
     let mut parts = ProofParts::from_proof(proof);
-    parts.params_hash_mut().0.bytes[0] ^= 0x01;
+    let mut digest = *parts.params_hash().as_bytes();
+    digest[0] ^= 0x01;
+    *parts.params_hash_mut() = ParamDigest(DigestBytes { bytes: digest });
     let mut mutated = parts.into_proof();
     reencode_proof(&mut mutated)
 }
@@ -420,6 +424,10 @@ impl ProofParts {
 
     fn params_hash_mut(&mut self) -> &mut ParamDigest {
         &mut self.params_hash
+    }
+
+    fn params_hash(&self) -> &ParamDigest {
+        &self.params_hash
     }
 
     fn openings(&self) -> &OpeningsDescriptor {

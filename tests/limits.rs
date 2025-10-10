@@ -328,10 +328,10 @@ fn build_envelope(
         bytes: public_digest,
     };
     let trace_commit = DigestBytes {
-        bytes: merkle.core_root,
+        bytes: *merkle.core_root(),
     };
     let composition_commit = Some(DigestBytes {
-        bytes: merkle.aux_root,
+        bytes: *merkle.aux_root(),
     });
     let openings = Openings {
         trace: trace_openings,
