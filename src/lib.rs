@@ -6,7 +6,10 @@
 //! The crate exposes declarative contracts for proof generation, verification
 //! and aggregation. All functions are intentionally left without
 //! implementations; they simply document the required parameters and the
-//! deterministic sequencing dictated by the specification.
+//! deterministic sequencing dictated by the specification. Inspectors interact
+//! with strongly typed accessors when reading decoded proofs. Configuration
+//! bindings are surfaced through [`proof::types::Proof::params_hash`], while
+//! optional telemetry is handled by [`proof::types::TelemetryOption`].
 
 pub mod air;
 pub mod config;
@@ -35,7 +38,9 @@ use proof::ProofKind;
 use ser::{SerError, SerKind as SerializationKind};
 
 pub use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
-pub use proof::types::{Proof, Telemetry, VerifyError, VerifyReport, PROOF_VERSION};
+pub use proof::types::{
+    Proof, Telemetry, TelemetryOption, VerifyError, VerifyReport, PROOF_VERSION,
+};
 use utils::serialization::{ProofBytes, WitnessBlob};
 
 pub use air::example::{
@@ -84,8 +89,9 @@ pub enum VerificationVerdict {
 /// 2. Ingest the phase-2 public input layout using [`PublicInputs`].
 /// 3. Absorb the witness container and execute the pipeline described in the
 ///    `proof::prover` module.
-/// 4. Assemble the [`proof::types::Proof`] container and serialise it using the
-///    canonical helpers exposed by [`proof::ser`].
+/// 4. Assemble the [`proof::types::Proof`] container, populate wrappers such as
+///    [`proof::types::TelemetryOption`], and serialise it using the canonical
+///    helpers exposed by [`proof::ser`].
 ///
 /// No implementation logic is provided here; integrators must supply the
 /// execution engine while preserving the documented order of operations.
@@ -111,7 +117,9 @@ pub fn generate_proof(
 /// The verification logic MUST execute the steps described in the
 /// `proof::verifier` module. The `config` and `verifier_context`
 /// parameters must match the ones used by the prover; otherwise
-/// [`proof::types::VerifyError::ParamsHashMismatch`] is expected.
+/// [`proof::types::VerifyError::ParamsHashMismatch`] is expected. The proof
+/// [`proof::types::Proof::params_hash`] accessor must therefore agree with the
+/// parameter hash stored by the prover.
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,
@@ -173,9 +181,7 @@ fn map_prover_error(error: prover::ProverError) -> StarkError {
         ProverError::UnsupportedProofVersion(_) => {
             StarkError::InvalidInput("unsupported_proof_version")
         }
-        ProverError::ParamDigestMismatch => {
-            StarkError::InvalidInput("prover_param_digest_mismatch")
-        }
+        ProverError::ParamDigestMismatch => StarkError::InvalidInput("prover_params_hash_mismatch"),
         ProverError::MalformedWitness(reason) => StarkError::InvalidInput(reason),
         ProverError::Transcript(_) => StarkError::SubsystemFailure("prover_transcript_error"),
         ProverError::Fri(_) => StarkError::SubsystemFailure("prover_fri_error"),
@@ -221,7 +227,7 @@ fn map_verify_error(error: VerifyError) -> StarkError {
         VerifyError::NonCanonicalFieldElement => {
             StarkError::InvalidInput("non_canonical_field_element")
         }
-        VerifyError::ParamsHashMismatch => StarkError::InvalidInput("param_digest_mismatch"),
+        VerifyError::ParamsHashMismatch => StarkError::InvalidInput("params_hash_mismatch"),
         VerifyError::PublicInputMismatch => StarkError::InvalidInput("public_input_mismatch"),
         VerifyError::PublicDigestMismatch => StarkError::InvalidInput("public_digest_mismatch"),
         VerifyError::TranscriptOrder => StarkError::InvalidInput("transcript_order"),
