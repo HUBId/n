@@ -141,9 +141,9 @@ fn sample_proof() -> Proof {
         serialize_proof_header(&proof, &payload).expect("proof header serialization");
     let integrity = compute_integrity_digest(&header_bytes, &payload);
     let telemetry = proof.telemetry_mut();
-    telemetry.header_length = header_bytes.len() as u32;
-    telemetry.body_length = (payload.len() + 32) as u32;
-    telemetry.integrity_digest = DigestBytes { bytes: integrity };
+    telemetry.set_header_length(header_bytes.len() as u32);
+    telemetry.set_body_length((payload.len() + 32) as u32);
+    telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
     proof
 }
 
