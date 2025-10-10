@@ -243,7 +243,7 @@ pub fn flip_header_version(proof: &Proof) -> ProofBytes {
 /// Corrupts a single byte inside the parameter digest.
 pub fn flip_param_digest_byte(proof: &Proof) -> ProofBytes {
     let mut parts = ProofParts::from_proof(proof);
-    parts.param_digest_mut().0.bytes[0] ^= 0x01;
+    parts.params_hash_mut().0.bytes[0] ^= 0x01;
     let mut mutated = parts.into_proof();
     reencode_proof(&mut mutated)
 }
@@ -365,7 +365,7 @@ pub struct MutatedProof {
 #[derive(Debug, Clone)]
 struct ProofParts {
     version: u16,
-    param_digest: ParamDigest,
+    params_hash: ParamDigest,
     public_digest: DigestBytes,
     trace_commit: DigestBytes,
     binding: CompositionBinding,
@@ -388,7 +388,7 @@ impl ProofParts {
 
         Self {
             version: proof.version(),
-            param_digest: proof.param_digest().clone(),
+            params_hash: proof.params_hash().clone(),
             public_digest: proof.public_digest().clone(),
             trace_commit: proof.trace_commit().clone(),
             binding,
@@ -401,7 +401,7 @@ impl ProofParts {
     fn into_proof(self) -> Proof {
         Proof::from_parts(
             self.version,
-            self.param_digest,
+            self.params_hash,
             self.public_digest,
             self.trace_commit,
             self.binding,
@@ -415,8 +415,8 @@ impl ProofParts {
         &mut self.version
     }
 
-    fn param_digest_mut(&mut self) -> &mut ParamDigest {
-        &mut self.param_digest
+    fn params_hash_mut(&mut self) -> &mut ParamDigest {
+        &mut self.params_hash
     }
 
     fn openings(&self) -> &OpeningsDescriptor {
