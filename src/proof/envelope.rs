@@ -16,7 +16,8 @@ use crate::proof::ser::{
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
 use crate::proof::types::{
-    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, VerifyError,
+    CompositionBinding, FriHandle, MerkleProofBundle, Openings, OpeningsDescriptor,
+    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, VerifyError,
 };
 use crate::ser::{SerError, SerKind};
 use crate::{
@@ -126,10 +127,18 @@ impl ProofBuilder {
         let header = self
             .header
             .ok_or(VerifyError::Serialization(SerKind::Proof))?;
-        if header.version != self.params.version {
+        let HeaderFields {
+            version,
+            kind,
+            param_digest,
+            air_spec_id,
+            public_inputs,
+        } = header;
+
+        if version != self.params.version {
             return Err(VerifyError::VersionMismatch {
                 expected: self.params.version,
-                actual: header.version,
+                actual: version,
             });
         }
 
@@ -146,48 +155,63 @@ impl ProofBuilder {
             .telemetry
             .ok_or(VerifyError::Serialization(SerKind::Telemetry))?;
 
-        if openings.out_of_domain.is_empty() {
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry_option = TelemetryOption::new(true, telemetry);
+
+        if openings_descriptor.openings().out_of_domain.is_empty() {
             return Err(VerifyError::EmptyOpenings);
         }
 
-        ensure_sorted_indices(&fri_proof)?;
-        merkle.ensure_consistency(&fri_proof)?;
+        ensure_sorted_indices(fri_handle.fri_proof())?;
+        openings_descriptor
+            .merkle()
+            .ensure_consistency(fri_handle.fri_proof())?;
 
-        let public_digest = compute_public_digest(&header.public_inputs);
+        let public_digest = compute_public_digest(&public_inputs);
 
-        if openings.composition.is_some() && merkle.aux_root == [0u8; 32] {
+        if openings_descriptor.openings().composition.is_some()
+            && openings_descriptor.merkle().aux_root == [0u8; 32]
+        {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_root".to_string(),
             });
         }
 
-        if openings.composition.is_none() && merkle.aux_root != [0u8; 32] {
+        if openings_descriptor.openings().composition.is_none()
+            && openings_descriptor.merkle().aux_root != [0u8; 32]
+        {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "unexpected_composition_root".to_string(),
             });
         }
 
-        let mut proof = Proof {
-            version: header.version,
-            kind: header.kind,
-            param_digest: header.param_digest,
-            air_spec_id: header.air_spec_id,
-            public_inputs: header.public_inputs,
-            public_digest: DigestBytes {
+        let composition_commit = if openings_descriptor.openings().composition.is_some() {
+            Some(DigestBytes {
+                bytes: openings_descriptor.merkle().aux_root,
+            })
+        } else {
+            None
+        };
+        let binding = CompositionBinding::new(kind, air_spec_id, public_inputs, composition_commit);
+
+        let trace_commit = DigestBytes {
+            bytes: openings_descriptor.merkle().core_root,
+        };
+        let mut proof = Proof::from_parts(
+            version,
+            param_digest,
+            DigestBytes {
                 bytes: public_digest,
             },
-            trace_commit: DigestBytes {
-                bytes: merkle.core_root,
-            },
-            composition_commit: openings.composition.as_ref().map(|_| DigestBytes {
-                bytes: merkle.aux_root,
-            }),
-            merkle,
-            openings,
-            fri_proof,
-            has_telemetry: true,
-            telemetry,
-        };
+            trace_commit,
+            binding,
+            openings_descriptor,
+            fri_handle,
+            telemetry_option,
+        );
+
+        proof.set_has_telemetry(true);
 
         let payload = serialize_proof_payload(&proof).map_err(VerifyError::from)?;
         let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
@@ -450,7 +474,7 @@ mod tests {
             fri_proof.final_polynomial.len() as u32,
         );
 
-        ProofBuilder::new(builder_params())
+        let BuiltProof { proof, .. } = ProofBuilder::new(builder_params())
             .with_header(
                 crate::proof::types::PROOF_VERSION,
                 ProofKind::Tx,
@@ -463,8 +487,14 @@ mod tests {
             .with_fri_proof(fri_proof)
             .with_telemetry(telemetry)
             .build()
-            .expect("build sample proof")
-            .proof
+            .expect("build sample proof");
+
+        assert!(proof.has_telemetry());
+        assert!(proof.composition_commit().is_some());
+        assert!(proof.telemetry().header_length > 0);
+        assert_ne!(proof.trace_commit().bytes, [0u8; 32]);
+
+        proof
     }
 
     #[test]
