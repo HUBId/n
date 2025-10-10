@@ -43,7 +43,7 @@ use crate::proof::types::{
     OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_ALPHA_VECTOR_LEN,
     PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
-use crate::ser::{SerError, SerKind};
+use crate::ser::{SerError, SerKind, DIGEST_SIZE};
 use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 use core::cmp::{max, min};
@@ -297,20 +297,93 @@ pub fn build_envelope(
         telemetry_option,
     );
 
-    let body_payload = proof.serialize_payload().map_err(ProverError::from)?;
-    let header_bytes = proof
+    let mut body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+    let mut header_bytes = proof
         .serialize_header(&body_payload)
         .map_err(ProverError::from)?;
-    let telemetry = proof.telemetry_mut().frame_mut();
-    telemetry.set_body_length((body_payload.len() + 32) as u32);
-    telemetry.set_header_length(header_bytes.len() as u32);
 
-    let integrity_digest = compute_integrity_digest(&header_bytes, &body_payload);
-    telemetry.set_integrity_digest(DigestBytes {
-        bytes: integrity_digest,
-    });
+    if proof.telemetry().has_telemetry() {
+        const TELEMETRY_FIXUP_MAX_ATTEMPTS: usize = 4;
 
-    let total_size = header_bytes.len() + body_payload.len() + 32;
+        let mut attempt = 0usize;
+        loop {
+            let body_length = body_payload
+                .len()
+                .checked_add(DIGEST_SIZE)
+                .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
+            let body_length = u32::try_from(body_length)
+                .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
+            let header_length = u32::try_from(header_bytes.len())
+                .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
+
+            let telemetry = proof.telemetry_mut().frame_mut();
+            let needs_update = telemetry.body_length() != body_length
+                || telemetry.header_length() != header_length;
+            telemetry.set_body_length(body_length);
+            telemetry.set_header_length(header_length);
+
+            if !needs_update {
+                break;
+            }
+
+            body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+            header_bytes = proof
+                .serialize_header(&body_payload)
+                .map_err(ProverError::from)?;
+
+            attempt += 1;
+            if attempt >= TELEMETRY_FIXUP_MAX_ATTEMPTS {
+                return Err(ProverError::Serialization(SerKind::Telemetry));
+            }
+        }
+
+        let (declared_header_length, declared_body_length) = {
+            let telemetry = proof.telemetry().frame();
+            (telemetry.header_length(), telemetry.body_length())
+        };
+
+        {
+            let telemetry = proof.telemetry_mut().frame_mut();
+            telemetry.set_integrity_digest(DigestBytes::default());
+            telemetry.set_header_length(0);
+            telemetry.set_body_length(0);
+        }
+
+        let canonical_body = proof.serialize_payload().map_err(ProverError::from)?;
+        let canonical_header = proof
+            .serialize_header(&canonical_body)
+            .map_err(ProverError::from)?;
+        let integrity = compute_integrity_digest(&canonical_header, &canonical_body);
+
+        {
+            let telemetry = proof.telemetry_mut().frame_mut();
+            telemetry.set_header_length(declared_header_length);
+            telemetry.set_body_length(declared_body_length);
+            telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
+        }
+
+        body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+        header_bytes = proof
+            .serialize_header(&body_payload)
+            .map_err(ProverError::from)?;
+
+        let telemetry = proof.telemetry().frame();
+        let body_length = body_payload
+            .len()
+            .checked_add(DIGEST_SIZE)
+            .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
+        if telemetry.body_length() != body_length as u32
+            || telemetry.header_length() != header_bytes.len() as u32
+        {
+            return Err(ProverError::Serialization(SerKind::Telemetry));
+        }
+    }
+
+    let total_size = header_bytes
+        .len()
+        .checked_add(body_payload.len())
+        .and_then(|value| value.checked_add(DIGEST_SIZE))
+        .ok_or(ProverError::Serialization(SerKind::Proof))?;
     if total_size > context.limits.max_proof_size_bytes as usize {
         return Err(ProverError::ProofTooLarge {
             actual: total_size,
