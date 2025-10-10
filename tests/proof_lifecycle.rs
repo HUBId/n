@@ -427,12 +427,13 @@ fn verification_report_flags_public_stage_failure() {
     let config = fixture.config();
     let context = fixture.verifier_context();
     let mut mutated_proof = fixture.proof();
-    if let Some(byte) = mutated_proof.public_inputs.first_mut() {
+    if let Some(byte) = mutated_proof.public_inputs_mut().first_mut() {
         *byte ^= 0x01;
     } else {
         panic!("fixture must contain public input bytes");
     }
-    mutated_proof.public_digest.bytes = compute_public_digest(&mutated_proof.public_inputs);
+    let recomputed_digest = compute_public_digest(mutated_proof.public_inputs());
+    mutated_proof.public_digest_mut().bytes = recomputed_digest;
     let mutated_bytes = reencode_proof(&mut mutated_proof);
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
