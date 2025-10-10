@@ -294,6 +294,31 @@ impl Proof {
         &mut self.telemetry
     }
 
+    /// Clones the proof by reassembling all sections through [`Proof::from_parts`].
+    pub fn clone_using_parts(&self) -> Self {
+        let binding = CompositionBinding::new(
+            *self.kind(),
+            self.air_spec_id().clone(),
+            self.public_inputs().to_vec(),
+            self.composition_commit().cloned(),
+        );
+        let openings_descriptor =
+            OpeningsDescriptor::new(self.merkle().clone(), self.openings().clone());
+        let fri_handle = FriHandle::new(self.fri_proof().clone());
+        let telemetry_option = TelemetryOption::new(self.has_telemetry(), self.telemetry().clone());
+
+        Proof::from_parts(
+            self.version(),
+            self.param_digest().clone(),
+            self.public_digest().clone(),
+            self.trace_commit().clone(),
+            binding,
+            openings_descriptor,
+            fri_handle,
+            telemetry_option,
+        )
+    }
+
     /// Reassembles a proof from the provided building blocks.
     #[allow(clippy::too_many_arguments)]
     pub fn from_parts(

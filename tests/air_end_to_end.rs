@@ -71,7 +71,7 @@ fn fri_pipeline_rejects_alpha_tampering() {
         .challenge_field(TranscriptLabel::CompChallengeA)
         .expect("comp alpha");
 
-    let mut tampered = fixture.proof.clone();
+    let mut tampered = fixture.proof.clone_using_parts();
     tampered.fold_challenges[0] = tampered.fold_challenges[0].add(&FieldElement::ONE);
 
     let err = fri_verify(&tampered, &fixture.params, &mut verifier_transcript)
@@ -98,7 +98,7 @@ fn fri_pipeline_rejects_merkle_path_tampering() {
         .challenge_field(TranscriptLabel::CompChallengeA)
         .expect("comp alpha");
 
-    let mut tampered = fixture.proof.clone();
+    let mut tampered = fixture.proof.clone_using_parts();
     tampered.queries[0].layers[0].path[0].siblings[0] = [0u8; DIGEST_SIZE];
 
     let err = fri_verify(&tampered, &fixture.params, &mut verifier_transcript)

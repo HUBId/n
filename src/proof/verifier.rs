@@ -524,7 +524,7 @@ fn precheck_body(
             });
         }
 
-        let mut canonical = proof.clone();
+        let mut canonical = proof.clone_using_parts();
         let canonical_telemetry = canonical.telemetry_mut();
         canonical_telemetry.set_header_length(0);
         canonical_telemetry.set_body_length(0);

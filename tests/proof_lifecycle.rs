@@ -185,7 +185,7 @@ fn decode_proof(bytes: &ProofBytes) -> Proof {
 
 fn reencode_proof(proof: &mut Proof) -> ProofBytes {
     if proof.has_telemetry() {
-        let mut canonical = proof.clone();
+        let mut canonical = proof.clone_using_parts();
         let telemetry = canonical.telemetry_mut();
         telemetry.set_header_length(0);
         telemetry.set_body_length(0);
@@ -272,7 +272,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
         "telemetry lengths must sum to total bytes plus the integrity digest"
     );
 
-    let mut canonical = report.proof.clone();
+    let mut canonical = report.proof.clone_using_parts();
     let canonical_telemetry = canonical.telemetry_mut();
     canonical_telemetry.set_header_length(0);
     canonical_telemetry.set_body_length(0);
@@ -616,7 +616,7 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
 }
 
 fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
-    let mut mutated = proof.clone();
+    let mut mutated = proof.clone_using_parts();
     if let Some(root) = mutated.merkle_mut().fri_layer_roots.first_mut() {
         if let Some(byte) = root.first_mut() {
             *byte ^= 0x1;
