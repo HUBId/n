@@ -13,9 +13,10 @@ use crate::proof::public_inputs::{
     PublicInputs, RecursionHeaderV1, VrfHeaderV1,
 };
 use crate::proof::types::{
-    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
-    MerkleProofBundle, MerkleSection, Openings, OutOfDomainOpening, Proof, Telemetry,
-    TraceOpenings, VerifyError, PROOF_VERSION,
+    CompositionBinding, CompositionOpenings, FriHandle, FriParametersMirror,
+    MerkleAuthenticationPath, MerklePathNode, MerkleProofBundle, MerkleSection, Openings,
+    OpeningsDescriptor, OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings,
+    VerifyError, PROOF_VERSION,
 };
 use crate::ser::{
     ensure_consumed, ensure_u32, read_digest, read_u16, read_u32, read_u8, write_bytes,
@@ -454,23 +455,24 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         }
     }
 
-    Ok(Proof {
+    let public_digest = DigestBytes {
+        bytes: public_digest_bytes,
+    };
+    let binding = CompositionBinding::new(kind, air_spec_id, public_inputs, composition_commit);
+    let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+    let fri_handle = FriHandle::new(fri_proof);
+    let telemetry_option = TelemetryOption::new(has_telemetry, telemetry);
+
+    Ok(Proof::from_parts(
         version,
-        kind,
         param_digest,
-        air_spec_id,
-        public_inputs,
-        public_digest: DigestBytes {
-            bytes: public_digest_bytes,
-        },
+        public_digest,
         trace_commit,
-        composition_commit,
-        merkle,
-        openings,
-        fri_proof,
-        has_telemetry,
-        telemetry,
-    })
+        binding,
+        openings_descriptor,
+        fri_handle,
+        telemetry_option,
+    ))
 }
 
 fn serialize_merkle_bundle(bundle: &MerkleProofBundle) -> Result<Vec<u8>, SerError> {

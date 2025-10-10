@@ -135,32 +135,32 @@ impl FriHandle {
 pub struct Proof {
     /// Declared proof version (currently `1`).
     #[serde(with = "proof_version_codec")]
-    pub version: u16,
+    version: u16,
     /// Canonical proof kind stored in the envelope header.
     #[serde(with = "proof_kind_codec")]
-    pub kind: ProofKind,
+    kind: ProofKind,
     /// Parameter digest binding configuration knobs.
-    pub param_digest: ParamDigest,
+    param_digest: ParamDigest,
     /// AIR specification identifier for the proof kind.
-    pub air_spec_id: AirSpecId,
+    air_spec_id: AirSpecId,
     /// Canonical public input encoding.
-    pub public_inputs: Vec<u8>,
+    public_inputs: Vec<u8>,
     /// Digest binding the canonical public-input payload.
-    pub public_digest: DigestBytes,
+    public_digest: DigestBytes,
     /// Digest mirroring the declared trace commitment.
-    pub trace_commit: DigestBytes,
+    trace_commit: DigestBytes,
     /// Optional digest mirroring the declared composition commitment.
-    pub composition_commit: Option<DigestBytes>,
+    composition_commit: Option<DigestBytes>,
     /// Merkle commitment bundle for core, auxiliary and FRI layers.
-    pub merkle: MerkleProofBundle,
+    merkle: MerkleProofBundle,
     /// Out-of-domain opening payloads.
-    pub openings: Openings,
+    openings: Openings,
     /// FRI proof payload accompanying the envelope.
-    pub fri_proof: FriProof,
+    fri_proof: FriProof,
     /// Flag signalling whether the telemetry segment is present in the payload.
-    pub has_telemetry: bool,
+    has_telemetry: bool,
     /// Telemetry frame describing declared lengths and digests.
-    pub telemetry: Telemetry,
+    telemetry: Telemetry,
 }
 
 impl Proof {

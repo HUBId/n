@@ -427,12 +427,13 @@ fn verification_report_flags_public_stage_failure() {
     let config = fixture.config();
     let context = fixture.verifier_context();
     let mut mutated_proof = fixture.proof();
-    if let Some(byte) = mutated_proof.public_inputs.first_mut() {
+    if let Some(byte) = mutated_proof.public_inputs_mut().first_mut() {
         *byte ^= 0x01;
     } else {
         panic!("fixture must contain public input bytes");
     }
-    mutated_proof.public_digest.bytes = compute_public_digest(&mutated_proof.public_inputs);
+    let recomputed_digest = compute_public_digest(mutated_proof.public_inputs());
+    mutated_proof.public_digest_mut().bytes = recomputed_digest;
     let mutated_bytes = reencode_proof(&mut mutated_proof);
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
@@ -615,7 +616,11 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
 
 fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
     let mut mutated = proof.clone();
-    if let Some(root) = mutated.merkle.fri_layer_roots.first_mut() {
+    if let Some(root) = mutated
+        .merkle_mut()
+        .fri_layer_roots
+        .first_mut()
+    {
         if let Some(byte) = root.first_mut() {
             *byte ^= 0x1;
         } else {
@@ -629,7 +634,7 @@ fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
 }
 
 fn mutate_param_digest(proof: &mut Proof) {
-    proof.param_digest.0.bytes[0] ^= 0x1;
+    proof.param_digest_mut().0.bytes[0] ^= 0x1;
 }
 
 fn mutate_public_digest(bytes: &ProofBytes) -> ProofBytes {
@@ -882,7 +887,7 @@ fn verification_rejects_tampered_composition_leaf() {
 
     let mut proof = rpp_stark::Proof::from_bytes(proof_bytes.as_slice()).expect("decode proof");
     let composition = proof
-        .openings
+        .openings_mut()
         .composition
         .as_mut()
         .expect("composition openings present");

@@ -123,35 +123,35 @@ fn snapshot_execution_proof_artifacts() {
     let decoded = decode_proof(&proof_bytes);
 
     let trace_paths: Vec<usize> = decoded
-        .openings
+        .openings()
         .trace
         .paths
         .iter()
         .map(|path| path.nodes.len())
         .collect();
     let composition_paths: Option<Vec<usize>> = decoded
-        .openings
+        .openings()
         .composition
         .as_ref()
         .map(|comp| comp.paths.iter().map(|path| path.nodes.len()).collect());
     let trace_indices = {
-        let mut indices = decoded.openings.trace.indices.clone();
+        let mut indices = decoded.openings().trace.indices.clone();
         indices.sort_unstable();
         indices
     };
-    let composition_indices = decoded.openings.composition.as_ref().map(|comp| {
+    let composition_indices = decoded.openings().composition.as_ref().map(|comp| {
         let mut indices = comp.indices.clone();
         indices.sort_unstable();
         indices
     });
     let fri_positions: Vec<usize> = decoded
-        .fri_proof
+        .fri_proof()
         .queries
         .iter()
         .map(|query| query.position)
         .collect();
     let fri_layer_path_lengths: Vec<usize> = decoded
-        .fri_proof
+        .fri_proof()
         .queries
         .iter()
         .flat_map(|query| query.layers.iter().map(|layer| layer.path.len()))
@@ -165,9 +165,14 @@ fn snapshot_execution_proof_artifacts() {
     let fri_path_summary = summarize_lengths(&fri_layer_path_lengths);
 
     let artifact = serde_json::json!({
-        "trace_root": hex(&decoded.merkle.core_root),
-        "composition_root": hex(&decoded.merkle.aux_root),
-        "fri_roots": decoded.merkle.fri_layer_roots.iter().map(hex).collect::<Vec<_>>(),
+        "trace_root": hex(&decoded.merkle().core_root),
+        "composition_root": hex(&decoded.merkle().aux_root),
+        "fri_roots": decoded
+            .merkle()
+            .fri_layer_roots
+            .iter()
+            .map(hex)
+            .collect::<Vec<_>>(),
         "trace_query_indices": trace_indices,
         "composition_query_indices": composition_indices,
         "fri_query_positions": fri_positions,

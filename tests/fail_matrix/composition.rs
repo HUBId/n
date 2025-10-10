@@ -34,7 +34,7 @@ fn composition_rejects_leaf_bytes_mismatch() {
 
     let composition = mutated
         .proof
-        .openings
+        .openings()
         .composition
         .as_ref()
         .expect("composition openings available");

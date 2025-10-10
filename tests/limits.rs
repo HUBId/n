@@ -18,9 +18,10 @@ use rpp_stark::proof::params::canonical_stark_params;
 use rpp_stark::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
 use rpp_stark::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use rpp_stark::proof::types::{
-    CompositionOpenings, FriParametersMirror, FriVerifyIssue, MerkleAuthenticationPath,
-    MerklePathNode, MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry,
-    TraceOpenings, VerifyError, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    CompositionBinding, CompositionOpenings, FriHandle, FriParametersMirror, FriVerifyIssue,
+    MerkleAuthenticationPath, MerklePathNode, MerkleProofBundle, Openings, OpeningsDescriptor,
+    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, VerifyError,
+    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use rpp_stark::proof::verifier::verify_proof_bytes;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
@@ -323,31 +324,40 @@ fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
-    let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: proof_kind,
-        param_digest: config.param_digest.clone(),
-        air_spec_id: air_spec_id.clone(),
-        public_inputs: public_inputs_bytes.clone(),
-        public_digest: DigestBytes {
-            bytes: public_digest,
-        },
-        trace_commit: DigestBytes {
-            bytes: merkle.core_root,
-        },
-        composition_commit: Some(DigestBytes {
-            bytes: merkle.aux_root,
-        }),
-        merkle,
-        openings: Openings {
-            trace: trace_openings,
-            composition: Some(composition_openings),
-            out_of_domain: ood_openings,
-        },
-        fri_proof,
-        has_telemetry: true,
-        telemetry,
+    let public_digest = DigestBytes {
+        bytes: public_digest,
     };
+    let trace_commit = DigestBytes {
+        bytes: merkle.core_root,
+    };
+    let composition_commit = Some(DigestBytes {
+        bytes: merkle.aux_root,
+    });
+    let openings = Openings {
+        trace: trace_openings,
+        composition: Some(composition_openings),
+        out_of_domain: ood_openings,
+    };
+    let binding = CompositionBinding::new(
+        proof_kind,
+        air_spec_id.clone(),
+        public_inputs_bytes.clone(),
+        composition_commit,
+    );
+    let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+    let fri_handle = FriHandle::new(fri_proof);
+    let telemetry_option = TelemetryOption::new(true, telemetry);
+
+    let mut proof = Proof::from_parts(
+        PROOF_VERSION,
+        config.param_digest.clone(),
+        public_digest,
+        trace_commit,
+        binding,
+        openings_descriptor,
+        fri_handle,
+        telemetry_option,
+    );
 
     let payload = proof
         .serialize_payload()
