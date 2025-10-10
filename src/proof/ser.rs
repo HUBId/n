@@ -797,7 +797,8 @@ mod tests {
     use crate::proof::params::canonical_stark_params;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::proof::types::{
-        CompositionOpenings, MerkleAuthenticationPath, MerklePathNode, TraceOpenings,
+        CompositionBinding, CompositionOpenings, FriHandle, MerkleAuthenticationPath,
+        MerklePathNode, OpeningsDescriptor, TelemetryOption, TraceOpenings,
     };
     use crate::utils::serialization::DigestBytes;
 
@@ -867,37 +868,38 @@ mod tests {
                 composition_value: [5u8; 32],
             }],
         };
-        let mut proof = Proof {
-            version: PROOF_VERSION,
-            kind: ProofKind::Tx,
-            param_digest: ConfigParamDigest(DigestBytes { bytes: [6u8; 32] }),
-            air_spec_id: crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
-            public_inputs: public_input_bytes,
-            public_digest: DigestBytes {
+        let binding = CompositionBinding::new(
+            ProofKind::Tx,
+            crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
+            public_input_bytes,
+            Some(DigestBytes { bytes: aux_root }),
+        );
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry = Telemetry {
+            header_length: 0,
+            body_length: 0,
+            fri_parameters: FriParametersMirror {
+                fold: 2,
+                cap_degree: 0,
+                cap_size: 0,
+                query_budget: 0,
+            },
+            integrity_digest: DigestBytes::default(),
+        };
+        let telemetry_option = TelemetryOption::new(true, telemetry);
+        let mut proof = Proof::from_parts(
+            PROOF_VERSION,
+            ConfigParamDigest(DigestBytes { bytes: [6u8; 32] }),
+            DigestBytes {
                 bytes: public_digest,
             },
-            trace_commit: DigestBytes {
-                bytes: merkle.core_root,
-            },
-            composition_commit: Some(DigestBytes {
-                bytes: merkle.aux_root,
-            }),
-            merkle,
-            openings,
-            fri_proof,
-            has_telemetry: true,
-            telemetry: Telemetry {
-                header_length: 0,
-                body_length: 0,
-                fri_parameters: FriParametersMirror {
-                    fold: 2,
-                    cap_degree: 0,
-                    cap_size: 0,
-                    query_budget: 0,
-                },
-                integrity_digest: DigestBytes::default(),
-            },
-        };
+            DigestBytes { bytes: core_root },
+            binding,
+            openings_descriptor,
+            fri_handle,
+            telemetry_option,
+        );
 
         // Populate telemetry with deterministic values.
         let payload = crate::proof::ser::serialize_proof_payload(&proof)

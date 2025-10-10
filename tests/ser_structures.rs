@@ -13,9 +13,9 @@ use rpp_stark::proof::ser::{
     serialize_proof_payload,
 };
 use rpp_stark::proof::types::{
-    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
-    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings,
-    PROOF_VERSION,
+    CompositionBinding, CompositionOpenings, FriHandle, FriParametersMirror,
+    MerkleAuthenticationPath, MerklePathNode, MerkleProofBundle, Openings, OpeningsDescriptor,
+    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_VERSION,
 };
 use rpp_stark::ser::SerKind;
 use rpp_stark::utils::serialization::DigestBytes;
@@ -103,33 +103,38 @@ fn sample_proof() -> Proof {
         }],
     };
 
-    let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: ProofKind::Tx,
-        param_digest: ParamDigest(DigestBytes { bytes: [6u8; 32] }),
-        air_spec_id: AirSpecId(DigestBytes { bytes: [7u8; 32] }),
-        public_inputs: public_input_bytes,
-        public_digest: DigestBytes {
+    let binding = CompositionBinding::new(
+        ProofKind::Tx,
+        AirSpecId(DigestBytes { bytes: [7u8; 32] }),
+        public_input_bytes,
+        Some(DigestBytes { bytes: aux_root }),
+    );
+    let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+    let fri_handle = FriHandle::new(fri_proof);
+    let telemetry = Telemetry {
+        header_length: 0,
+        body_length: 0,
+        fri_parameters: FriParametersMirror {
+            fold: 2,
+            cap_degree: 0,
+            cap_size: 0,
+            query_budget: 0,
+        },
+        integrity_digest: DigestBytes::default(),
+    };
+    let telemetry_option = TelemetryOption::new(true, telemetry);
+    let mut proof = Proof::from_parts(
+        PROOF_VERSION,
+        ParamDigest(DigestBytes { bytes: [6u8; 32] }),
+        DigestBytes {
             bytes: public_digest,
         },
-        trace_commit: DigestBytes { bytes: core_root },
-        composition_commit: Some(DigestBytes { bytes: aux_root }),
-        merkle,
-        openings,
-        fri_proof,
-        has_telemetry: true,
-        telemetry: Telemetry {
-            header_length: 0,
-            body_length: 0,
-            fri_parameters: FriParametersMirror {
-                fold: 2,
-                cap_degree: 0,
-                cap_size: 0,
-                query_budget: 0,
-            },
-            integrity_digest: DigestBytes::default(),
-        },
-    };
+        DigestBytes { bytes: core_root },
+        binding,
+        openings_descriptor,
+        fri_handle,
+        telemetry_option,
+    );
 
     let payload = serialize_proof_payload(&proof).expect("proof payload serialization");
     let header_bytes =
