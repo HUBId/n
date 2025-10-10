@@ -49,7 +49,7 @@ impl BuiltProof {
 struct HeaderFields {
     version: u16,
     kind: ProofKind,
-    param_digest: ParamDigest,
+    params_hash: ParamDigest,
     air_spec_id: AirSpecId,
     public_inputs: Vec<u8>,
 }
@@ -83,14 +83,14 @@ impl ProofBuilder {
         mut self,
         version: u16,
         kind: ProofKind,
-        param_digest: ParamDigest,
+        params_hash: ParamDigest,
         air_spec_id: AirSpecId,
         public_inputs: Vec<u8>,
     ) -> Self {
         self.header = Some(HeaderFields {
             version,
             kind,
-            param_digest,
+            params_hash,
             air_spec_id,
             public_inputs,
         });
@@ -130,7 +130,7 @@ impl ProofBuilder {
         let HeaderFields {
             version,
             kind,
-            param_digest,
+            params_hash,
             air_spec_id,
             public_inputs,
         } = header;
@@ -159,7 +159,7 @@ impl ProofBuilder {
         let fri_handle = FriHandle::new(fri_proof);
         let telemetry_option = TelemetryOption::new(true, telemetry);
 
-        if openings_descriptor.openings().out_of_domain().is_empty() {
+        if openings_descriptor.out_of_domain().is_empty() {
             return Err(VerifyError::EmptyOpenings);
         }
 
@@ -170,25 +170,25 @@ impl ProofBuilder {
 
         let public_digest = compute_public_digest(&public_inputs);
 
-        if openings_descriptor.openings().composition().is_some()
-            && openings_descriptor.merkle().aux_root == [0u8; 32]
+        if openings_descriptor.composition().is_some()
+            && *openings_descriptor.merkle().aux_root() == [0u8; 32]
         {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_root".to_string(),
             });
         }
 
-        if openings_descriptor.openings().composition().is_none()
-            && openings_descriptor.merkle().aux_root != [0u8; 32]
+        if openings_descriptor.composition().is_none()
+            && *openings_descriptor.merkle().aux_root() != [0u8; 32]
         {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "unexpected_composition_root".to_string(),
             });
         }
 
-        let composition_commit = if openings_descriptor.openings().composition().is_some() {
+        let composition_commit = if openings_descriptor.composition().is_some() {
             Some(DigestBytes {
-                bytes: openings_descriptor.merkle().aux_root,
+                bytes: *openings_descriptor.merkle().aux_root(),
             })
         } else {
             None
@@ -196,11 +196,11 @@ impl ProofBuilder {
         let binding = CompositionBinding::new(kind, air_spec_id, public_inputs, composition_commit);
 
         let trace_commit = DigestBytes {
-            bytes: openings_descriptor.merkle().core_root,
+            bytes: *openings_descriptor.merkle().core_root(),
         };
         let mut proof = Proof::from_parts(
             version,
-            param_digest,
+            params_hash,
             DigestBytes {
                 bytes: public_digest,
             },
