@@ -162,7 +162,7 @@ changing runtime behaviour:
 
 ### Minimum Supported Rust Version (MSRV)
 
-This crate targets **Rust 1.74 stable**. Builds are expected to succeed with the
+This crate targets **Rust 1.79 stable**. Builds are expected to succeed with the
 stable channel at or above this compiler release without relying on nightly
 features.
 

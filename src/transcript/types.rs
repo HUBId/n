@@ -175,7 +175,7 @@ impl fmt::Display for TranscriptError {
     }
 }
 
-impl core::error::Error for TranscriptError {}
+impl std::error::Error for TranscriptError {}
 
 impl From<DeterministicHashError> for TranscriptError {
     fn from(err: DeterministicHashError) -> Self {
