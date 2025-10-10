@@ -489,9 +489,9 @@ mod tests {
             .build()
             .expect("build sample proof");
 
-        assert!(proof.telemetry().is_present());
-        assert!(proof.composition().composition_commit().is_some());
-        assert!(proof.telemetry().frame().header_length() > 0);
+        assert!(proof.has_telemetry());
+        assert!(proof.composition_commit().is_some());
+        assert!(proof.telemetry_frame().header_length() > 0);
         assert_ne!(proof.trace_commit().bytes, [0u8; 32]);
 
         proof

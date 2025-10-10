@@ -218,10 +218,9 @@ fn validate_header(
     }
 
     let expected_kind = map_public_to_config_kind(public_inputs.kind());
-    if *proof.composition().kind() != expected_kind || *proof.composition().kind() != declared_kind
-    {
+    if *proof.kind() != expected_kind || *proof.kind() != declared_kind {
         return Err(VerifyError::UnknownProofKind(encode_proof_kind(
-            *proof.composition().kind(),
+            *proof.kind(),
         )));
     }
 
@@ -234,21 +233,20 @@ fn validate_header(
 
     let expected_public_inputs =
         serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
-    if proof.composition().public_inputs() != expected_public_inputs.as_slice() {
+    if proof.public_inputs() != expected_public_inputs.as_slice() {
         return Err(VerifyError::PublicInputMismatch);
     }
 
-    let expected_digest = compute_public_digest(proof.composition().public_inputs());
+    let expected_digest = compute_public_digest(proof.public_inputs());
     if proof.public_digest().bytes != expected_digest {
         return Err(VerifyError::PublicInputMismatch);
     }
     stages.public_ok = true;
 
-    let expected_air_spec =
-        resolve_air_spec_id(&context.profile.air_spec_ids, *proof.composition().kind());
-    if proof.composition().air_spec_id() != &expected_air_spec {
+    let expected_air_spec = resolve_air_spec_id(&context.profile.air_spec_ids, *proof.kind());
+    if proof.air_spec_id() != &expected_air_spec {
         return Err(VerifyError::UnknownProofKind(encode_proof_kind(
-            *proof.composition().kind(),
+            *proof.kind(),
         )));
     }
 
@@ -272,18 +270,18 @@ fn precheck_body(
     block_context: Option<&TranscriptBlockContext>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
-    if proof.trace_commit().bytes != *proof.openings().merkle().core_root() {
+    if proof.trace_commit().bytes != *proof.merkle().core_root() {
         return Err(VerifyError::RootMismatch {
             section: MerkleSection::TraceCommit,
         });
     }
 
     match (
-        proof.composition().composition_commit(),
-        proof.openings().composition(),
+        proof.composition_commit(),
+        proof.openings_payload().composition(),
     ) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != *proof.openings().merkle().aux_root() {
+            if commit.bytes != *proof.merkle().aux_root() {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -300,7 +298,7 @@ fn precheck_body(
             });
         }
         (None, None) => {
-            if proof.openings().merkle().aux_root() != &[0u8; 32] {
+            if proof.merkle().aux_root() != &[0u8; 32] {
                 return Err(VerifyError::RootMismatch {
                     section: MerkleSection::CompositionCommit,
                 });
@@ -308,8 +306,7 @@ fn precheck_body(
         }
     }
 
-    if proof.openings().merkle().fri_layer_roots() != proof.fri().fri_proof().layer_roots.as_slice()
-    {
+    if proof.merkle().fri_layer_roots() != proof.fri_proof().layer_roots.as_slice() {
         return Err(VerifyError::MerkleVerifyFailed {
             section: MerkleSection::FriRoots,
         });
@@ -317,7 +314,7 @@ fn precheck_body(
 
     stages.merkle_ok = true;
 
-    let transcript_kind = *proof.composition().kind();
+    let transcript_kind = *proof.kind();
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
     let mut transcript = Transcript::new(TranscriptHeader {
         version: context.common_ids.transcript_version_id.clone(),
@@ -333,10 +330,7 @@ fn precheck_body(
         .absorb_public_inputs(&public_inputs_bytes)
         .map_err(|_| VerifyError::TranscriptOrder)?;
     let trace_commit = proof.trace_commit().bytes;
-    let composition_commit = proof
-        .composition()
-        .composition_commit()
-        .map(|commit| commit.bytes);
+    let composition_commit = proof.composition_commit().map(|commit| commit.bytes);
     transcript
         .absorb_commitment_roots(trace_commit, composition_commit)
         .map_err(|_| VerifyError::TranscriptOrder)?;
@@ -366,13 +360,7 @@ fn precheck_body(
     let fri_seed = challenges
         .draw_fri_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
-    for (layer_index, _) in proof
-        .openings()
-        .merkle()
-        .fri_layer_roots()
-        .iter()
-        .enumerate()
-    {
+    for (layer_index, _) in proof.merkle().fri_layer_roots().iter().enumerate() {
         challenges
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
@@ -382,28 +370,31 @@ fn precheck_body(
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let query_count = stark_params.fri().queries as usize;
-    let fri_query_seed = derive_fri_query_seed(fri_seed, proof.fri().fri_proof());
+    let fri_query_seed = derive_fri_query_seed(fri_seed, proof.fri_proof());
     let expected_indices = derive_trace_query_indices(
         fri_query_seed,
         query_count,
-        proof.fri().fri_proof().initial_domain_size,
+        proof.fri_proof().initial_domain_size,
     )?;
 
-    validate_query_indices(proof.openings().trace().indices(), &expected_indices)?;
-    if let Some(composition_openings) = proof.openings().composition() {
+    validate_query_indices(
+        proof.openings_payload().trace().indices(),
+        &expected_indices,
+    )?;
+    if let Some(composition_openings) = proof.openings_payload().composition() {
         validate_query_indices(composition_openings.indices(), &expected_indices)?;
     }
 
     let trace_values = verify_trace_commitment(
         &stark_params,
         &proof.trace_commit().bytes,
-        proof.openings().trace(),
+        proof.openings_payload().trace(),
     )?;
 
-    if let Some(composition_commit) = proof.composition().composition_commit() {
+    if let Some(composition_commit) = proof.composition_commit() {
         let composition_openings =
             proof
-                .openings()
+                .openings_payload()
                 .composition()
                 .ok_or(VerifyError::CompositionInconsistent {
                     reason: "missing_composition_openings".to_string(),
@@ -412,8 +403,8 @@ fn precheck_body(
         verify_composition_alignment(
             &alignment_values,
             composition_openings.leaves(),
-            proof.openings().trace().indices(),
-            proof.fri().fri_proof(),
+            proof.openings_payload().trace().indices(),
+            proof.fri_proof(),
         )?;
 
         let composition_values = verify_composition_commitment(
@@ -423,7 +414,7 @@ fn precheck_body(
         )?;
 
         verify_ood_openings(
-            proof.openings().out_of_domain(),
+            proof.openings_payload().out_of_domain(),
             &trace_values,
             &composition_values,
             &ood_points,
@@ -431,7 +422,7 @@ fn precheck_body(
         )?;
         stages.composition_ok = true;
     } else {
-        if proof.openings().composition().is_some() {
+        if proof.openings_payload().composition().is_some() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_commit".to_string(),
             });
@@ -440,7 +431,7 @@ fn precheck_body(
     }
 
     let security_level = map_security_level(&context.profile);
-    if proof.fri().fri_proof().security_level != security_level {
+    if proof.fri_proof().security_level != security_level {
         return Err(VerifyError::FriVerifyFailed {
             issue: FriVerifyIssue::SecurityLevelMismatch,
         });
@@ -473,8 +464,8 @@ fn precheck_body(
         return Err(VerifyError::BodyLengthMismatch { declared, actual });
     }
 
-    if proof.telemetry().is_present() {
-        let telemetry = proof.telemetry().frame();
+    if proof.has_telemetry() {
+        let telemetry = proof.telemetry_frame();
         let expected_body_with_digest = match payload_len.checked_add(32) {
             Some(value) => value,
             None => {
@@ -536,7 +527,7 @@ fn precheck_body(
         }
 
         let mut canonical = proof.clone_using_parts();
-        let canonical_telemetry = canonical.telemetry_mut().frame_mut();
+        let canonical_telemetry = canonical.telemetry_frame_mut();
         canonical_telemetry.set_header_length(0);
         canonical_telemetry.set_body_length(0);
         canonical_telemetry.set_integrity_digest(DigestBytes::default());
@@ -545,12 +536,12 @@ fn precheck_body(
             .serialize_header(&canonical_payload)
             .map_err(VerifyError::from)?;
         let integrity_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
-        if proof.telemetry().frame().integrity_digest().bytes != integrity_digest {
+        if telemetry.integrity_digest().bytes != integrity_digest {
             return Err(VerifyError::IntegrityDigestMismatch);
         }
     }
 
-    enforce_resource_limits(*proof.composition().kind(), public_inputs, context, proof)?;
+    enforce_resource_limits(*proof.kind(), public_inputs, context, proof)?;
 
     Ok(PrecheckedBody {
         fri_seed,
