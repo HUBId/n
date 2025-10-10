@@ -184,6 +184,46 @@ impl Clone for Proof {
 }
 
 impl Proof {
+    /// Returns the composition binding wrapper describing proof kind and metadata.
+    pub fn composition(&self) -> &CompositionBinding {
+        &self.composition
+    }
+
+    /// Returns a mutable reference to the composition binding wrapper.
+    pub fn composition_mut(&mut self) -> &mut CompositionBinding {
+        &mut self.composition
+    }
+
+    /// Returns the FRI handle wrapper storing the decoded FRI payload.
+    pub fn fri(&self) -> &FriHandle {
+        &self.fri
+    }
+
+    /// Returns a mutable reference to the FRI handle wrapper.
+    pub fn fri_mut(&mut self) -> &mut FriHandle {
+        &mut self.fri
+    }
+
+    /// Returns the openings descriptor bundling Merkle roots and opening payloads.
+    pub fn openings(&self) -> &OpeningsDescriptor {
+        &self.openings
+    }
+
+    /// Returns a mutable reference to the openings descriptor wrapper.
+    pub fn openings_mut(&mut self) -> &mut OpeningsDescriptor {
+        &mut self.openings
+    }
+
+    /// Returns the telemetry option wrapper describing availability and payload.
+    pub fn telemetry(&self) -> &TelemetryOption {
+        &self.telemetry
+    }
+
+    /// Returns a mutable reference to the telemetry option wrapper.
+    pub fn telemetry_mut(&mut self) -> &mut TelemetryOption {
+        &mut self.telemetry
+    }
+
     /// Returns the declared proof version stored in the envelope header.
     pub fn version(&self) -> u16 {
         self.version
@@ -209,7 +249,7 @@ impl Proof {
     /// Delegates to the [`CompositionBinding`] wrapper to surface the selected
     /// proof kind while keeping callers on the public accessor.
     pub fn kind(&self) -> &ProofKind {
-        self.composition.kind()
+        self.composition().kind()
     }
 
     /// Returns a mutable reference to the canonical proof kind.
@@ -217,7 +257,7 @@ impl Proof {
     /// Uses the [`CompositionBinding`] wrapper so callers mutate the binding
     /// through the documented handle instead of touching struct fields.
     pub fn kind_mut(&mut self) -> &mut ProofKind {
-        self.composition.kind_mut()
+        self.composition_mut().kind_mut()
     }
 
     /// Returns the AIR specification identifier for the proof kind.
@@ -225,7 +265,7 @@ impl Proof {
     /// Forwarded through [`CompositionBinding`] to keep the selection metadata
     /// encapsulated behind the binding wrapper.
     pub fn air_spec_id(&self) -> &AirSpecId {
-        self.composition.air_spec_id()
+        self.composition().air_spec_id()
     }
 
     /// Returns a mutable reference to the AIR specification identifier.
@@ -233,7 +273,7 @@ impl Proof {
     /// Uses [`CompositionBinding`] so mutations flow through the wrapper
     /// instead of exposing internal storage.
     pub fn air_spec_id_mut(&mut self) -> &mut AirSpecId {
-        self.composition.air_spec_id_mut()
+        self.composition_mut().air_spec_id_mut()
     }
 
     /// Returns the canonical public input encoding.
@@ -241,7 +281,7 @@ impl Proof {
     /// Delegates to [`CompositionBinding`] to ensure public inputs are always
     /// read through the binding wrapper.
     pub fn public_inputs(&self) -> &[u8] {
-        self.composition.public_inputs()
+        self.composition().public_inputs()
     }
 
     /// Returns a mutable reference to the canonical public input encoding.
@@ -249,7 +289,7 @@ impl Proof {
     /// Calls into [`CompositionBinding`] so mutation sites consistently use the
     /// wrapper accessor.
     pub fn public_inputs_mut(&mut self) -> &mut Vec<u8> {
-        self.composition.public_inputs_mut()
+        self.composition_mut().public_inputs_mut()
     }
 
     /// Returns the digest binding the canonical public-input payload.
@@ -277,7 +317,7 @@ impl Proof {
     /// The value is retrieved through [`CompositionBinding`] to keep the digest
     /// coupled with the binding wrapper.
     pub fn composition_commit(&self) -> Option<&DigestBytes> {
-        self.composition.composition_commit()
+        self.composition().composition_commit()
     }
 
     /// Returns a mutable reference to the optional composition commitment digest.
@@ -285,7 +325,7 @@ impl Proof {
     /// Accesses [`CompositionBinding`] so callers continue to use the wrapper
     /// for mutating the optional commitment.
     pub fn composition_commit_mut(&mut self) -> Option<&mut DigestBytes> {
-        self.composition.composition_commit_mut()
+        self.composition_mut().composition_commit_mut()
     }
 
     /// Returns the Merkle commitment bundle for the proof.
@@ -293,7 +333,7 @@ impl Proof {
     /// Delegates to [`OpeningsDescriptor`] to expose the Merkle bundle through
     /// the descriptor wrapper.
     pub fn merkle(&self) -> &MerkleProofBundle {
-        self.openings.merkle()
+        self.openings().merkle()
     }
 
     /// Returns a mutable reference to the Merkle commitment bundle.
@@ -301,23 +341,23 @@ impl Proof {
     /// Uses the [`OpeningsDescriptor`] wrapper so mutation sites flow through
     /// the descriptor handle.
     pub fn merkle_mut(&mut self) -> &mut MerkleProofBundle {
-        self.openings.merkle_mut()
+        self.openings_mut().merkle_mut()
     }
 
     /// Returns the out-of-domain opening payloads.
     ///
     /// Provided via [`OpeningsDescriptor`] so consumers always access openings
     /// through the wrapper.
-    pub fn openings(&self) -> &Openings {
-        self.openings.openings()
+    pub fn openings_payload(&self) -> &Openings {
+        self.openings().openings()
     }
 
     /// Returns a mutable reference to the out-of-domain opening payloads.
     ///
     /// Forwarded through [`OpeningsDescriptor`] to centralize mutation through
     /// the wrapper handle.
-    pub fn openings_mut(&mut self) -> &mut Openings {
-        self.openings.openings_mut()
+    pub fn openings_payload_mut(&mut self) -> &mut Openings {
+        self.openings_mut().openings_mut()
     }
 
     /// Returns the FRI proof payload accompanying the envelope.
@@ -325,44 +365,44 @@ impl Proof {
     /// The payload lives behind the [`FriHandle`] wrapper so verifiers read it
     /// through the dedicated accessor.
     pub fn fri_proof(&self) -> &FriProof {
-        self.fri.fri_proof()
+        self.fri().fri_proof()
     }
 
     /// Returns a mutable reference to the FRI proof payload accompanying the envelope.
     ///
     /// Routed via [`FriHandle`] to ensure mutations stay behind the wrapper.
     pub fn fri_proof_mut(&mut self) -> &mut FriProof {
-        self.fri.fri_proof_mut()
+        self.fri_mut().fri_proof_mut()
     }
 
     /// Returns `true` when the proof payload contains telemetry data.
     ///
     /// Queries the [`TelemetryOption`] wrapper which tracks availability.
     pub fn has_telemetry(&self) -> bool {
-        self.telemetry.has_telemetry()
+        self.telemetry().is_present()
     }
 
     /// Sets the telemetry presence flag for the proof payload.
     ///
     /// Updates the [`TelemetryOption`] wrapper controlling telemetry presence.
     pub fn set_has_telemetry(&mut self, value: bool) {
-        self.telemetry.set_has_telemetry(value);
+        self.telemetry_mut().set_present(value);
     }
 
     /// Returns the telemetry frame describing declared lengths and digests.
     ///
     /// Delegates to [`TelemetryOption`] so callers read the frame through the
     /// wrapper.
-    pub fn telemetry(&self) -> &Telemetry {
-        self.telemetry.telemetry()
+    pub fn telemetry_frame(&self) -> &Telemetry {
+        self.telemetry().frame()
     }
 
     /// Returns a mutable reference to the telemetry frame.
     ///
     /// Accesses the [`TelemetryOption`] wrapper to expose mutable telemetry via
     /// the documented handle.
-    pub fn telemetry_mut(&mut self) -> &mut Telemetry {
-        self.telemetry.telemetry_mut()
+    pub fn telemetry_frame_mut(&mut self) -> &mut Telemetry {
+        self.telemetry_mut().frame_mut()
     }
 
     /// Clones the proof by reassembling all sections through [`Proof::from_parts`].
@@ -493,6 +533,36 @@ impl OpeningsDescriptor {
     /// Returns a mutable reference to the wrapped out-of-domain opening payloads.
     pub fn openings_mut(&mut self) -> &mut Openings {
         &mut self.openings
+    }
+
+    /// Returns the wrapped trace openings describing trace Merkle queries.
+    pub fn trace(&self) -> &TraceOpenings {
+        self.openings.trace()
+    }
+
+    /// Returns a mutable reference to the wrapped trace openings.
+    pub fn trace_mut(&mut self) -> &mut TraceOpenings {
+        self.openings.trace_mut()
+    }
+
+    /// Returns the optional composition openings wrapped by the descriptor.
+    pub fn composition(&self) -> Option<&CompositionOpenings> {
+        self.openings.composition()
+    }
+
+    /// Returns a mutable reference to the optional composition openings.
+    pub fn composition_mut(&mut self) -> Option<&mut CompositionOpenings> {
+        self.openings.composition_mut()
+    }
+
+    /// Returns the wrapped out-of-domain opening payloads accompanying the proof.
+    pub fn out_of_domain(&self) -> &Vec<OutOfDomainOpening> {
+        self.openings.out_of_domain()
+    }
+
+    /// Returns a mutable reference to the wrapped out-of-domain opening payloads.
+    pub fn out_of_domain_mut(&mut self) -> &mut Vec<OutOfDomainOpening> {
+        self.openings.out_of_domain_mut()
     }
 }
 
@@ -735,24 +805,44 @@ impl TelemetryOption {
         }
     }
 
+    /// Returns `true` when telemetry data is present in the proof payload.
+    pub fn is_present(&self) -> bool {
+        self.has_telemetry
+    }
+
+    /// Updates the telemetry presence flag for the proof payload.
+    pub fn set_present(&mut self, value: bool) {
+        self.has_telemetry = value;
+    }
+
+    /// Returns the wrapped telemetry frame describing declared lengths.
+    pub fn frame(&self) -> &Telemetry {
+        &self.telemetry
+    }
+
+    /// Returns a mutable reference to the wrapped telemetry frame.
+    pub fn frame_mut(&mut self) -> &mut Telemetry {
+        &mut self.telemetry
+    }
+
     /// Returns `true` when telemetry data is available.
     pub fn has_telemetry(&self) -> bool {
-        self.has_telemetry
+        self.is_present()
     }
 
     /// Mutably updates the telemetry presence flag.
     pub fn set_has_telemetry(&mut self, value: bool) {
-        self.has_telemetry = value;
+        self.set_present(value);
     }
 
     /// Returns the telemetry payload associated with the proof.
     pub fn telemetry(&self) -> &Telemetry {
-        &self.telemetry
+        self.frame()
     }
 
     /// Returns a mutable reference to the telemetry payload.
     pub fn telemetry_mut(&mut self) -> &mut Telemetry {
-        &mut self.telemetry
+        self.frame_mut()
     }
 }
 

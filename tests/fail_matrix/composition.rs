@@ -32,10 +32,9 @@ fn composition_rejects_leaf_bytes_mismatch() {
         other => panic!("unexpected verification outcome: {other:?}"),
     };
 
-    let composition = mutated
-        .proof
-        .openings()
-        .composition
+    let openings = mutated.proof.openings();
+    let composition_section = openings.composition();
+    let composition = composition_section
         .as_ref()
         .expect("composition openings available");
 

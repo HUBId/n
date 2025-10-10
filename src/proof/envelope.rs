@@ -211,12 +211,12 @@ impl ProofBuilder {
             telemetry_option,
         );
 
-        proof.set_has_telemetry(true);
+        proof.telemetry_mut().set_present(true);
 
         let payload = serialize_proof_payload(&proof).map_err(VerifyError::from)?;
         let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
 
-        let telemetry = proof.telemetry_mut();
+        let telemetry = proof.telemetry_mut().frame_mut();
         telemetry.set_header_length(header_bytes.len() as u32);
         telemetry.set_body_length((payload.len() + 32) as u32);
         let integrity = compute_integrity_digest(&header_bytes, &payload);
@@ -489,9 +489,9 @@ mod tests {
             .build()
             .expect("build sample proof");
 
-        assert!(proof.has_telemetry());
-        assert!(proof.composition_commit().is_some());
-        assert!(proof.telemetry().header_length() > 0);
+        assert!(proof.telemetry().is_present());
+        assert!(proof.composition().composition_commit().is_some());
+        assert!(proof.telemetry().frame().header_length() > 0);
         assert_ne!(proof.trace_commit().bytes, [0u8; 32]);
 
         proof
