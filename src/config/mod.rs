@@ -330,6 +330,13 @@ pub struct ProfileConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamDigest(pub DigestBytes);
 
+impl ParamDigest {
+    /// Returns the raw 32-byte parameter digest committed by the profile.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0.bytes
+    }
+}
+
 /// Digest binding a single proof's public inputs for deterministic batching.
 /// The hash is computed as `BLAKE3(PI_DIGEST_DOMAIN_TAG || proof_kind:u8 ||
 /// canonical_public_input_bytes)`.

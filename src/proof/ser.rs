@@ -282,9 +282,8 @@ fn serialize_proof_header_from_lengths(
     let mut buffer = Vec::new();
     write_u16(&mut buffer, proof.version());
     write_u8(&mut buffer, encode_proof_kind(*proof.kind()));
-    write_digest(&mut buffer, &proof.params_hash().0.bytes);
-    let air_spec_bytes = proof.air_spec_id().clone().bytes();
-    write_digest(&mut buffer, &air_spec_bytes.bytes);
+    write_digest(&mut buffer, proof.params_hash().as_bytes());
+    write_digest(&mut buffer, proof.air_spec_id().as_bytes());
 
     let public_len = ensure_u32(proof.public_inputs().len(), SerKind::PublicInputs, "len")?;
     write_u32(&mut buffer, public_len);
@@ -335,8 +334,8 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     let kind_byte = read_u8(&mut cursor, SerKind::Proof, "kind").map_err(VerifyError::from)?;
     let kind = decode_proof_kind(kind_byte)?;
 
-    let param_digest = ParamDigest(DigestBytes {
-        bytes: read_digest(&mut cursor, SerKind::Proof, "param_digest")
+    let params_hash = ParamDigest(DigestBytes {
+        bytes: read_digest(&mut cursor, SerKind::Proof, "params_hash")
             .map_err(VerifyError::from)?,
     });
 
@@ -462,7 +461,7 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
 
     Ok(Proof::from_parts(
         version,
-        param_digest,
+        params_hash,
         public_digest,
         trace_commit,
         binding,
@@ -935,29 +934,51 @@ mod tests {
             read_u8(&mut cursor, SerKind::Proof, "kind").unwrap(),
             super::encode_proof_kind(*proof.kind())
         );
-        read_digest(&mut cursor, SerKind::Proof, "param_digest").unwrap();
-        read_digest(&mut cursor, SerKind::Proof, "air_spec_id").unwrap();
+        assert_eq!(
+            read_digest(&mut cursor, SerKind::Proof, "params_hash").unwrap(),
+            *proof.params_hash().as_bytes()
+        );
+        assert_eq!(
+            read_digest(&mut cursor, SerKind::Proof, "air_spec_id").unwrap(),
+            *proof.air_spec_id().as_bytes()
+        );
         let public_len = read_u32(&mut cursor, SerKind::PublicInputs, "len").unwrap() as usize;
         let public_bytes = cursor
             .read_vec(SerKind::PublicInputs, "public_inputs", public_len)
             .unwrap();
         assert_eq!(public_bytes.as_slice(), proof.public_inputs());
-        read_digest(&mut cursor, SerKind::PublicInputs, "public_digest").unwrap();
-        read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit").unwrap();
+        assert_eq!(
+            read_digest(&mut cursor, SerKind::PublicInputs, "public_digest").unwrap(),
+            proof.public_digest().bytes
+        );
+        assert_eq!(
+            read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit").unwrap(),
+            proof.trace_commit().bytes
+        );
         assert_eq!(
             read_u8(&mut cursor, SerKind::CompositionCommitment, "flag").unwrap(),
-            1
+            if proof.composition_commit().is_some() {
+                1
+            } else {
+                0
+            }
         );
-        read_digest(
-            &mut cursor,
-            SerKind::CompositionCommitment,
-            "composition_commit",
-        )
-        .unwrap();
+        if let Some(commit) = proof.composition_commit() {
+            assert_eq!(
+                read_digest(
+                    &mut cursor,
+                    SerKind::CompositionCommitment,
+                    "composition_commit",
+                )
+                .unwrap(),
+                commit.bytes
+            );
+        }
         let merkle_len = read_u32(&mut cursor, SerKind::TraceCommitment, "len").unwrap() as usize;
         let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").unwrap() as usize;
         let openings_len = read_u32(&mut cursor, SerKind::Openings, "len").unwrap() as usize;
         let has_telemetry = read_u8(&mut cursor, SerKind::Telemetry, "flag").unwrap();
+        assert_eq!(has_telemetry, if proof.has_telemetry() { 1 } else { 0 });
         let telemetry_len = if has_telemetry == 1 {
             read_u32(&mut cursor, SerKind::Telemetry, "len").unwrap() as usize
         } else {
@@ -972,9 +993,13 @@ mod tests {
             .read_vec(SerKind::Openings, "openings_bytes", openings_len)
             .unwrap();
         if has_telemetry == 1 {
-            cursor
+            let telemetry_bytes = cursor
                 .read_vec(SerKind::Telemetry, "telemetry_bytes", telemetry_len)
                 .unwrap();
+            let expected =
+                serialize_telemetry_frame(proof.telemetry()).expect("serialize telemetry");
+            assert_eq!(telemetry_len, expected.len());
+            assert_eq!(telemetry_bytes, expected);
         }
         assert_eq!(cursor.remaining(), 0);
     }
