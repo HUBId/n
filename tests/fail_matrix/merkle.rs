@@ -22,20 +22,7 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     let slice = bytes.as_slice();
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec identifier
-
-    let public_len_start = cursor;
-    let public_len_end = public_len_start + 4;
-    let public_len = u32::from_le_bytes(
-        slice[public_len_start..public_len_end]
-            .try_into()
-            .expect("public length slice"),
-    ) as usize;
-    cursor += 4; // public length prefix
-    cursor += public_len; // public input bytes
-
     cursor += 32; // public digest
 
     let trace_commit_start = cursor;
@@ -44,49 +31,70 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
         .expect("trace commit slice");
 
     cursor = trace_commit_start + 32;
-    let composition_flag = slice[cursor];
-    cursor += 1;
-    if composition_flag == 1 {
-        cursor += 32; // composition digest
-    }
 
-    let merkle_len = u32::from_le_bytes(
+    let binding_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
-            .expect("merkle length slice"),
+            .expect("binding length slice"),
     ) as usize;
-    cursor += 4; // merkle length prefix
-    let fri_len = u32::from_le_bytes(
-        slice[cursor..cursor + 4]
-            .try_into()
-            .expect("fri length slice"),
-    ) as usize;
-    cursor += 4; // fri length prefix
+    cursor += 4 + binding_len;
+
     let openings_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
             .expect("openings length slice"),
     ) as usize;
-    cursor += 4; // openings length prefix
+    cursor += 4;
+
+    let fri_len = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("fri length slice"),
+    ) as usize;
+    cursor += 4;
 
     let telemetry_flag = slice[cursor];
     cursor += 1;
-    if telemetry_flag == 1 {
-        cursor += 4; // telemetry length prefix
-    }
+    let telemetry_len = if telemetry_flag == 1 {
+        let len = u32::from_le_bytes(
+            slice[cursor..cursor + 4]
+                .try_into()
+                .expect("telemetry length slice"),
+        ) as usize;
+        cursor += 4;
+        len
+    } else {
+        0
+    };
 
-    let merkle_start = cursor;
-    let core_root = slice[merkle_start..merkle_start + 32]
+    let descriptor_start = cursor;
+    let mut descriptor_cursor = descriptor_start;
+    let merkle_block_len = u32::from_le_bytes(
+        slice[descriptor_cursor..descriptor_cursor + 4]
+            .try_into()
+            .expect("merkle block length slice"),
+    ) as usize;
+    descriptor_cursor += 4;
+
+    let core_root = slice[descriptor_cursor..descriptor_cursor + 32]
         .try_into()
         .expect("core root slice");
-    let aux_root = slice[merkle_start + 32..merkle_start + 64]
+    let aux_root = slice[descriptor_cursor + 32..descriptor_cursor + 64]
         .try_into()
         .expect("aux root slice");
 
-    // Ensure cursor accounts for the full merkle section for validation sanity.
-    let _merkle_end = merkle_start + merkle_len;
-    let _fri_end = _merkle_end + fri_len;
-    let _openings_end = _fri_end + openings_len;
+    descriptor_cursor += merkle_block_len;
+    let openings_block_len = u32::from_le_bytes(
+        slice[descriptor_cursor..descriptor_cursor + 4]
+            .try_into()
+            .expect("openings block length slice"),
+    ) as usize;
+    descriptor_cursor += 4 + openings_block_len;
+
+    debug_assert_eq!(descriptor_cursor - descriptor_start, openings_len);
+    let fri_start = descriptor_start + openings_len;
+    let _fri_end = fri_start + fri_len;
+    let _payload_end = _fri_end + telemetry_len;
 
     (trace_commit, core_root, aux_root)
 }
