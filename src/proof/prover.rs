@@ -38,9 +38,10 @@ use crate::proof::transcript::{
     Transcript as ProofTranscript, TranscriptBlockContext, TranscriptHeader,
 };
 use crate::proof::types::{
-    CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
-    MerkleProofBundle, Openings, OutOfDomainOpening, Proof, Telemetry, TraceOpenings,
-    PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    CompositionBinding, CompositionOpenings, FriHandle, FriParametersMirror,
+    MerkleAuthenticationPath, MerklePathNode, MerkleProofBundle, Openings, OpeningsDescriptor,
+    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_ALPHA_VECTOR_LEN,
+    PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
 use crate::ser::{SerError, SerKind};
 use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
@@ -257,11 +258,7 @@ pub fn build_envelope(
         query_budget: security_level.query_budget() as u16,
     };
 
-    let merkle = MerkleProofBundle {
-        core_root,
-        aux_root,
-        fri_layer_roots,
-    };
+    let merkle = MerkleProofBundle::new(core_root, aux_root, fri_layer_roots);
 
     let telemetry = Telemetry {
         header_length: 0,
@@ -270,31 +267,35 @@ pub fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
-    let mut proof = Proof {
-        version: PROOF_VERSION,
-        kind: proof_kind,
-        param_digest: context.param_digest.clone(),
+    let binding = CompositionBinding::new(
+        proof_kind,
         air_spec_id,
-        public_inputs: public_inputs_bytes,
-        public_digest: DigestBytes {
+        public_inputs_bytes,
+        Some(DigestBytes { bytes: aux_root }),
+    );
+
+    let openings = Openings {
+        trace: trace_openings,
+        composition: Some(composition_openings),
+        out_of_domain: ood_openings,
+    };
+
+    let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+    let fri_handle = FriHandle::new(fri_proof);
+    let telemetry_option = TelemetryOption::new(true, telemetry);
+
+    let mut proof = Proof::from_parts(
+        PROOF_VERSION,
+        context.param_digest.clone(),
+        DigestBytes {
             bytes: public_digest,
         },
-        trace_commit: DigestBytes {
-            bytes: merkle.core_root,
-        },
-        composition_commit: Some(DigestBytes {
-            bytes: merkle.aux_root,
-        }),
-        merkle,
-        openings: Openings {
-            trace: trace_openings,
-            composition: Some(composition_openings),
-            out_of_domain: ood_openings,
-        },
-        fri_proof,
-        has_telemetry: true,
-        telemetry,
-    };
+        DigestBytes { bytes: core_root },
+        binding,
+        openings_descriptor,
+        fri_handle,
+        telemetry_option,
+    );
 
     let body_payload = proof.serialize_payload().map_err(ProverError::from)?;
     let header_bytes = proof
