@@ -1542,7 +1542,7 @@ fn generate_proof_propagates_param_digest_mismatch() {
     .expect_err("params hash mismatch propagates");
     assert!(matches!(
         error,
-        StarkError::InvalidInput("prover_param_digest_mismatch")
+        StarkError::InvalidInput("prover_params_hash_mismatch")
     ));
 }
 
