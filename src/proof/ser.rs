@@ -200,7 +200,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         ));
     }
 
-    if proof.trace_commit().bytes != *proof.openings().merkle().core_root() {
+    if proof.trace_commit().bytes != *proof.merkle().core_root() {
         return Err(SerError::invalid_value(
             SerKind::TraceCommitment,
             "trace_root_mismatch",
@@ -208,11 +208,11 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
     }
 
     match (
-        proof.composition().composition_commit(),
-        proof.openings().composition(),
+        proof.composition_commit(),
+        proof.openings_payload().composition(),
     ) {
         (Some(commit), Some(_)) => {
-            if commit.bytes != *proof.openings().merkle().aux_root() {
+            if commit.bytes != *proof.merkle().aux_root() {
                 return Err(SerError::invalid_value(
                     SerKind::CompositionCommitment,
                     "composition_root_mismatch",
@@ -232,7 +232,7 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
             ));
         }
         (None, None) => {
-            if proof.openings().merkle().aux_root() != &[0u8; 32] {
+            if proof.merkle().aux_root() != &[0u8; 32] {
                 return Err(SerError::invalid_value(
                     SerKind::CompositionCommitment,
                     "aux_root_without_commit",
@@ -241,10 +241,10 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
         }
     }
 
-    let merkle_bytes = serialize_merkle_bundle(proof.openings().merkle())?;
+    let merkle_bytes = serialize_merkle_bundle(proof.merkle())?;
     let fri_bytes = serialize_fri_proof(proof.fri().fri_proof())?;
-    let openings_bytes = serialize_openings(proof.openings().openings())?;
-    let telemetry_bytes = if proof.telemetry().is_present() {
+    let openings_bytes = serialize_openings(proof.openings_payload())?;
+    let telemetry_bytes = if proof.telemetry().has_telemetry() {
         Some(serialize_telemetry_frame(proof.telemetry().frame())?)
     } else {
         None
@@ -284,18 +284,18 @@ fn serialize_proof_header_from_lengths(
 ) -> Result<Vec<u8>, SerError> {
     let mut buffer = Vec::new();
     write_u16(&mut buffer, proof.version());
-    write_u8(&mut buffer, encode_proof_kind(*proof.composition().kind()));
+    write_u8(&mut buffer, encode_proof_kind(*proof.kind()));
     write_digest(&mut buffer, proof.params_hash().as_bytes());
-    write_digest(&mut buffer, proof.composition().air_spec_id().as_bytes());
+    write_digest(&mut buffer, proof.air_spec_id().as_bytes());
 
-    let public_inputs = proof.composition().public_inputs();
+    let public_inputs = proof.public_inputs();
     let public_len = ensure_u32(public_inputs.len(), SerKind::PublicInputs, "len")?;
     write_u32(&mut buffer, public_len);
     write_bytes(&mut buffer, public_inputs);
 
     write_digest(&mut buffer, &proof.public_digest().bytes);
     write_digest(&mut buffer, &proof.trace_commit().bytes);
-    match proof.composition().composition_commit() {
+    match proof.composition_commit() {
         Some(digest) => {
             write_u8(&mut buffer, 1);
             write_digest(&mut buffer, &digest.bytes);
@@ -312,10 +312,14 @@ fn serialize_proof_header_from_lengths(
 
     write_u8(
         &mut buffer,
-        if proof.telemetry().is_present() { 1 } else { 0 },
+        if proof.telemetry().has_telemetry() {
+            1
+        } else {
+            0
+        },
     );
 
-    if proof.telemetry().is_present() {
+    if proof.telemetry().has_telemetry() {
         let telemetry_len = telemetry_len.ok_or_else(|| {
             SerError::invalid_value(SerKind::Telemetry, "missing_telemetry_bytes")
         })?;
@@ -743,10 +747,10 @@ pub fn deserialize_out_of_domain_opening(bytes: &[u8]) -> Result<OutOfDomainOpen
 
 /// Serialises the proof header given the payload bytes.
 pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Result<Vec<u8>, SerError> {
-    let merkle_len = serialize_merkle_bundle(proof.openings().merkle())?.len();
+    let merkle_len = serialize_merkle_bundle(proof.merkle())?.len();
     let fri_len = serialize_fri_proof(proof.fri().fri_proof())?.len();
-    let openings_len = serialize_openings(proof.openings().openings())?.len();
-    let telemetry_len = if proof.telemetry().is_present() {
+    let openings_len = serialize_openings(proof.openings_payload())?.len();
+    let telemetry_len = if proof.telemetry().has_telemetry() {
         Some(serialize_telemetry_frame(proof.telemetry().frame())?.len())
     } else {
         None
@@ -766,10 +770,10 @@ pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Result<Vec<u8>, 
 
 /// Serialises the proof payload (body) without the integrity digest.
 pub fn serialize_proof_payload(proof: &Proof) -> Result<Vec<u8>, SerError> {
-    let merkle_bytes = serialize_merkle_bundle(proof.openings().merkle())?;
+    let merkle_bytes = serialize_merkle_bundle(proof.merkle())?;
     let fri_bytes = serialize_fri_proof(proof.fri().fri_proof())?;
-    let openings_bytes = serialize_openings(proof.openings().openings())?;
-    let telemetry_bytes = if proof.telemetry().is_present() {
+    let openings_bytes = serialize_openings(proof.openings_payload())?;
+    let telemetry_bytes = if proof.telemetry().has_telemetry() {
         Some(serialize_telemetry_frame(proof.telemetry().frame())?)
     } else {
         None
@@ -983,7 +987,11 @@ mod tests {
         let has_telemetry = read_u8(&mut cursor, SerKind::Telemetry, "flag").unwrap();
         assert_eq!(
             has_telemetry,
-            if proof.telemetry().is_present() { 1 } else { 0 }
+            if proof.telemetry().has_telemetry() {
+                1
+            } else {
+                0
+            }
         );
         let telemetry_len = if has_telemetry == 1 {
             read_u32(&mut cursor, SerKind::Telemetry, "len").unwrap() as usize
