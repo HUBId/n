@@ -624,7 +624,11 @@ fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
 
 fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
     let mut mutated = proof.clone_using_parts();
-    if let Some(root) = mutated.merkle_mut().fri_layer_roots.first_mut() {
+    if let Some(root) = mutated
+        .merkle_mut()
+        .fri_layer_roots_mut()
+        .first_mut()
+    {
         if let Some(byte) = root.first_mut() {
             *byte ^= 0x1;
         } else {
@@ -638,7 +642,9 @@ fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
 }
 
 fn mutate_param_digest(proof: &mut Proof) {
-    proof.params_hash_mut().0.bytes[0] ^= 0x1;
+    let mut updated = *proof.params_hash().as_bytes();
+    updated[0] ^= 0x1;
+    *proof.params_hash_mut() = ParamDigest(DigestBytes { bytes: updated });
 }
 
 fn mutate_public_digest(bytes: &ProofBytes) -> ProofBytes {
