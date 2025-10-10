@@ -303,12 +303,10 @@ pub fn build_envelope(
         .map_err(ProverError::from)?;
 
     if proof.telemetry().has_telemetry() {
-        const TELEMETRY_FIXUP_MAX_ATTEMPTS: usize = 5;
+        const TELEMETRY_FIXUP_MAX_ATTEMPTS: usize = 4;
 
-        let update_telemetry = |proof: &mut Proof,
-                                header_bytes: &[u8],
-                                body_payload: &[u8]|
-         -> Result<(), ProverError> {
+        let mut attempt = 0usize;
+        loop {
             let body_length = body_payload
                 .len()
                 .checked_add(DIGEST_SIZE)
@@ -317,51 +315,58 @@ pub fn build_envelope(
                 .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
             let header_length = u32::try_from(header_bytes.len())
                 .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
+
             let telemetry = proof.telemetry_mut().frame_mut();
+            let needs_update = telemetry.body_length() != body_length
+                || telemetry.header_length() != header_length;
             telemetry.set_body_length(body_length);
             telemetry.set_header_length(header_length);
-            telemetry.set_integrity_digest(DigestBytes {
-                bytes: compute_integrity_digest(header_bytes, body_payload),
-            });
-            Ok(())
-        };
 
-        let mut attempts = 0usize;
-        loop {
-            update_telemetry(&mut proof, &header_bytes, &body_payload)?;
-            let updated_body = proof.serialize_payload().map_err(ProverError::from)?;
-            let updated_header = proof
-                .serialize_header(&updated_body)
+            if !needs_update {
+                break;
+            }
+
+            body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+            header_bytes = proof
+                .serialize_header(&body_payload)
                 .map_err(ProverError::from)?;
 
-            if updated_body.len() == body_payload.len()
-                && updated_header.len() == header_bytes.len()
-            {
-                update_telemetry(&mut proof, &updated_header, &updated_body)?;
-                let confirmed_body = proof.serialize_payload().map_err(ProverError::from)?;
-                let confirmed_header = proof
-                    .serialize_header(&confirmed_body)
-                    .map_err(ProverError::from)?;
-
-                if confirmed_body.len() == updated_body.len()
-                    && confirmed_header.len() == updated_header.len()
-                {
-                    body_payload = confirmed_body;
-                    header_bytes = confirmed_header;
-                    break;
-                }
-
-                body_payload = confirmed_body;
-                header_bytes = confirmed_header;
-            } else {
-                body_payload = updated_body;
-                header_bytes = updated_header;
-            }
-
-            attempts += 1;
-            if attempts >= TELEMETRY_FIXUP_MAX_ATTEMPTS {
+            attempt += 1;
+            if attempt >= TELEMETRY_FIXUP_MAX_ATTEMPTS {
                 return Err(ProverError::Serialization(SerKind::Telemetry));
             }
+        }
+
+        {
+            let telemetry = proof.telemetry_mut().frame_mut();
+            telemetry.set_integrity_digest(DigestBytes::default());
+        }
+
+        let canonical_body = proof.serialize_payload().map_err(ProverError::from)?;
+        let canonical_header = proof
+            .serialize_header(&canonical_body)
+            .map_err(ProverError::from)?;
+        let integrity = compute_integrity_digest(&canonical_header, &canonical_body);
+
+        {
+            let telemetry = proof.telemetry_mut().frame_mut();
+            telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
+        }
+
+        body_payload = proof.serialize_payload().map_err(ProverError::from)?;
+        header_bytes = proof
+            .serialize_header(&body_payload)
+            .map_err(ProverError::from)?;
+
+        let telemetry = proof.telemetry().frame();
+        let body_length = body_payload
+            .len()
+            .checked_add(DIGEST_SIZE)
+            .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
+        if telemetry.body_length() != body_length as u32
+            || telemetry.header_length() != header_bytes.len() as u32
+        {
+            return Err(ProverError::Serialization(SerKind::Telemetry));
         }
     }
 
