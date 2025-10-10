@@ -318,7 +318,7 @@ fn precheck_body(
         poseidon_param_id: context.profile.poseidon_param_id.clone(),
         air_spec_id: air_spec_id.clone(),
         proof_kind: transcript_kind,
-        param_digest: context.param_digest.clone(),
+        params_hash: context.param_digest.clone(),
     })
     .map_err(|_| VerifyError::TranscriptOrder)?;
 
