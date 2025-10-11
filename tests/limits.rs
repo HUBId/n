@@ -23,7 +23,7 @@ use rpp_stark::proof::types::{
     OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, VerifyError,
     PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes};
 
 use rpp_stark::fri::{FriProof, FriQueryLayerProof, FriQueryProof, FriSecurityLevel};
@@ -38,7 +38,7 @@ fn proof_size_limit_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
@@ -62,7 +62,7 @@ fn fri_layer_overflow_is_rejected() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 3, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
@@ -88,7 +88,7 @@ fn fri_query_budget_limit_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 3, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
@@ -129,7 +129,7 @@ fn trace_degree_bound_is_enforced() {
     let proof_bytes = build_envelope(&config, &context, &inputs, 1, 1, 4);
     let public_inputs = inputs.as_public_inputs();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,

@@ -1,7 +1,7 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 
 use super::{
     duplicate_composition_index, duplicate_trace_index, mismatch_composition_indices,
@@ -17,7 +17,7 @@ fn trace_rejects_unsorted_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -44,7 +44,7 @@ fn trace_rejects_duplicate_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -71,7 +71,7 @@ fn trace_rejects_mismatched_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -101,7 +101,7 @@ fn composition_rejects_unsorted_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -136,7 +136,7 @@ fn composition_rejects_duplicate_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -171,7 +171,7 @@ fn composition_rejects_mismatched_indices() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,

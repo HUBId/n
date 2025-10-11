@@ -256,7 +256,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
     .expect("proof generation succeeds");
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &proof_bytes,
@@ -352,7 +352,7 @@ fn verification_rejects_tampered_telemetry_fields() {
     let tampered_header_bytes = ProofBytes::new(
         serialize_proof(&tampered_header).expect("serialize tampered header proof"),
     );
-    let header_report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let header_report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered_header_bytes,
@@ -380,7 +380,7 @@ fn verification_rejects_tampered_telemetry_fields() {
     let tampered_digest_bytes = ProofBytes::new(
         serialize_proof(&tampered_digest).expect("serialize tampered digest proof"),
     );
-    let digest_report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let digest_report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered_digest_bytes,
@@ -416,7 +416,7 @@ fn verification_report_flags_param_digest_flip() {
     let mutated_bytes = reencode_proof(&mut proof);
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated_bytes,
@@ -441,7 +441,7 @@ fn verification_report_marks_all_stages_on_success_path() {
     let proof_bytes = fixture.proof_bytes();
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &proof_bytes,
@@ -475,7 +475,7 @@ fn verification_report_flags_public_stage_failure() {
     let mutated_bytes = reencode_proof(&mut mutated_proof);
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated_bytes,
@@ -516,7 +516,7 @@ fn verification_report_flags_merkle_stage_failure() {
     let mutated_bytes = corrupt_fri_layer_root(&fixture.proof());
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated_bytes,
@@ -560,7 +560,7 @@ fn verification_report_flags_composition_stage_failure() {
         flip_composition_leaf_byte(&fixture.proof()).expect("composition openings present");
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated.bytes,
@@ -602,7 +602,7 @@ fn verification_report_flags_fri_stage_failure() {
     let mutated = perturb_fri_fold_challenge(&fixture.proof());
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated.bytes,
@@ -732,7 +732,7 @@ fn proof_decode_rejects_public_digest_tampering() {
     assert!(matches!(decode_error, VerifyError::PublicDigestMismatch));
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let verify_err = rpp_stark::proof::verifier::verify_proof_bytes(
+    let verify_err = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated,
@@ -1037,7 +1037,7 @@ fn verification_report_flags_fri_challenge_flip() {
     let mutated_bytes = reencode_proof(&mut proof);
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated_bytes,
@@ -1178,7 +1178,7 @@ fn verification_report_flags_header_trace_root_mismatch() {
 
     let tampered = mutate_header_trace_root(&proof_bytes);
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let err = rpp_stark::proof::verifier::verify_proof_bytes(
+    let err = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered,
@@ -1252,7 +1252,7 @@ fn verification_report_flags_header_composition_root_mismatch() {
 
     let tampered = mutate_header_composition_root(&proof_bytes);
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let err = rpp_stark::proof::verifier::verify_proof_bytes(
+    let err = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered,
@@ -1654,7 +1654,7 @@ fn verification_report_flags_proof_size_overflow() {
     let mut tight_context = setup.verifier_context.clone();
     tight_context.limits.max_proof_size_bytes = 64; // enforce a strict budget
 
-    let report = rpp_stark::proof::verifier::verify_proof_bytes(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &proof_bytes,

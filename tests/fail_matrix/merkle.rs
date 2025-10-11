@@ -1,7 +1,7 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::{MerkleSection, VerifyError};
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 use rpp_stark::utils::serialization::ProofBytes;
 use std::convert::TryInto;
 
@@ -126,7 +126,7 @@ fn merkle_rejects_header_root_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -172,7 +172,7 @@ fn merkle_rejects_corrupted_trace_path() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -214,7 +214,7 @@ fn merkle_rejects_inconsistent_trace_paths() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,

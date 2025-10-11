@@ -122,17 +122,6 @@ pub fn verify(
     verify_impl(declared_kind, public_inputs, proof_bytes, config, context)
 }
 
-/// Backwards-compatible alias for legacy callers.
-pub fn verify_proof_bytes(
-    declared_kind: ConfigProofKind,
-    public_inputs: &PublicInputs<'_>,
-    proof_bytes: &ProofBytes,
-    config: &ProofSystemConfig,
-    context: &VerifierContext,
-) -> Result<VerifyReport, VerifyError> {
-    verify(declared_kind, public_inputs, proof_bytes, config, context)
-}
-
 fn should_return_report(error: &VerifyError) -> bool {
     matches!(
         error,

@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 use rpp_stark::utils::serialization::ProofBytes;
 
 use super::fixture::header_layout;
@@ -45,7 +45,7 @@ fn telemetry_rejects_header_length_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -77,7 +77,7 @@ fn telemetry_rejects_body_length_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -109,7 +109,7 @@ fn telemetry_rejects_integrity_digest_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
