@@ -14,10 +14,13 @@
 //! | trace commit (32B)   |                                              |
 //! | binding len (u32)    |                                              |
 //! | binding bytes        |                                              |
+//! | openings offset (u32)|                                              |
 //! | openings len (u32)   |                                              |
+//! | fri offset (u32)     |                                              |
 //! | fri len (u32)        |                                              |
 //! | telemetry flag (u8)  |                                              |
-//! | telemetry len? (u32) |                                              |
+//! | telemetry offset (u32, gated by flag) |                             |
+//! | telemetry len (u32, gated by flag)    |                             |
 //! +----------------------+----------------------------------------------+
 //! ```
 //!
@@ -44,6 +47,204 @@ use crate::ser::{
     write_digest, write_u16, write_u32, write_u8, ByteReader, SerError, SerKind, DIGEST_SIZE,
 };
 use crate::utils::serialization::DigestBytes;
+
+#[derive(Debug, Clone, Copy)]
+struct PayloadHandle {
+    offset: u32,
+    length: u32,
+}
+
+impl PayloadHandle {
+    fn new(offset: u32, length: u32) -> Self {
+        Self { offset, length }
+    }
+
+    fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    fn length(&self) -> u32 {
+        self.length
+    }
+
+    fn end(&self) -> Option<u32> {
+        self.offset.checked_add(self.length)
+    }
+
+    fn range(&self) -> std::ops::Range<usize> {
+        let start = self.offset as usize;
+        let end = start + self.length as usize;
+        start..end
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct OptionalPayloadHandle {
+    present: bool,
+    offset: u32,
+    length: u32,
+}
+
+impl OptionalPayloadHandle {
+    fn present(offset: u32, length: u32) -> Self {
+        Self {
+            present: true,
+            offset,
+            length,
+        }
+    }
+
+    fn absent(offset: u32) -> Self {
+        Self {
+            present: false,
+            offset,
+            length: 0,
+        }
+    }
+
+    fn is_present(&self) -> bool {
+        self.present
+    }
+
+    fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    fn length(&self) -> u32 {
+        self.length
+    }
+
+    fn end(&self) -> Option<u32> {
+        if self.present {
+            self.offset.checked_add(self.length)
+        } else {
+            Some(self.offset)
+        }
+    }
+
+    fn range(&self) -> Option<std::ops::Range<usize>> {
+        if !self.present {
+            return None;
+        }
+        let start = self.offset as usize;
+        let end = start + self.length as usize;
+        Some(start..end)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PayloadLayout {
+    openings: PayloadHandle,
+    fri: PayloadHandle,
+    telemetry: OptionalPayloadHandle,
+    total_len: u32,
+}
+
+impl PayloadLayout {
+    fn from_lengths(
+        openings_len: usize,
+        fri_len: usize,
+        telemetry_len: Option<usize>,
+    ) -> Result<Self, SerError> {
+        let openings_len = ensure_u32(openings_len, SerKind::Openings, "descriptor_len")?;
+        let openings = PayloadHandle::new(0, openings_len);
+        let mut next_offset = openings
+            .end()
+            .ok_or_else(|| SerError::invalid_value(SerKind::Proof, "payload_overflow"))?;
+
+        let fri_len = ensure_u32(fri_len, SerKind::Fri, "len")?;
+        let fri = PayloadHandle::new(next_offset, fri_len);
+        next_offset = fri
+            .end()
+            .ok_or_else(|| SerError::invalid_value(SerKind::Proof, "payload_overflow"))?;
+
+        let telemetry = match telemetry_len {
+            Some(len) => {
+                let len = ensure_u32(len, SerKind::Telemetry, "len")?;
+                let handle = OptionalPayloadHandle::present(next_offset, len);
+                next_offset = handle
+                    .end()
+                    .ok_or_else(|| SerError::invalid_value(SerKind::Proof, "payload_overflow"))?;
+                handle
+            }
+            None => OptionalPayloadHandle::absent(next_offset),
+        };
+
+        Ok(Self {
+            openings,
+            fri,
+            telemetry,
+            total_len: next_offset,
+        })
+    }
+
+    fn from_handles(
+        openings: PayloadHandle,
+        fri: PayloadHandle,
+        telemetry: OptionalPayloadHandle,
+    ) -> Result<Self, VerifyError> {
+        if openings.offset() != 0 {
+            return Err(VerifyError::Serialization(SerKind::Proof));
+        }
+
+        let openings_end = openings
+            .end()
+            .ok_or(VerifyError::Serialization(SerKind::Proof))?;
+
+        if fri.offset() != openings_end {
+            return Err(VerifyError::Serialization(SerKind::Fri));
+        }
+
+        let fri_end = fri.end().ok_or(VerifyError::Serialization(SerKind::Fri))?;
+
+        let (telemetry, total_len) = if telemetry.is_present() {
+            if telemetry.offset() != fri_end {
+                return Err(VerifyError::Serialization(SerKind::Telemetry));
+            }
+            let end = telemetry
+                .end()
+                .ok_or(VerifyError::Serialization(SerKind::Telemetry))?;
+            (telemetry, end)
+        } else {
+            (OptionalPayloadHandle::absent(fri_end), fri_end)
+        };
+
+        Ok(Self {
+            openings,
+            fri,
+            telemetry,
+            total_len,
+        })
+    }
+
+    fn openings(&self) -> PayloadHandle {
+        self.openings
+    }
+
+    fn fri(&self) -> PayloadHandle {
+        self.fri
+    }
+
+    fn telemetry(&self) -> OptionalPayloadHandle {
+        self.telemetry
+    }
+
+    fn telemetry_present(&self) -> bool {
+        self.telemetry.is_present()
+    }
+
+    fn total_len(&self) -> u32 {
+        self.total_len
+    }
+
+    fn openings_end(&self) -> usize {
+        self.openings.end().expect("payload layout openings end") as usize
+    }
+
+    fn fri_end(&self) -> usize {
+        self.fri.end().expect("payload layout fri end") as usize
+    }
+}
 
 /// Computes the commitment digest over core, auxiliary and FRI layer roots.
 pub fn compute_commitment_digest(
@@ -290,17 +491,15 @@ pub fn serialize_proof(proof: &Proof) -> Result<Vec<u8>, SerError> {
     let fri_bytes = proof.fri().serialize_bytes()?;
     let telemetry_bytes = proof.telemetry().serialize_bytes()?;
 
-    let header = serialize_proof_header_from_lengths(
-        proof,
-        &binding_bytes,
+    let layout = PayloadLayout::from_lengths(
         openings_bytes.len(),
         fri_bytes.len(),
         telemetry_bytes.as_ref().map(|bytes| bytes.len()),
     )?;
 
-    let payload_capacity = openings_bytes.len()
-        + fri_bytes.len()
-        + telemetry_bytes.as_ref().map_or(0, |bytes| bytes.len());
+    let header = serialize_proof_header_from_lengths(proof, &binding_bytes, &layout)?;
+
+    let payload_capacity = layout.total_len() as usize;
 
     let mut out = Vec::with_capacity(header.len() + payload_capacity);
     out.extend_from_slice(&header);
@@ -320,22 +519,20 @@ pub fn serialize_proof_header(proof: &Proof, payload: &[u8]) -> Result<Vec<u8>, 
     let fri_bytes = proof.fri().serialize_bytes()?;
     let telemetry_bytes = proof.telemetry().serialize_bytes()?;
 
-    let telemetry_total = telemetry_bytes.as_ref().map_or(0, |bytes| bytes.len());
-    let expected_total = openings_bytes.len() + fri_bytes.len() + telemetry_total;
-    if payload.len() != expected_total {
+    let layout = PayloadLayout::from_lengths(
+        openings_bytes.len(),
+        fri_bytes.len(),
+        telemetry_bytes.as_ref().map(|bytes| bytes.len()),
+    )?;
+
+    if payload.len() != layout.total_len() as usize {
         return Err(SerError::invalid_value(
             SerKind::Proof,
             "payload_length_mismatch",
         ));
     }
 
-    serialize_proof_header_from_lengths(
-        proof,
-        &binding_bytes,
-        openings_bytes.len(),
-        fri_bytes.len(),
-        telemetry_bytes.as_ref().map(|bytes| bytes.len()),
-    )
+    serialize_proof_header_from_lengths(proof, &binding_bytes, &layout)
 }
 
 /// Serialises the proof payload (body) without the integrity digest.
@@ -344,9 +541,13 @@ pub fn serialize_proof_payload(proof: &Proof) -> Result<Vec<u8>, SerError> {
     let fri_bytes = proof.fri().serialize_bytes()?;
     let telemetry_bytes = proof.telemetry().serialize_bytes()?;
 
-    let capacity = openings_bytes.len()
-        + fri_bytes.len()
-        + telemetry_bytes.as_ref().map_or(0, |bytes| bytes.len());
+    let layout = PayloadLayout::from_lengths(
+        openings_bytes.len(),
+        fri_bytes.len(),
+        telemetry_bytes.as_ref().map(|bytes| bytes.len()),
+    )?;
+
+    let capacity = layout.total_len() as usize;
     let mut buffer = Vec::with_capacity(capacity);
     buffer.extend_from_slice(&openings_bytes);
     buffer.extend_from_slice(&fri_bytes);
@@ -359,9 +560,7 @@ pub fn serialize_proof_payload(proof: &Proof) -> Result<Vec<u8>, SerError> {
 fn serialize_proof_header_from_lengths(
     proof: &Proof,
     binding_bytes: &[u8],
-    openings_len: usize,
-    fri_len: usize,
-    telemetry_len: Option<usize>,
+    layout: &PayloadLayout,
 ) -> Result<Vec<u8>, SerError> {
     let mut buffer = Vec::new();
     write_u16(&mut buffer, proof.version());
@@ -373,23 +572,95 @@ fn serialize_proof_header_from_lengths(
     write_u32(&mut buffer, binding_len);
     write_bytes(&mut buffer, binding_bytes);
 
-    let openings_len = ensure_u32(openings_len, SerKind::Openings, "descriptor_len")?;
-    write_u32(&mut buffer, openings_len);
-    let fri_len = ensure_u32(fri_len, SerKind::Fri, "len")?;
-    write_u32(&mut buffer, fri_len);
+    write_payload_handle(&mut buffer, layout.openings());
+    write_payload_handle(&mut buffer, layout.fri());
 
     let telemetry_present = proof.telemetry().is_present();
-    write_u8(&mut buffer, if telemetry_present { 1 } else { 0 });
-
-    if telemetry_present {
-        let telemetry_len = telemetry_len.ok_or_else(|| {
-            SerError::invalid_value(SerKind::Telemetry, "missing_telemetry_bytes")
-        })?;
-        let telemetry_len = ensure_u32(telemetry_len, SerKind::Telemetry, "len")?;
-        write_u32(&mut buffer, telemetry_len);
+    if telemetry_present != layout.telemetry_present() {
+        return Err(SerError::invalid_value(
+            SerKind::Telemetry,
+            if telemetry_present {
+                "missing_telemetry_bytes"
+            } else {
+                "unexpected_telemetry_bytes"
+            },
+        ));
     }
 
+    write_optional_payload_handle(&mut buffer, layout.telemetry());
+
     Ok(buffer)
+}
+
+fn write_payload_handle(buffer: &mut Vec<u8>, handle: PayloadHandle) {
+    write_u32(buffer, handle.offset());
+    write_u32(buffer, handle.length());
+}
+
+fn write_optional_payload_handle(buffer: &mut Vec<u8>, handle: OptionalPayloadHandle) {
+    write_u8(buffer, if handle.is_present() { 1 } else { 0 });
+    if handle.is_present() {
+        write_u32(buffer, handle.offset());
+        write_u32(buffer, handle.length());
+    }
+}
+
+fn read_payload_handle(
+    cursor: &mut ByteReader<'_>,
+    offset_field: &'static str,
+    len_kind: SerKind,
+    len_field: &'static str,
+) -> Result<PayloadHandle, VerifyError> {
+    let offset = read_u32(cursor, SerKind::Proof, offset_field).map_err(VerifyError::from)?;
+    let length = read_u32(cursor, len_kind, len_field).map_err(VerifyError::from)?;
+    Ok(PayloadHandle::new(offset, length))
+}
+
+fn read_optional_payload_handle(
+    cursor: &mut ByteReader<'_>,
+    kind: SerKind,
+    offset_field: &'static str,
+    len_field: &'static str,
+) -> Result<OptionalPayloadHandle, VerifyError> {
+    match read_u8(cursor, kind, "flag").map_err(VerifyError::from)? {
+        0 => Ok(OptionalPayloadHandle::absent(0)),
+        1 => {
+            let offset =
+                read_u32(cursor, SerKind::Proof, offset_field).map_err(VerifyError::from)?;
+            let length = read_u32(cursor, kind, len_field).map_err(VerifyError::from)?;
+            Ok(OptionalPayloadHandle::present(offset, length))
+        }
+        _ => Err(VerifyError::Serialization(kind)),
+    }
+}
+
+fn slice_for_handle<'a>(
+    payload: &'a [u8],
+    handle: PayloadHandle,
+    kind: SerKind,
+) -> Result<&'a [u8], VerifyError> {
+    let range = handle.range();
+    if range.end > payload.len() {
+        return Err(VerifyError::Serialization(kind));
+    }
+    Ok(&payload[range])
+}
+
+fn slice_for_optional_handle<'a>(
+    payload: &'a [u8],
+    handle: OptionalPayloadHandle,
+    kind: SerKind,
+) -> Result<Option<&'a [u8]>, VerifyError> {
+    if !handle.is_present() {
+        return Ok(None);
+    }
+    let Some(range) = handle.range() else {
+        return Ok(None);
+    };
+    if range.end > payload.len() {
+        return Err(VerifyError::Serialization(kind));
+    }
+    Ok(Some(&payload[range]))
 }
 
 /// Deserialises a [`Proof`] from its canonical byte layout.
@@ -424,41 +695,49 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
         .map_err(VerifyError::from)?;
     let binding = CompositionBinding::deserialize_bytes(&binding_bytes)?;
 
-    let openings_len = read_u32(&mut cursor, SerKind::Openings, "descriptor_len")
-        .map_err(VerifyError::from)? as usize;
-    let fri_len = read_u32(&mut cursor, SerKind::Fri, "len").map_err(VerifyError::from)? as usize;
+    let openings_handle = read_payload_handle(
+        &mut cursor,
+        "openings_offset",
+        SerKind::Openings,
+        "openings_len",
+    )?;
+    let fri_handle_desc = read_payload_handle(&mut cursor, "fri_offset", SerKind::Fri, "fri_len")?;
+    let telemetry_handle = read_optional_payload_handle(
+        &mut cursor,
+        SerKind::Telemetry,
+        "telemetry_offset",
+        "telemetry_len",
+    )?;
 
-    let telemetry_present =
-        match read_u8(&mut cursor, SerKind::Telemetry, "flag").map_err(VerifyError::from)? {
-            0 => false,
-            1 => true,
-            _ => return Err(VerifyError::Serialization(SerKind::Telemetry)),
+    let layout = PayloadLayout::from_handles(openings_handle, fri_handle_desc, telemetry_handle)?;
+
+    let payload_total = layout.total_len() as usize;
+    let available = cursor.remaining();
+    if available < payload_total {
+        let err_kind = if available < layout.openings_end() {
+            SerKind::Openings
+        } else if available < layout.fri_end() {
+            SerKind::Fri
+        } else {
+            SerKind::Telemetry
         };
-
-    let telemetry_len = if telemetry_present {
-        Some(read_u32(&mut cursor, SerKind::Telemetry, "len").map_err(VerifyError::from)? as usize)
-    } else {
-        None
-    };
-
-    let openings_bytes = cursor
-        .read_vec(SerKind::Openings, "descriptor_bytes", openings_len)
+        return Err(VerifyError::Serialization(err_kind));
+    }
+    let payload_bytes = cursor
+        .read_exact(payload_total, SerKind::Proof, "payload")
         .map_err(VerifyError::from)?;
-    let openings_descriptor = OpeningsDescriptor::deserialize_bytes(&openings_bytes)?;
 
-    let fri_bytes = cursor
-        .read_vec(SerKind::Fri, "fri_bytes", fri_len)
-        .map_err(VerifyError::from)?;
-    let fri_handle = FriHandle::deserialize_bytes(&fri_bytes)?;
+    let openings_bytes = slice_for_handle(payload_bytes, layout.openings(), SerKind::Openings)?;
+    let openings_descriptor = OpeningsDescriptor::deserialize_bytes(openings_bytes)?;
 
-    let telemetry_option = if let Some(len) = telemetry_len {
-        let telemetry_bytes = cursor
-            .read_vec(SerKind::Telemetry, "telemetry_bytes", len)
-            .map_err(VerifyError::from)?;
-        TelemetryOption::deserialize_bytes(telemetry_present, Some(&telemetry_bytes))?
-    } else {
-        TelemetryOption::deserialize_bytes(false, None)?
-    };
+    let fri_bytes = slice_for_handle(payload_bytes, layout.fri(), SerKind::Fri)?;
+    let fri_handle = FriHandle::deserialize_bytes(fri_bytes)?;
+
+    let telemetry_option =
+        match slice_for_optional_handle(payload_bytes, layout.telemetry(), SerKind::Telemetry)? {
+            Some(bytes) => TelemetryOption::deserialize_bytes(true, Some(bytes))?,
+            None => TelemetryOption::deserialize_bytes(false, None)?,
+        };
 
     ensure_consumed(&cursor, SerKind::Proof).map_err(VerifyError::from)?;
 
@@ -671,8 +950,11 @@ mod tests {
         let decoded_binding =
             CompositionBinding::deserialize_bytes(&binding_bytes).expect("decode binding");
         assert_eq!(decoded_binding, proof.composition().clone());
+        let openings_offset =
+            read_u32(&mut cursor, SerKind::Proof, "openings_offset").unwrap() as usize;
         let openings_len =
-            read_u32(&mut cursor, SerKind::Openings, "descriptor_len").unwrap() as usize;
+            read_u32(&mut cursor, SerKind::Openings, "openings_len").unwrap() as usize;
+        let fri_offset = read_u32(&mut cursor, SerKind::Proof, "fri_offset").unwrap() as usize;
         let fri_len = read_u32(&mut cursor, SerKind::Fri, "fri_len").unwrap() as usize;
         let has_telemetry = read_u8(&mut cursor, SerKind::Telemetry, "flag").unwrap();
         assert_eq!(
@@ -683,32 +965,39 @@ mod tests {
                 0
             }
         );
-        let telemetry_len = if has_telemetry == 1 {
-            read_u32(&mut cursor, SerKind::Telemetry, "len").unwrap() as usize
+        let telemetry_handle = if has_telemetry == 1 {
+            let offset =
+                read_u32(&mut cursor, SerKind::Proof, "telemetry_offset").unwrap() as usize;
+            let len = read_u32(&mut cursor, SerKind::Telemetry, "telemetry_len").unwrap() as usize;
+            Some((offset, len))
         } else {
-            0
+            None
         };
 
-        let openings_bytes = cursor
-            .read_vec(SerKind::Openings, "openings_bytes", openings_len)
+        let _payload_start = cursor.position();
+        let payload_len = telemetry_handle
+            .map(|(offset, len)| offset + len)
+            .unwrap_or(fri_offset + fri_len);
+        let payload_bytes = cursor
+            .read_vec(SerKind::Proof, "payload_bytes", payload_len)
             .unwrap();
+
+        let openings_bytes = &payload_bytes[openings_offset..openings_offset + openings_len];
         let decoded_descriptor =
-            OpeningsDescriptor::deserialize_bytes(&openings_bytes).expect("decode openings");
+            OpeningsDescriptor::deserialize_bytes(openings_bytes).expect("decode openings");
         assert_eq!(decoded_descriptor, proof.openings().clone());
-        let fri_bytes = cursor.read_vec(SerKind::Fri, "fri_bytes", fri_len).unwrap();
-        let decoded_fri = FriHandle::deserialize_bytes(&fri_bytes).expect("decode fri");
+        let fri_bytes = &payload_bytes[fri_offset..fri_offset + fri_len];
+        let decoded_fri = FriHandle::deserialize_bytes(fri_bytes).expect("decode fri");
         assert_eq!(decoded_fri, proof.fri().clone());
-        if has_telemetry == 1 {
-            let telemetry_bytes = cursor
-                .read_vec(SerKind::Telemetry, "telemetry_bytes", telemetry_len)
-                .unwrap();
+        if let Some((offset, len)) = telemetry_handle {
+            let telemetry_bytes = &payload_bytes[offset..offset + len];
             let expected = proof
                 .telemetry()
                 .serialize_bytes()
                 .expect("serialize telemetry")
                 .expect("telemetry bytes");
-            assert_eq!(telemetry_len, expected.len());
-            assert_eq!(telemetry_bytes, expected);
+            assert_eq!(len, expected.len());
+            assert_eq!(telemetry_bytes, expected.as_slice());
         }
         assert_eq!(cursor.remaining(), 0);
     }

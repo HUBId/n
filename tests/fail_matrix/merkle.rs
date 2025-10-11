@@ -39,6 +39,12 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     ) as usize;
     cursor += 4 + binding_len;
 
+    let openings_offset = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("openings offset slice"),
+    ) as usize;
+    cursor += 4;
     let openings_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
@@ -46,6 +52,12 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     ) as usize;
     cursor += 4;
 
+    let fri_offset = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("fri offset slice"),
+    ) as usize;
+    cursor += 4;
     let fri_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
@@ -56,18 +68,28 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     let telemetry_flag = slice[cursor];
     cursor += 1;
     let telemetry_len = if telemetry_flag == 1 {
+        let offset = u32::from_le_bytes(
+            slice[cursor..cursor + 4]
+                .try_into()
+                .expect("telemetry offset slice"),
+        ) as usize;
+        cursor += 4;
         let len = u32::from_le_bytes(
             slice[cursor..cursor + 4]
                 .try_into()
                 .expect("telemetry length slice"),
         ) as usize;
         cursor += 4;
-        len
+        Some((offset, len))
     } else {
-        0
+        None
     };
 
-    let descriptor_start = cursor;
+    let payload_start = cursor;
+    debug_assert_eq!(openings_offset, 0);
+    debug_assert_eq!(fri_offset, openings_len);
+
+    let descriptor_start = payload_start + openings_offset;
     let mut descriptor_cursor = descriptor_start;
     let merkle_block_len = u32::from_le_bytes(
         slice[descriptor_cursor..descriptor_cursor + 4]
@@ -92,9 +114,12 @@ fn extract_roots(bytes: &ProofBytes) -> ([u8; 32], [u8; 32], [u8; 32]) {
     descriptor_cursor += 4 + openings_block_len;
 
     debug_assert_eq!(descriptor_cursor - descriptor_start, openings_len);
-    let fri_start = descriptor_start + openings_len;
+    let fri_start = payload_start + fri_offset;
     let _fri_end = fri_start + fri_len;
-    let _payload_end = _fri_end + telemetry_len;
+    let _payload_end = match telemetry_len {
+        Some((offset, len)) => payload_start + offset + len,
+        None => _fri_end,
+    };
 
     (trace_commit, core_root, aux_root)
 }
