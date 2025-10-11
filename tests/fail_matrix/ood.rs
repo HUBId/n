@@ -1,7 +1,7 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 
 use super::{flip_ood_composition_value, flip_ood_trace_core_value, FailMatrixFixture};
 
@@ -17,7 +17,7 @@ fn trace_ood_rejects_core_value_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
@@ -47,7 +47,7 @@ fn composition_ood_rejects_value_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,

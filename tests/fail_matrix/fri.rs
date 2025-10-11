@@ -1,7 +1,7 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, VerifyError};
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 
 use super::{perturb_fri_fold_challenge, FailMatrixFixture};
 
@@ -14,7 +14,7 @@ fn fri_rejects_fold_challenge_tampering() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,

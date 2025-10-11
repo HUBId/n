@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 use rpp_stark::ser::SerKind;
 use rpp_stark::utils::serialization::ProofBytes;
 
@@ -34,7 +34,7 @@ fn header_rejects_version_bump() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_header_version(&fixture.proof());
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -59,7 +59,7 @@ fn header_rejects_param_digest_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_param_digest_byte(&fixture.proof());
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -85,7 +85,7 @@ fn header_rejects_public_digest_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_public_digest_byte(&fixture.proof_bytes());
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -111,7 +111,7 @@ fn header_rejects_excessive_proof_size() {
     context.limits.max_proof_size_bytes = 64;
     let proof_bytes = fixture.proof_bytes();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &proof_bytes,
@@ -137,7 +137,7 @@ fn header_rejects_openings_offset_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = mismatch_openings_offset(&fixture.proof_bytes());
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -165,7 +165,7 @@ fn header_rejects_fri_offset_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = mismatch_fri_offset(&fixture.proof_bytes());
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -197,7 +197,7 @@ fn header_rejects_telemetry_offset_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
@@ -229,7 +229,7 @@ fn header_rejects_telemetry_flag_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify_proof_bytes(
+    let err = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,

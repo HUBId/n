@@ -1,7 +1,7 @@
 use insta::assert_debug_snapshot;
 use rpp_stark::config::ProofKind as ConfigProofKind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify_proof_bytes;
+use rpp_stark::proof::verifier::verify;
 
 use super::{flip_composition_leaf_byte, FailMatrixFixture};
 
@@ -17,7 +17,7 @@ fn composition_rejects_leaf_bytes_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let report = verify_proof_bytes(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated.bytes,
