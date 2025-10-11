@@ -1,7 +1,10 @@
 use crate::config::{AirSpecId, ParamDigest, ProofKind};
 use crate::fri::FriProof;
 use crate::hash::deterministic::DeterministicHashError;
-use crate::ser::SerKind;
+use crate::ser::{
+    ensure_consumed, ensure_u32, read_digest, read_u16, read_u32, read_u8, write_bytes,
+    write_digest, write_u16, write_u32, write_u8, ByteReader, SerError, SerKind,
+};
 use crate::utils::serialization::DigestBytes;
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +124,60 @@ impl CompositionBinding {
     pub fn composition_commit_mut(&mut self) -> Option<&mut DigestBytes> {
         self.composition_commit.as_mut()
     }
+
+    pub(crate) fn serialize_bytes(&self) -> Result<Vec<u8>, SerError> {
+        let mut buffer = Vec::new();
+        write_u8(&mut buffer, encode_proof_kind(*self.kind()));
+        write_digest(&mut buffer, self.air_spec_id().as_bytes());
+
+        let public_inputs = self.public_inputs();
+        let public_len = ensure_u32(public_inputs.len(), SerKind::PublicInputs, "len")?;
+        write_u32(&mut buffer, public_len);
+        write_bytes(&mut buffer, public_inputs);
+
+        match self.composition_commit() {
+            Some(commit) => {
+                write_u8(&mut buffer, 1);
+                write_digest(&mut buffer, &commit.bytes);
+            }
+            None => write_u8(&mut buffer, 0),
+        }
+
+        Ok(buffer)
+    }
+
+    pub(crate) fn deserialize_bytes(bytes: &[u8]) -> Result<Self, VerifyError> {
+        let mut cursor = ByteReader::new(bytes);
+        let kind_byte = read_u8(&mut cursor, SerKind::Proof, "kind")?;
+        let kind = decode_proof_kind(kind_byte)?;
+
+        let air_spec_id = AirSpecId(DigestBytes {
+            bytes: read_digest(&mut cursor, SerKind::Proof, "air_spec_id")?,
+        });
+
+        let public_len = read_u32(&mut cursor, SerKind::PublicInputs, "len")? as usize;
+        let public_inputs = cursor.read_vec(SerKind::PublicInputs, "public_inputs", public_len)?;
+
+        let composition_commit = match read_u8(&mut cursor, SerKind::CompositionCommitment, "flag")?
+        {
+            0 => None,
+            1 => Some(DigestBytes {
+                bytes: read_digest(&mut cursor, SerKind::CompositionCommitment, "digest")?,
+            }),
+            _ => {
+                return Err(VerifyError::Serialization(SerKind::CompositionCommitment));
+            }
+        };
+
+        ensure_consumed(&cursor, SerKind::Proof)?;
+
+        Ok(Self::new(
+            kind,
+            air_spec_id,
+            public_inputs,
+            composition_commit,
+        ))
+    }
 }
 
 /// Wrapper storing the low-level FRI proof payload for assembly helpers.
@@ -148,6 +205,18 @@ impl FriHandle {
     /// Returns a mutable reference to the wrapped FRI proof.
     pub fn fri_proof_mut(&mut self) -> &mut FriProof {
         &mut self.fri_proof
+    }
+
+    pub(crate) fn serialize_bytes(&self) -> Result<Vec<u8>, SerError> {
+        self.fri_proof
+            .to_bytes()
+            .map_err(|_| SerError::invalid_value(SerKind::Fri, "fri_proof"))
+    }
+
+    pub(crate) fn deserialize_bytes(bytes: &[u8]) -> Result<Self, VerifyError> {
+        let fri_proof =
+            FriProof::from_bytes(bytes).map_err(|_| VerifyError::Serialization(SerKind::Fri))?;
+        Ok(Self::new(fri_proof))
     }
 }
 
@@ -594,6 +663,14 @@ impl OpeningsDescriptor {
     pub fn out_of_domain_mut(&mut self) -> &mut Vec<OutOfDomainOpening> {
         self.openings.out_of_domain_mut()
     }
+
+    pub(crate) fn serialize_bytes(&self) -> Result<Vec<u8>, SerError> {
+        serialize_openings_descriptor(self)
+    }
+
+    pub(crate) fn deserialize_bytes(bytes: &[u8]) -> Result<Self, VerifyError> {
+        deserialize_openings_descriptor(bytes)
+    }
 }
 
 /// Out-of-domain opening container.
@@ -636,6 +713,10 @@ impl Openings {
     /// Returns a mutable reference to the individual out-of-domain openings.
     pub fn out_of_domain_mut(&mut self) -> &mut Vec<OutOfDomainOpening> {
         &mut self.out_of_domain
+    }
+
+    pub(crate) fn serialize_bytes(&self) -> Result<Vec<u8>, SerError> {
+        serialize_openings_bytes(self)
     }
 }
 
@@ -874,6 +955,30 @@ impl TelemetryOption {
     pub fn telemetry_mut(&mut self) -> &mut Telemetry {
         self.frame_mut()
     }
+
+    pub(crate) fn serialize_bytes(&self) -> Result<Option<Vec<u8>>, SerError> {
+        if !self.is_present() {
+            return Ok(None);
+        }
+
+        let mut out = Vec::new();
+        serialize_telemetry_frame_bytes(self.frame(), &mut out)?;
+        Ok(Some(out))
+    }
+
+    pub(crate) fn deserialize_bytes(
+        present: bool,
+        bytes: Option<&[u8]>,
+    ) -> Result<Self, VerifyError> {
+        match (present, bytes) {
+            (false, None) => Ok(Self::new(false, Telemetry::default())),
+            (true, Some(payload)) => {
+                let telemetry = deserialize_telemetry_frame_bytes(payload)?;
+                Ok(Self::new(true, telemetry))
+            }
+            (false, Some(_)) | (true, None) => Err(VerifyError::Serialization(SerKind::Telemetry)),
+        }
+    }
 }
 
 /// Structured verification report pairing a decoded proof with the outcome.
@@ -1055,6 +1160,318 @@ pub struct OutOfDomainOpening {
     pub aux_values: Vec<[u8; 32]>,
     /// Composition polynomial evaluation.
     pub composition_value: [u8; 32],
+}
+
+impl OutOfDomainOpening {
+    pub(crate) fn serialize_bytes(&self) -> Result<Vec<u8>, SerError> {
+        let mut buffer = Vec::new();
+        write_digest(&mut buffer, &self.point);
+        let core_len = ensure_u32(self.core_values.len(), SerKind::Openings, "core_len")?;
+        write_u32(&mut buffer, core_len);
+        for value in &self.core_values {
+            write_digest(&mut buffer, value);
+        }
+        let aux_len = ensure_u32(self.aux_values.len(), SerKind::Openings, "aux_len")?;
+        write_u32(&mut buffer, aux_len);
+        for value in &self.aux_values {
+            write_digest(&mut buffer, value);
+        }
+        write_digest(&mut buffer, &self.composition_value);
+        Ok(buffer)
+    }
+
+    pub(crate) fn deserialize_bytes(bytes: &[u8]) -> Result<Self, VerifyError> {
+        let mut cursor = ByteReader::new(bytes);
+        let point = read_digest(&mut cursor, SerKind::Openings, "point")?;
+        let core_len = read_u32(&mut cursor, SerKind::Openings, "core_len")? as usize;
+        let mut core_values = Vec::with_capacity(core_len);
+        for _ in 0..core_len {
+            core_values.push(read_digest(&mut cursor, SerKind::Openings, "core_value")?);
+        }
+        let aux_len = read_u32(&mut cursor, SerKind::Openings, "aux_len")? as usize;
+        let mut aux_values = Vec::with_capacity(aux_len);
+        for _ in 0..aux_len {
+            aux_values.push(read_digest(&mut cursor, SerKind::Openings, "aux_value")?);
+        }
+        let composition_value = read_digest(&mut cursor, SerKind::Openings, "composition_value")?;
+        ensure_consumed(&cursor, SerKind::Openings)?;
+        Ok(Self {
+            point,
+            core_values,
+            aux_values,
+            composition_value,
+        })
+    }
+}
+
+fn serialize_openings_descriptor(descriptor: &OpeningsDescriptor) -> Result<Vec<u8>, SerError> {
+    let merkle_bytes = serialize_merkle_bundle_bytes(descriptor.merkle())?;
+    let openings_bytes = serialize_openings_bytes(descriptor.openings())?;
+
+    let mut buffer = Vec::new();
+    let merkle_len = ensure_u32(merkle_bytes.len(), SerKind::TraceCommitment, "merkle_len")?;
+    write_u32(&mut buffer, merkle_len);
+    write_bytes(&mut buffer, &merkle_bytes);
+
+    let openings_len = ensure_u32(openings_bytes.len(), SerKind::Openings, "openings_len")?;
+    write_u32(&mut buffer, openings_len);
+    write_bytes(&mut buffer, &openings_bytes);
+
+    Ok(buffer)
+}
+
+fn deserialize_openings_descriptor(bytes: &[u8]) -> Result<OpeningsDescriptor, VerifyError> {
+    let mut cursor = ByteReader::new(bytes);
+    let merkle_len = read_u32(&mut cursor, SerKind::TraceCommitment, "merkle_len")? as usize;
+    let merkle_bytes = cursor.read_vec(SerKind::TraceCommitment, "merkle_bytes", merkle_len)?;
+
+    let openings_len = read_u32(&mut cursor, SerKind::Openings, "openings_len")? as usize;
+    let openings_bytes = cursor.read_vec(SerKind::Openings, "openings_bytes", openings_len)?;
+
+    ensure_consumed(&cursor, SerKind::Proof)?;
+
+    let merkle = deserialize_merkle_bundle_bytes(&merkle_bytes)?;
+    let openings = deserialize_openings_bytes(&openings_bytes)?;
+    Ok(OpeningsDescriptor::new(merkle, openings))
+}
+
+fn serialize_merkle_bundle_bytes(bundle: &MerkleProofBundle) -> Result<Vec<u8>, SerError> {
+    let mut out = Vec::new();
+    write_digest(&mut out, bundle.core_root());
+    write_digest(&mut out, bundle.aux_root());
+    let layer_count = ensure_u32(
+        bundle.fri_layer_roots().len(),
+        SerKind::TraceCommitment,
+        "fri_roots",
+    )?;
+    write_u32(&mut out, layer_count);
+    for root in bundle.fri_layer_roots() {
+        write_digest(&mut out, root);
+    }
+    Ok(out)
+}
+
+fn deserialize_merkle_bundle_bytes(bytes: &[u8]) -> Result<MerkleProofBundle, VerifyError> {
+    let mut cursor = ByteReader::new(bytes);
+    let core_root = read_digest(&mut cursor, SerKind::TraceCommitment, "core_root")?;
+    let aux_root = read_digest(&mut cursor, SerKind::TraceCommitment, "aux_root")?;
+    let layer_count = read_u32(&mut cursor, SerKind::TraceCommitment, "fri_roots")? as usize;
+    let mut fri_layer_roots = Vec::with_capacity(layer_count);
+    for _ in 0..layer_count {
+        fri_layer_roots.push(read_digest(
+            &mut cursor,
+            SerKind::TraceCommitment,
+            "fri_root",
+        )?);
+    }
+    ensure_consumed(&cursor, SerKind::TraceCommitment)?;
+    Ok(MerkleProofBundle::new(core_root, aux_root, fri_layer_roots))
+}
+
+fn serialize_openings_bytes(openings: &Openings) -> Result<Vec<u8>, SerError> {
+    let mut buffer = Vec::new();
+    encode_merkle_openings(
+        &mut buffer,
+        openings.trace().indices(),
+        openings.trace().leaves(),
+        openings.trace().paths(),
+    )?;
+    match openings.composition() {
+        Some(section) => {
+            write_u8(&mut buffer, 1);
+            encode_merkle_openings(
+                &mut buffer,
+                section.indices(),
+                section.leaves(),
+                section.paths(),
+            )?;
+        }
+        None => write_u8(&mut buffer, 0),
+    }
+
+    let count = ensure_u32(openings.out_of_domain().len(), SerKind::Openings, "ood_len")?;
+    write_u32(&mut buffer, count);
+    for opening in openings.out_of_domain() {
+        let encoded = opening.serialize_bytes()?;
+        let encoded_len = ensure_u32(encoded.len(), SerKind::Openings, "ood_block")?;
+        write_u32(&mut buffer, encoded_len);
+        write_bytes(&mut buffer, &encoded);
+    }
+    Ok(buffer)
+}
+
+fn deserialize_openings_bytes(bytes: &[u8]) -> Result<Openings, VerifyError> {
+    let mut cursor = ByteReader::new(bytes);
+    let (trace_indices, trace_leaves, trace_paths) = decode_merkle_openings(&mut cursor)?;
+    let trace = TraceOpenings {
+        indices: trace_indices,
+        leaves: trace_leaves,
+        paths: trace_paths,
+    };
+    let has_composition = read_u8(&mut cursor, SerKind::Openings, "composition_flag")?;
+    let composition = match has_composition {
+        0 => None,
+        1 => {
+            let (indices, leaves, paths) = decode_merkle_openings(&mut cursor)?;
+            Some(CompositionOpenings {
+                indices,
+                leaves,
+                paths,
+            })
+        }
+        _ => {
+            return Err(VerifyError::Serialization(SerKind::Openings));
+        }
+    };
+
+    let count = read_u32(&mut cursor, SerKind::Openings, "ood_len")? as usize;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let block_len = read_u32(&mut cursor, SerKind::Openings, "ood_block")? as usize;
+        let block = cursor.read_vec(SerKind::Openings, "ood_bytes", block_len)?;
+        let opening = OutOfDomainOpening::deserialize_bytes(&block)?;
+        out.push(opening);
+    }
+    ensure_consumed(&cursor, SerKind::Openings)?;
+    Ok(Openings {
+        trace,
+        composition,
+        out_of_domain: out,
+    })
+}
+
+fn encode_merkle_openings(
+    buffer: &mut Vec<u8>,
+    indices: &[u32],
+    leaves: &[Vec<u8>],
+    paths: &[MerkleAuthenticationPath],
+) -> Result<(), SerError> {
+    let indices_len = ensure_u32(indices.len(), SerKind::Openings, "indices_len")?;
+    write_u32(buffer, indices_len);
+    for index in indices {
+        write_u32(buffer, *index);
+    }
+
+    let leaves_len = ensure_u32(leaves.len(), SerKind::Openings, "leaves_len")?;
+    write_u32(buffer, leaves_len);
+    for leaf in leaves {
+        let leaf_len = ensure_u32(leaf.len(), SerKind::Openings, "leaf_len")?;
+        write_u32(buffer, leaf_len);
+        write_bytes(buffer, leaf);
+    }
+
+    let paths_len = ensure_u32(paths.len(), SerKind::Openings, "paths_len")?;
+    write_u32(buffer, paths_len);
+    for path in paths {
+        let nodes_len = ensure_u32(path.nodes.len(), SerKind::Openings, "path_len")?;
+        write_u32(buffer, nodes_len);
+        for node in &path.nodes {
+            write_u8(buffer, node.index);
+            write_digest(buffer, &node.sibling);
+        }
+    }
+    Ok(())
+}
+
+type DecodedMerkleOpenings = (Vec<u32>, Vec<Vec<u8>>, Vec<MerkleAuthenticationPath>);
+
+fn decode_merkle_openings(
+    cursor: &mut ByteReader<'_>,
+) -> Result<DecodedMerkleOpenings, VerifyError> {
+    let indices_len = read_u32(cursor, SerKind::Openings, "indices_len")? as usize;
+    let mut indices = Vec::with_capacity(indices_len);
+    for _ in 0..indices_len {
+        indices.push(read_u32(cursor, SerKind::Openings, "index")?);
+    }
+
+    let leaves_len = read_u32(cursor, SerKind::Openings, "leaves_len")? as usize;
+    let mut leaves = Vec::with_capacity(leaves_len);
+    for _ in 0..leaves_len {
+        let leaf_len = read_u32(cursor, SerKind::Openings, "leaf_len")? as usize;
+        let bytes = cursor.read_vec(SerKind::Openings, "leaf_bytes", leaf_len)?;
+        leaves.push(bytes);
+    }
+
+    let paths_len = read_u32(cursor, SerKind::Openings, "paths_len")? as usize;
+    let mut paths = Vec::with_capacity(paths_len);
+    for _ in 0..paths_len {
+        let nodes_len = read_u32(cursor, SerKind::Openings, "path_len")? as usize;
+        let mut nodes = Vec::with_capacity(nodes_len);
+        for _ in 0..nodes_len {
+            let index = read_u8(cursor, SerKind::Openings, "path_index")?;
+            let sibling = read_digest(cursor, SerKind::Openings, "path_sibling")?;
+            nodes.push(MerklePathNode { index, sibling });
+        }
+        paths.push(MerkleAuthenticationPath { nodes });
+    }
+
+    Ok((indices, leaves, paths))
+}
+
+fn serialize_telemetry_frame_bytes(
+    telemetry: &Telemetry,
+    buffer: &mut Vec<u8>,
+) -> Result<(), SerError> {
+    write_u32(buffer, telemetry.header_length());
+    write_u32(buffer, telemetry.body_length());
+    write_u8(buffer, telemetry.fri_parameters().fold);
+    write_u16(buffer, telemetry.fri_parameters().cap_degree);
+    write_u32(buffer, telemetry.fri_parameters().cap_size);
+    write_u16(buffer, telemetry.fri_parameters().query_budget);
+    write_digest(buffer, &telemetry.integrity_digest().bytes);
+    Ok(())
+}
+
+fn deserialize_telemetry_frame_bytes(bytes: &[u8]) -> Result<Telemetry, VerifyError> {
+    let mut cursor = ByteReader::new(bytes);
+    let header_length = read_u32(&mut cursor, SerKind::Telemetry, "header_length")?;
+    let body_length = read_u32(&mut cursor, SerKind::Telemetry, "body_length")?;
+    let fold = read_u8(&mut cursor, SerKind::Telemetry, "fri.fold")?;
+    let cap_degree = read_u16(&mut cursor, SerKind::Telemetry, "fri.cap_degree")?;
+    let cap_size = read_u32(&mut cursor, SerKind::Telemetry, "fri.cap_size")?;
+    let query_budget = read_u16(&mut cursor, SerKind::Telemetry, "fri.query_budget")?;
+    let integrity_digest = read_digest(&mut cursor, SerKind::Telemetry, "integrity_digest")?;
+    ensure_consumed(&cursor, SerKind::Telemetry)?;
+    Ok(Telemetry {
+        header_length,
+        body_length,
+        fri_parameters: FriParametersMirror {
+            fold,
+            cap_degree,
+            cap_size,
+            query_budget,
+        },
+        integrity_digest: DigestBytes {
+            bytes: integrity_digest,
+        },
+    })
+}
+
+fn encode_proof_kind(kind: ProofKind) -> u8 {
+    match kind {
+        ProofKind::Tx => 0,
+        ProofKind::State => 1,
+        ProofKind::Pruning => 2,
+        ProofKind::Uptime => 3,
+        ProofKind::Consensus => 4,
+        ProofKind::Identity => 5,
+        ProofKind::Aggregation => 6,
+        ProofKind::VRF => 7,
+    }
+}
+
+fn decode_proof_kind(byte: u8) -> Result<ProofKind, VerifyError> {
+    Ok(match byte {
+        0 => ProofKind::Tx,
+        1 => ProofKind::State,
+        2 => ProofKind::Pruning,
+        3 => ProofKind::Uptime,
+        4 => ProofKind::Consensus,
+        5 => ProofKind::Identity,
+        6 => ProofKind::Aggregation,
+        7 => ProofKind::VRF,
+        other => return Err(VerifyError::UnknownProofKind(other)),
+    })
 }
 
 mod proof_kind_codec {
