@@ -1,7 +1,7 @@
 use insta::assert_snapshot;
-use rpp_stark::config::ProofKind as ConfigProofKind;
+use rpp_stark::proof::ser::map_public_to_config_kind;
 use rpp_stark::proof::types::VerifyError;
-use rpp_stark::proof::verifier::verify;
+use rpp_stark::proof::verify;
 use rpp_stark::ser::SerKind;
 use rpp_stark::utils::serialization::ProofBytes;
 
@@ -34,8 +34,9 @@ fn header_rejects_version_bump() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_header_version(&fixture.proof());
 
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
     let err = verify(
-        ConfigProofKind::Tx,
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
@@ -59,8 +60,9 @@ fn header_rejects_param_digest_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_param_digest_byte(&fixture.proof());
 
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
     let report = verify(
-        ConfigProofKind::Tx,
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
@@ -70,6 +72,20 @@ fn header_rejects_param_digest_mismatch() {
 
     let error = report.error.expect("expected failure");
     assert!(matches!(error, VerifyError::ParamsHashMismatch));
+
+    assert!(
+        !report.params_ok,
+        "parameter stage must not advance on params hash mismatch"
+    );
+    assert!(
+        !report.public_ok,
+        "public stage must remain false when params hash mismatches"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must record measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_param_digest_mismatch",
@@ -85,16 +101,31 @@ fn header_rejects_public_digest_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = flip_public_digest_byte(&fixture.proof_bytes());
 
-    let err = verify(
-        ConfigProofKind::Tx,
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+    let report = verify(
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
     )
-    .expect_err("public digest mismatch must error");
+    .expect("report produced");
 
-    assert!(matches!(err, VerifyError::PublicDigestMismatch));
+    let error = report.error.expect("expected failure");
+    assert!(matches!(error, VerifyError::PublicDigestMismatch));
+    assert!(
+        !report.public_ok,
+        "public stage must fail when digest mismatches"
+    );
+    assert!(
+        !report.params_ok,
+        "params stage should remain false when public digest mismatches"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_public_digest_mismatch",
@@ -111,8 +142,9 @@ fn header_rejects_excessive_proof_size() {
     context.limits.max_proof_size_bytes = 64;
     let proof_bytes = fixture.proof_bytes();
 
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
     let report = verify(
-        ConfigProofKind::Tx,
+        declared_kind,
         &public_inputs,
         &proof_bytes,
         &config,
@@ -122,6 +154,19 @@ fn header_rejects_excessive_proof_size() {
 
     let error = report.error.expect("expected failure");
     assert!(matches!(error, VerifyError::ProofTooLarge { .. }));
+    assert!(
+        report.params_ok,
+        "params stage must succeed before size check"
+    );
+    assert!(
+        report.public_ok,
+        "public stage must succeed before size check"
+    );
+    assert_eq!(
+        report.total_bytes,
+        proof_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_excessive_proof_size",
@@ -137,19 +182,34 @@ fn header_rejects_openings_offset_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = mismatch_openings_offset(&fixture.proof_bytes());
 
-    let err = verify(
-        ConfigProofKind::Tx,
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+    let report = verify(
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
     )
-    .expect_err("openings offset mismatch must error");
+    .expect("report produced");
 
+    let error = report.error.expect("expected failure");
     assert!(matches!(
-        err,
+        error,
         VerifyError::Serialization(SerKind::Telemetry)
     ));
+    assert!(
+        !report.params_ok,
+        "params stage must remain false when telemetry handle is invalid"
+    );
+    assert!(
+        !report.public_ok,
+        "public stage must remain false when telemetry handle is invalid"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_openings_offset_mismatch",
@@ -165,19 +225,34 @@ fn header_rejects_fri_offset_mismatch() {
     let context = fixture.verifier_context();
     let mutated_bytes = mismatch_fri_offset(&fixture.proof_bytes());
 
-    let err = verify(
-        ConfigProofKind::Tx,
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+    let report = verify(
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
     )
-    .expect_err("fri offset mismatch must error");
+    .expect("report produced");
 
+    let error = report.error.expect("expected failure");
     assert!(matches!(
-        err,
+        error,
         VerifyError::Serialization(SerKind::Telemetry)
     ));
+    assert!(
+        !report.params_ok,
+        "params stage must remain false when telemetry handle is invalid"
+    );
+    assert!(
+        !report.public_ok,
+        "public stage must remain false when telemetry handle is invalid"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_fri_offset_mismatch",
@@ -197,19 +272,34 @@ fn header_rejects_telemetry_offset_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify(
-        ConfigProofKind::Tx,
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+    let report = verify(
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
     )
-    .expect_err("telemetry offset mismatch must error");
+    .expect("report produced");
 
+    let error = report.error.expect("expected failure");
     assert!(matches!(
-        err,
+        error,
         VerifyError::Serialization(SerKind::Telemetry)
     ));
+    assert!(
+        !report.params_ok,
+        "params stage must remain false when telemetry handle is invalid"
+    );
+    assert!(
+        !report.public_ok,
+        "public stage must remain false when telemetry handle is invalid"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_telemetry_offset_mismatch",
@@ -229,16 +319,34 @@ fn header_rejects_telemetry_flag_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify(
-        ConfigProofKind::Tx,
+    let declared_kind = map_public_to_config_kind(public_inputs.kind());
+    let report = verify(
+        declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
     )
-    .expect_err("telemetry flag mismatch must error");
+    .expect("report produced");
 
-    assert!(matches!(err, VerifyError::Serialization(SerKind::Openings)));
+    let error = report.error.expect("expected failure");
+    assert!(matches!(
+        error,
+        VerifyError::Serialization(SerKind::Openings)
+    ));
+    assert!(
+        !report.params_ok,
+        "params stage must remain false when telemetry flag is inconsistent"
+    );
+    assert!(
+        !report.public_ok,
+        "public stage must remain false when telemetry flag is inconsistent"
+    );
+    assert_eq!(
+        report.total_bytes,
+        mutated_bytes.as_slice().len() as u64,
+        "report must capture measured proof length",
+    );
 
     assert_snapshot!(
         "header_rejects_telemetry_flag_mismatch",
