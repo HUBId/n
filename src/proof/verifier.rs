@@ -113,17 +113,15 @@ fn precheck_decoded_proof(
     env: DecodedProofEnv<'_, '_>,
     stages: &mut VerificationStages,
 ) -> Result<PrecheckedProof, VerifyError> {
-    if let Err(error) = validate_header(
+    validate_header(
         &proof,
         env.declared_kind,
         env.public_inputs,
         env.config,
         env.context,
         stages,
-    ) {
-        return Err(error);
-    }
-    match precheck_body(
+    )?;
+    let prechecked = precheck_body(
         &proof,
         env.public_inputs,
         env.config,
@@ -131,15 +129,13 @@ fn precheck_decoded_proof(
         env.total_bytes,
         env.block_context,
         stages,
-    ) {
-        Ok(prechecked) => Ok(PrecheckedProof {
-            proof,
-            fri_seed: prechecked.fri_seed,
-            security_level: prechecked.security_level,
-            params: prechecked.params,
-        }),
-        Err(error) => Err(error),
-    }
+    )?;
+    Ok(PrecheckedProof {
+        proof,
+        fri_seed: prechecked.fri_seed,
+        security_level: prechecked.security_level,
+        params: prechecked.params,
+    })
 }
 
 #[allow(dead_code)]
