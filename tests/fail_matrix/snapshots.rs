@@ -4,6 +4,7 @@
 //! To update it, run `cargo insta review` after executing the affected tests
 //! and bump `PROOF_VERSION` whenever the serialized layout changes.
 
+use super::fixture::header_layout;
 use super::FailMatrixFixture;
 use insta::assert_json_snapshot;
 use rpp_stark::field::prime_field::CanonicalSerialize;
@@ -29,6 +30,9 @@ fn freeze_fixture_artifacts() {
     let proof_bytes = fixture.proof_bytes();
     let proof = fixture.proof();
     let config = fixture.config();
+    let layout = header_layout(proof_bytes.as_slice());
+    let telemetry_option = proof.telemetry();
+    let telemetry_frame = telemetry_option.frame();
 
     let openings = proof.openings();
     let trace_indices = openings.trace().indices().to_vec();
@@ -114,6 +118,26 @@ fn freeze_fixture_artifacts() {
             "trace": trace_path_lengths,
             "composition": composition_path_lengths,
             "fri_layers": fri_query_path_lengths,
+        },
+        "payload_handles": {
+            "openings": {
+                "offset": layout.openings().offset(),
+                "length": layout.openings().length(),
+            },
+            "fri": {
+                "offset": layout.fri().offset(),
+                "length": layout.fri().length(),
+            },
+            "telemetry": layout.telemetry().handle().map(|handle| json!({
+                "offset": handle.offset(),
+                "length": handle.length(),
+            })),
+        },
+        "telemetry": {
+            "present": telemetry_option.is_present(),
+            "header_length": telemetry_frame.header_length(),
+            "body_length": telemetry_frame.body_length(),
+            "integrity_digest_hex": hex_encode(&telemetry_frame.integrity_digest().bytes),
         },
     });
 

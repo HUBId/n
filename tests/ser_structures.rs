@@ -20,6 +20,7 @@ use rpp_stark::proof::types::{
 use rpp_stark::ser::SerKind;
 use rpp_stark::utils::serialization::DigestBytes;
 use rpp_stark::VerifyError;
+use std::convert::TryInto;
 
 fn sample_merkle_proof() -> MerkleProof {
     MerkleProof {
@@ -147,6 +148,72 @@ fn sample_proof() -> Proof {
     proof
 }
 
+fn decode_payload_handles(bytes: &[u8]) -> ((u32, u32), (u32, u32), Option<(u32, u32)>) {
+    let mut cursor = 0usize;
+    cursor += 2; // version
+    cursor += 32; // params hash
+    cursor += 32; // public digest
+    cursor += 32; // trace commitment
+
+    let binding_len = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .expect("binding length slice"),
+    ) as usize;
+    cursor += 4 + binding_len;
+
+    let openings_offset = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .expect("openings offset slice"),
+    );
+    cursor += 4;
+    let openings_len = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .expect("openings length slice"),
+    );
+    cursor += 4;
+
+    let fri_offset = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .expect("fri offset slice"),
+    );
+    cursor += 4;
+    let fri_len = u32::from_le_bytes(
+        bytes[cursor..cursor + 4]
+            .try_into()
+            .expect("fri length slice"),
+    );
+    cursor += 4;
+
+    let telemetry_flag = bytes[cursor];
+    cursor += 1;
+    let telemetry_handle = if telemetry_flag == 1 {
+        let telemetry_offset = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .expect("telemetry offset slice"),
+        );
+        cursor += 4;
+        let telemetry_len = u32::from_le_bytes(
+            bytes[cursor..cursor + 4]
+                .try_into()
+                .expect("telemetry length slice"),
+        );
+        Some((telemetry_offset, telemetry_len))
+    } else {
+        None
+    };
+
+    (
+        (openings_offset, openings_len),
+        (fri_offset, fri_len),
+        telemetry_handle,
+    )
+}
+
 #[test]
 fn merkle_proof_roundtrip_and_snapshot() {
     let proof = sample_merkle_proof();
@@ -198,6 +265,31 @@ fn proof_roundtrip_and_snapshot() {
     let bytes = serialize_proof(&proof).expect("serialize proof");
     let decoded = deserialize_proof(&bytes).expect("decode proof");
     assert_eq!(decoded, proof);
+
+    let payload = serialize_proof_payload(&proof).expect("serialize proof payload");
+    let ((openings_offset, openings_len), (fri_offset, fri_len), telemetry_handle) =
+        decode_payload_handles(&bytes);
+
+    assert_eq!(
+        openings_offset, 0,
+        "openings payload must start at offset zero"
+    );
+    assert_eq!(fri_offset, openings_offset + openings_len);
+
+    let payload_len = u32::try_from(payload.len()).expect("payload length fits in u32");
+    if proof.telemetry().is_present() {
+        let (telemetry_offset, telemetry_len) =
+            telemetry_handle.expect("telemetry handle must be present");
+        assert_eq!(telemetry_offset, fri_offset + fri_len);
+        assert_eq!(telemetry_offset + telemetry_len, payload_len);
+    } else {
+        assert!(
+            telemetry_handle.is_none(),
+            "telemetry handle must be absent"
+        );
+        assert_eq!(fri_offset + fri_len, payload_len);
+    }
+
     let hex = bytes
         .iter()
         .map(|b| format!("{:02x}", b))
