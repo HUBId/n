@@ -42,4 +42,4 @@ pub use types::{
     CompositionBinding, FriHandle, Openings, OpeningsDescriptor, Proof, ProofHandles, Telemetry,
     TelemetryOption, VerifyError, VerifyReport,
 };
-pub use verifier::verify_proof_bytes as verify;
+pub use verifier::verify;

@@ -139,7 +139,7 @@ pub fn verify_proof(
     }
 
     let declared_kind = map_public_to_config_kind(kind);
-    match proof::verifier::verify_proof_bytes(
+    match proof::verifier::verify(
         declared_kind,
         public_inputs,
         proof_bytes,
