@@ -186,6 +186,102 @@ pub fn compute_public_digest(bytes: &[u8]) -> [u8; DIGEST_SIZE] {
     *hasher.finalize().as_bytes()
 }
 
+/// Immutable view over the serialized proof header.
+#[derive(Debug, Clone, Copy)]
+pub struct ProofHeaderView<'a> {
+    pub version: u16,
+    pub params_hash: [u8; DIGEST_SIZE],
+    pub public_digest: [u8; DIGEST_SIZE],
+    pub trace_commit: [u8; DIGEST_SIZE],
+    pub binding_bytes: &'a [u8],
+    pub openings_len: usize,
+    pub fri_len: usize,
+    pub telemetry_flag: u8,
+    pub telemetry_len: Option<usize>,
+    pub payload_offset: usize,
+}
+
+/// Parses the proof header returning an immutable view over the declared fields.
+pub fn deserialize_proof_header(bytes: &[u8]) -> Result<ProofHeaderView<'_>, VerifyError> {
+    let mut cursor = ByteReader::new(bytes);
+
+    let version = read_u16(&mut cursor, SerKind::Proof, "version").map_err(VerifyError::from)?;
+
+    let params_hash =
+        read_digest(&mut cursor, SerKind::Proof, "params_hash").map_err(VerifyError::from)?;
+    let public_digest = read_digest(&mut cursor, SerKind::PublicInputs, "public_digest")
+        .map_err(VerifyError::from)?;
+    let trace_commit = read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit")
+        .map_err(VerifyError::from)?;
+
+    let binding_len_u32 =
+        read_u32(&mut cursor, SerKind::Proof, "composition_len").map_err(VerifyError::from)?;
+    let binding_len =
+        usize::try_from(binding_len_u32).map_err(|_| VerifyError::Serialization(SerKind::Proof))?;
+    let binding_start = cursor.position();
+    let binding_bytes = cursor
+        .read_exact(binding_len, SerKind::Proof, "composition_bytes")
+        .map_err(VerifyError::from)?;
+    let binding_end = binding_start
+        .checked_add(binding_len)
+        .ok_or(VerifyError::Serialization(SerKind::Proof))?;
+
+    let openings_len_u32 =
+        read_u32(&mut cursor, SerKind::Openings, "openings_len").map_err(VerifyError::from)?;
+    let openings_len = usize::try_from(openings_len_u32)
+        .map_err(|_| VerifyError::Serialization(SerKind::Proof))?;
+    let fri_len_u32 = read_u32(&mut cursor, SerKind::Fri, "fri_len").map_err(VerifyError::from)?;
+    let fri_len =
+        usize::try_from(fri_len_u32).map_err(|_| VerifyError::Serialization(SerKind::Proof))?;
+
+    let telemetry_flag =
+        read_u8(&mut cursor, SerKind::Telemetry, "flag").map_err(VerifyError::from)?;
+    let telemetry_len = match telemetry_flag {
+        0 => None,
+        1 => {
+            let len_u32 =
+                read_u32(&mut cursor, SerKind::Telemetry, "len").map_err(VerifyError::from)?;
+            let len = usize::try_from(len_u32)
+                .map_err(|_| VerifyError::Serialization(SerKind::Telemetry))?;
+            Some(len)
+        }
+        _ => return Err(VerifyError::Serialization(SerKind::Telemetry)),
+    };
+
+    let payload_offset = cursor.position();
+    if binding_end > payload_offset {
+        return Err(VerifyError::Serialization(SerKind::Proof));
+    }
+
+    let available_payload = bytes.len().saturating_sub(payload_offset);
+    if openings_len > available_payload {
+        return Err(VerifyError::Serialization(SerKind::Proof));
+    }
+    let remaining_after_openings = available_payload - openings_len;
+    if fri_len > remaining_after_openings {
+        return Err(VerifyError::Serialization(SerKind::Fri));
+    }
+    let remaining_after_fri = remaining_after_openings - fri_len;
+    if let Some(len) = telemetry_len {
+        if len > remaining_after_fri {
+            return Err(VerifyError::Serialization(SerKind::Telemetry));
+        }
+    }
+
+    Ok(ProofHeaderView {
+        version,
+        params_hash,
+        public_digest,
+        trace_commit,
+        binding_bytes,
+        openings_len,
+        fri_len,
+        telemetry_flag,
+        telemetry_len,
+        payload_offset,
+    })
+}
+
 fn binding_public_digest_matches(binding: &CompositionBinding, digest: &DigestBytes) -> bool {
     compute_public_digest(binding.public_inputs()) == digest.bytes
 }
@@ -401,75 +497,52 @@ fn serialize_proof_header_from_sections(
 
 /// Deserialises a [`Proof`] from its canonical byte layout.
 pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
-    let mut cursor = ByteReader::new(bytes);
+    let header = deserialize_proof_header(bytes)?;
 
-    let version = read_u16(&mut cursor, SerKind::Proof, "version").map_err(VerifyError::from)?;
-    if version != PROOF_VERSION {
+    if header.version != PROOF_VERSION {
         return Err(VerifyError::VersionMismatch {
             expected: PROOF_VERSION,
-            actual: version,
+            actual: header.version,
         });
     }
 
     let params_hash = ParamDigest(DigestBytes {
-        bytes: read_digest(&mut cursor, SerKind::Proof, "params_hash")
-            .map_err(VerifyError::from)?,
+        bytes: header.params_hash,
     });
 
-    let public_digest_bytes = read_digest(&mut cursor, SerKind::PublicInputs, "public_digest")
-        .map_err(VerifyError::from)?;
+    let public_digest = DigestBytes {
+        bytes: header.public_digest,
+    };
 
     let trace_commit = DigestBytes {
-        bytes: read_digest(&mut cursor, SerKind::TraceCommitment, "trace_commit")
-            .map_err(VerifyError::from)?,
+        bytes: header.trace_commit,
     };
 
-    let binding_len = read_u32(&mut cursor, SerKind::Proof, "composition_len")
-        .map_err(VerifyError::from)? as usize;
-    let binding_bytes = cursor
-        .read_vec(SerKind::Proof, "composition_bytes", binding_len)
+    let binding = CompositionBinding::deserialize_bytes(header.binding_bytes)?;
+
+    let payload_bytes = &bytes[header.payload_offset..];
+    let mut payload_cursor = ByteReader::new(payload_bytes);
+
+    let openings_bytes = payload_cursor
+        .read_exact(header.openings_len, SerKind::Openings, "openings_bytes")
         .map_err(VerifyError::from)?;
-    let binding = CompositionBinding::deserialize_bytes(&binding_bytes)?;
+    let openings_descriptor = OpeningsDescriptor::deserialize_bytes(openings_bytes)?;
 
-    let openings_len = read_u32(&mut cursor, SerKind::Openings, "openings_len")
-        .map_err(VerifyError::from)? as usize;
-    let fri_len =
-        read_u32(&mut cursor, SerKind::Fri, "fri_len").map_err(VerifyError::from)? as usize;
-
-    let telemetry_flag =
-        read_u8(&mut cursor, SerKind::Telemetry, "flag").map_err(VerifyError::from)?;
-    let telemetry_len = match telemetry_flag {
-        0 => None,
-        1 => Some(
-            read_u32(&mut cursor, SerKind::Telemetry, "len").map_err(VerifyError::from)? as usize,
-        ),
-        _ => return Err(VerifyError::Serialization(SerKind::Telemetry)),
-    };
-
-    let openings_bytes = cursor
-        .read_vec(SerKind::Openings, "openings_bytes", openings_len)
+    let fri_bytes = payload_cursor
+        .read_exact(header.fri_len, SerKind::Fri, "fri_bytes")
         .map_err(VerifyError::from)?;
-    let openings_descriptor = OpeningsDescriptor::deserialize_bytes(&openings_bytes)?;
+    let fri_handle = FriHandle::deserialize_bytes(fri_bytes)?;
 
-    let fri_bytes = cursor
-        .read_vec(SerKind::Fri, "fri_bytes", fri_len)
-        .map_err(VerifyError::from)?;
-    let fri_handle = FriHandle::deserialize_bytes(&fri_bytes)?;
-
-    let telemetry_bytes = match telemetry_len {
+    let telemetry_bytes = match header.telemetry_len {
         Some(len) => Some(
-            cursor
-                .read_vec(SerKind::Telemetry, "telemetry_bytes", len)
+            payload_cursor
+                .read_exact(len, SerKind::Telemetry, "telemetry_bytes")
                 .map_err(VerifyError::from)?,
         ),
         None => None,
     };
 
-    ensure_consumed(&cursor, SerKind::Proof).map_err(VerifyError::from)?;
-
-    let public_digest = DigestBytes {
-        bytes: public_digest_bytes,
-    };
+    ensure_consumed(&payload_cursor, SerKind::Proof).map_err(VerifyError::from)?;
 
     if !binding_public_digest_matches(&binding, &public_digest) {
         return Err(VerifyError::PublicDigestMismatch);
@@ -486,10 +559,10 @@ pub fn deserialize_proof(bytes: &[u8]) -> Result<Proof, VerifyError> {
     }
 
     let telemetry_option =
-        TelemetryOption::deserialize_bytes(telemetry_flag == 1, telemetry_bytes.as_deref())?;
+        TelemetryOption::deserialize_bytes(header.telemetry_flag == 1, telemetry_bytes)?;
 
     Ok(Proof::from_parts(
-        version,
+        header.version,
         params_hash,
         public_digest,
         trace_commit,
@@ -529,6 +602,29 @@ mod tests {
         TelemetryOption, TraceOpenings,
     };
     use crate::utils::serialization::DigestBytes;
+
+    struct HeaderLayout {
+        binding_start: usize,
+        openings_len_idx: usize,
+        fri_len_idx: usize,
+        telemetry_len_idx: Option<usize>,
+    }
+
+    fn compute_header_layout(view: &ProofHeaderView<'_>) -> HeaderLayout {
+        let telemetry_field_len = if view.telemetry_len.is_some() { 4 } else { 0 };
+        let tail_len = 4 + 4 + 1 + telemetry_field_len;
+        let binding_start = view.payload_offset - tail_len - view.binding_bytes.len();
+        let openings_len_idx = binding_start + view.binding_bytes.len();
+        let fri_len_idx = openings_len_idx + 4;
+        let telemetry_flag_idx = fri_len_idx + 4;
+        let telemetry_len_idx = view.telemetry_len.map(|_| telemetry_flag_idx + 1);
+        HeaderLayout {
+            binding_start,
+            openings_len_idx,
+            fri_len_idx,
+            telemetry_len_idx,
+        }
+    }
 
     fn sample_fri_proof() -> FriProof {
         let evaluations: Vec<FieldElement> = (0..64).map(|i| FieldElement(i as u64 + 1)).collect();
@@ -641,6 +737,115 @@ mod tests {
         telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
 
         proof
+    }
+
+    #[test]
+    fn deserialize_proof_header_view_matches_layout() {
+        let proof = build_sample_proof();
+        let bytes = serialize_proof(&proof).expect("serialize proof");
+        let view = deserialize_proof_header(&bytes).expect("header view");
+
+        assert_eq!(view.version, PROOF_VERSION);
+        assert_eq!(view.params_hash, *proof.params_hash().as_bytes());
+        assert_eq!(view.public_digest, proof.public_digest().bytes);
+        assert_eq!(view.trace_commit, proof.trace_commit().bytes);
+
+        let binding_bytes = proof
+            .composition()
+            .serialize_bytes()
+            .expect("binding bytes");
+        assert_eq!(view.binding_bytes, binding_bytes.as_slice());
+        assert_eq!(
+            view.openings_len,
+            proof.openings().serialize_bytes().unwrap().len()
+        );
+        assert_eq!(view.fri_len, proof.fri().serialize_bytes().unwrap().len());
+        assert_eq!(
+            view.telemetry_flag,
+            if proof.telemetry().has_telemetry() {
+                1
+            } else {
+                0
+            }
+        );
+
+        let payload_len = bytes.len() - view.payload_offset;
+        let declared_payload = view.openings_len + view.fri_len + view.telemetry_len.unwrap_or(0);
+        assert_eq!(payload_len, declared_payload);
+    }
+
+    #[test]
+    fn deserialize_proof_header_rejects_truncated_binding() {
+        let proof = build_sample_proof();
+        let bytes = serialize_proof(&proof).expect("serialize proof");
+        let view = deserialize_proof_header(&bytes).expect("header view");
+        let layout = compute_header_layout(&view);
+
+        let binding_end = layout.binding_start + view.binding_bytes.len();
+        let truncated = bytes[..binding_end - 1].to_vec();
+
+        let err = deserialize_proof_header(&truncated).expect_err("missing binding byte");
+        assert!(matches!(err, VerifyError::Serialization(SerKind::Proof)));
+    }
+
+    #[test]
+    fn deserialize_proof_header_rejects_openings_length_mismatch() {
+        let proof = build_sample_proof();
+        let bytes = serialize_proof(&proof).expect("serialize proof");
+        let view = deserialize_proof_header(&bytes).expect("header view");
+        let layout = compute_header_layout(&view);
+
+        let mut mutated = bytes.clone();
+        let new_len = (view.openings_len as u32).wrapping_add(4).max(1);
+        mutated[layout.openings_len_idx..layout.openings_len_idx + 4]
+            .copy_from_slice(&new_len.to_le_bytes());
+
+        let err = deserialize_proof_header(&mutated).expect_err("openings mismatch");
+        assert!(matches!(
+            err,
+            VerifyError::Serialization(SerKind::Telemetry)
+        ));
+    }
+
+    #[test]
+    fn deserialize_proof_header_rejects_fri_length_mismatch() {
+        let proof = build_sample_proof();
+        let bytes = serialize_proof(&proof).expect("serialize proof");
+        let view = deserialize_proof_header(&bytes).expect("header view");
+        let layout = compute_header_layout(&view);
+
+        let mut mutated = bytes.clone();
+        let new_len = (view.fri_len as u32).wrapping_add(1).max(1);
+        mutated[layout.fri_len_idx..layout.fri_len_idx + 4].copy_from_slice(&new_len.to_le_bytes());
+
+        let err = deserialize_proof_header(&mutated).expect_err("fri mismatch");
+        assert!(matches!(
+            err,
+            VerifyError::Serialization(SerKind::Telemetry)
+        ));
+    }
+
+    #[test]
+    fn deserialize_proof_header_rejects_telemetry_length_mismatch() {
+        let proof = build_sample_proof();
+        let bytes = serialize_proof(&proof).expect("serialize proof");
+        let view = deserialize_proof_header(&bytes).expect("header view");
+        let layout = compute_header_layout(&view);
+
+        let Some(telemetry_len_idx) = layout.telemetry_len_idx else {
+            panic!("fixture proof does not include telemetry");
+        };
+        let telemetry_len = view.telemetry_len.expect("telemetry length");
+
+        let mut mutated = bytes.clone();
+        let new_len = (telemetry_len as u32).wrapping_add(1).max(1);
+        mutated[telemetry_len_idx..telemetry_len_idx + 4].copy_from_slice(&new_len.to_le_bytes());
+
+        let err = deserialize_proof_header(&mutated).expect_err("telemetry mismatch");
+        assert!(matches!(
+            err,
+            VerifyError::Serialization(SerKind::Telemetry)
+        ));
     }
 
     #[test]

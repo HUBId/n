@@ -146,7 +146,10 @@ fn header_rejects_openings_offset_mismatch() {
     )
     .expect_err("openings offset mismatch must error");
 
-    assert!(matches!(err, VerifyError::Serialization(SerKind::Proof)));
+    assert!(matches!(
+        err,
+        VerifyError::Serialization(SerKind::Telemetry)
+    ));
 
     assert_snapshot!(
         "header_rejects_openings_offset_mismatch",
@@ -171,7 +174,10 @@ fn header_rejects_fri_offset_mismatch() {
     )
     .expect_err("fri offset mismatch must error");
 
-    assert!(matches!(err, VerifyError::Serialization(SerKind::Fri)));
+    assert!(matches!(
+        err,
+        VerifyError::Serialization(SerKind::Telemetry)
+    ));
 
     assert_snapshot!(
         "header_rejects_fri_offset_mismatch",
