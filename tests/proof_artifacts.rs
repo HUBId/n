@@ -164,11 +164,11 @@ fn snapshot_execution_proof_artifacts() {
     let fri_path_summary = summarize_lengths(&fri_layer_path_lengths);
 
     let artifact = serde_json::json!({
-        "trace_root": hex(&decoded.merkle().core_root),
-        "composition_root": hex(&decoded.merkle().aux_root),
+        "trace_root": hex(decoded.merkle().core_root()),
+        "composition_root": hex(decoded.merkle().aux_root()),
         "fri_roots": decoded
             .merkle()
-            .fri_layer_roots
+            .fri_layer_roots()
             .iter()
             .map(hex)
             .collect::<Vec<_>>(),

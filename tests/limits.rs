@@ -365,7 +365,7 @@ fn build_envelope(
     let header_bytes = proof
         .serialize_header(&payload)
         .expect("proof header serialization");
-    let telemetry = proof.telemetry_mut().frame_mut();
+    let telemetry = proof.telemetry_frame_mut();
     telemetry.set_body_length((payload.len() + 32) as u32);
     telemetry.set_header_length(header_bytes.len() as u32);
     let integrity = compute_integrity_digest(&header_bytes, &payload);
