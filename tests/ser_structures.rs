@@ -162,12 +162,6 @@ fn decode_payload_handles(bytes: &[u8]) -> ((u32, u32), (u32, u32), Option<(u32,
     ) as usize;
     cursor += 4 + binding_len;
 
-    let openings_offset = u32::from_le_bytes(
-        bytes[cursor..cursor + 4]
-            .try_into()
-            .expect("openings offset slice"),
-    );
-    cursor += 4;
     let openings_len = u32::from_le_bytes(
         bytes[cursor..cursor + 4]
             .try_into()
@@ -175,12 +169,6 @@ fn decode_payload_handles(bytes: &[u8]) -> ((u32, u32), (u32, u32), Option<(u32,
     );
     cursor += 4;
 
-    let fri_offset = u32::from_le_bytes(
-        bytes[cursor..cursor + 4]
-            .try_into()
-            .expect("fri offset slice"),
-    );
-    cursor += 4;
     let fri_len = u32::from_le_bytes(
         bytes[cursor..cursor + 4]
             .try_into()
@@ -191,27 +179,17 @@ fn decode_payload_handles(bytes: &[u8]) -> ((u32, u32), (u32, u32), Option<(u32,
     let telemetry_flag = bytes[cursor];
     cursor += 1;
     let telemetry_handle = if telemetry_flag == 1 {
-        let telemetry_offset = u32::from_le_bytes(
-            bytes[cursor..cursor + 4]
-                .try_into()
-                .expect("telemetry offset slice"),
-        );
-        cursor += 4;
         let telemetry_len = u32::from_le_bytes(
             bytes[cursor..cursor + 4]
                 .try_into()
                 .expect("telemetry length slice"),
         );
-        Some((telemetry_offset, telemetry_len))
+        Some((openings_len + fri_len, telemetry_len))
     } else {
         None
     };
 
-    (
-        (openings_offset, openings_len),
-        (fri_offset, fri_len),
-        telemetry_handle,
-    )
+    ((0, openings_len), (openings_len, fri_len), telemetry_handle)
 }
 
 #[test]

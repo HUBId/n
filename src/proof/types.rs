@@ -1377,7 +1377,6 @@ fn serialize_openings_descriptor(descriptor: &OpeningsDescriptor) -> Result<Vec<
     let openings_len = ensure_u32(openings_bytes.len(), SerKind::Openings, "openings_len")?;
     write_u32(&mut buffer, openings_len);
     write_bytes(&mut buffer, &openings_bytes);
-
     Ok(buffer)
 }
 

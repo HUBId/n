@@ -232,10 +232,7 @@ fn header_rejects_telemetry_flag_mismatch() {
     )
     .expect_err("telemetry flag mismatch must error");
 
-    assert!(matches!(
-        err,
-        VerifyError::Serialization(SerKind::TraceCommitment)
-    ));
+    assert!(matches!(err, VerifyError::Serialization(SerKind::Openings)));
 
     assert_snapshot!(
         "header_rejects_telemetry_flag_mismatch",

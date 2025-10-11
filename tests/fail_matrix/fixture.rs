@@ -18,15 +18,15 @@ use std::convert::TryInto;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct HandleLayout {
-    offset_idx: usize,
+    len_idx: usize,
     offset: u32,
     len: u32,
 }
 
 impl HandleLayout {
-    fn new(offset_idx: usize, offset: u32, len: u32) -> Self {
+    fn new(len_idx: usize, offset: u32, len: u32) -> Self {
         Self {
-            offset_idx,
+            len_idx,
             offset,
             len,
         }
@@ -48,8 +48,8 @@ impl HandleLayout {
         self.len as usize
     }
 
-    pub(crate) fn offset_idx(&self) -> usize {
-        self.offset_idx
+    pub(crate) fn len_idx(&self) -> usize {
+        self.len_idx
     }
 }
 
@@ -121,33 +121,27 @@ pub(crate) fn header_layout(bytes: &[u8]) -> HeaderLayout {
     let binding_len = read_u32_le(bytes, cursor) as usize;
     cursor += 4 + binding_len;
 
-    let openings_offset_idx = cursor;
-    let openings_offset = read_u32_le(bytes, cursor);
-    cursor += 4;
+    let openings_len_idx = cursor;
     let openings_len = read_u32_le(bytes, cursor);
     cursor += 4;
-    let openings = HandleLayout::new(openings_offset_idx, openings_offset, openings_len);
+    let openings = HandleLayout::new(openings_len_idx, 0, openings_len);
 
-    let fri_offset_idx = cursor;
-    let fri_offset = read_u32_le(bytes, cursor);
-    cursor += 4;
+    let fri_len_idx = cursor;
     let fri_len = read_u32_le(bytes, cursor);
     cursor += 4;
-    let fri = HandleLayout::new(fri_offset_idx, fri_offset, fri_len);
+    let fri = HandleLayout::new(fri_len_idx, openings_len, fri_len);
 
     let telemetry_flag_idx = cursor;
     let telemetry_flag = bytes[cursor];
     cursor += 1;
 
     let telemetry_handle = if telemetry_flag == 1 {
-        let telemetry_offset_idx = cursor;
-        let telemetry_offset = read_u32_le(bytes, cursor);
-        cursor += 4;
+        let telemetry_len_idx = cursor;
         let telemetry_len = read_u32_le(bytes, cursor);
         cursor += 4;
         Some(HandleLayout::new(
-            telemetry_offset_idx,
-            telemetry_offset,
+            telemetry_len_idx,
+            openings_len + fri_len,
             telemetry_len,
         ))
     } else {
@@ -190,30 +184,28 @@ where
 pub fn mismatch_openings_offset(bytes: &ProofBytes) -> ProofBytes {
     mutate_header_bytes(bytes, |buffer, layout| {
         let handle = layout.openings();
-        let mut new_offset = handle.offset().saturating_add(4);
-        if new_offset == handle.offset() {
-            new_offset = handle.offset().wrapping_add(1);
-            if new_offset == handle.offset() {
-                new_offset = 1;
+        let mut new_len = handle.length().saturating_add(4);
+        if new_len == handle.length() {
+            new_len = handle.length().wrapping_add(1);
+            if new_len == handle.length() {
+                new_len = 1;
             }
         }
-        buffer[handle.offset_idx()..handle.offset_idx() + 4]
-            .copy_from_slice(&new_offset.to_le_bytes());
+        buffer[handle.len_idx()..handle.len_idx() + 4].copy_from_slice(&new_len.to_le_bytes());
     })
 }
 
 pub fn mismatch_fri_offset(bytes: &ProofBytes) -> ProofBytes {
     mutate_header_bytes(bytes, |buffer, layout| {
         let handle = layout.fri();
-        let mut new_offset = handle.offset().saturating_add(1);
-        if new_offset == handle.offset() {
-            new_offset = handle.offset().wrapping_add(2);
-            if new_offset == handle.offset() {
-                new_offset = 1;
+        let mut new_len = handle.length().saturating_add(1);
+        if new_len == handle.length() {
+            new_len = handle.length().wrapping_add(2);
+            if new_len == handle.length() {
+                new_len = 1;
             }
         }
-        buffer[handle.offset_idx()..handle.offset_idx() + 4]
-            .copy_from_slice(&new_offset.to_le_bytes());
+        buffer[handle.len_idx()..handle.len_idx() + 4].copy_from_slice(&new_len.to_le_bytes());
     })
 }
 
@@ -222,15 +214,14 @@ pub fn mismatch_telemetry_offset(bytes: &ProofBytes) -> Option<ProofBytes> {
         let Some(handle) = layout.telemetry().handle() else {
             return false;
         };
-        let mut new_offset = handle.offset().saturating_add(1);
-        if new_offset == handle.offset() {
-            new_offset = handle.offset().wrapping_add(2);
-            if new_offset == handle.offset() {
-                new_offset = 1;
+        let mut new_len = handle.length().saturating_add(1);
+        if new_len == handle.length() {
+            new_len = handle.length().wrapping_add(2);
+            if new_len == handle.length() {
+                new_len = 1;
             }
         }
-        buffer[handle.offset_idx()..handle.offset_idx() + 4]
-            .copy_from_slice(&new_offset.to_le_bytes());
+        buffer[handle.len_idx()..handle.len_idx() + 4].copy_from_slice(&new_len.to_le_bytes());
         true
     })
 }
