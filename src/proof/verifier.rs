@@ -99,10 +99,7 @@ fn verify_impl(
         Ok(prechecked) => {
             let handles = prechecked.handles.clone();
             match execute_fri_stage(&prechecked) {
-                Ok(()) => {
-                    stages.fri_ok = true;
-                    build_report(stages, total_bytes, None, Some(handles))
-                }
+                Ok(()) => build_report(stages, total_bytes, None, Some(handles)),
                 Err(error) => build_report(stages, total_bytes, Some(error), Some(handles)),
             }
         }
@@ -158,7 +155,6 @@ fn precheck_decoded_proof(
         env.context,
         env.total_bytes,
         env.block_context,
-        stages,
     )?;
     let handles = proof.into_handles();
     Ok(PrecheckedProof {
@@ -287,7 +283,6 @@ fn precheck_body(
     context: &VerifierContext,
     total_bytes: usize,
     block_context: Option<&TranscriptBlockContext>,
-    stages: &mut VerificationStages,
 ) -> Result<PrecheckedBody, VerifyError> {
     if proof.trace_commit().bytes != *proof.merkle().core_root() {
         return Err(VerifyError::RootMismatch {
@@ -330,8 +325,6 @@ fn precheck_body(
             section: MerkleSection::FriRoots,
         });
     }
-
-    stages.merkle_ok = true;
 
     let transcript_kind = *proof.kind();
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
@@ -439,14 +432,12 @@ fn precheck_body(
             &ood_points,
             &alpha_vector,
         )?;
-        stages.composition_ok = true;
     } else {
         if proof.openings_payload().composition().is_some() {
             return Err(VerifyError::CompositionInconsistent {
                 reason: "missing_composition_commit".to_string(),
             });
         }
-        stages.composition_ok = true;
     }
 
     let security_level = map_security_level(&context.profile);
