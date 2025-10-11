@@ -870,7 +870,7 @@ mod tests {
         let public_inputs = sample_public_inputs();
         let proof_bytes = ProofBytes::new(Vec::new());
 
-        let result = verify(
+        let report = verify(
             ProofKind::Tx,
             &public_inputs,
             &proof_bytes,
@@ -878,6 +878,9 @@ mod tests {
             &hisec_context,
         );
 
-        assert!(matches!(result, Err(VerifyError::ParamsHashMismatch)));
+        assert!(matches!(
+            report.error,
+            Some(VerifyError::ParamsHashMismatch)
+        ));
     }
 }

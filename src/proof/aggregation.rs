@@ -130,31 +130,18 @@ fn run_batch_with_callbacks<'a, VerifyFn>(
     mut verify_fn: VerifyFn,
 ) -> BatchVerificationOutcome
 where
-    VerifyFn: FnMut(
-        &SortedProof<'a>,
-        &ProofSystemConfig,
-        &VerifierContext,
-    ) -> Result<VerifyReport, VerifyError>,
+    VerifyFn: FnMut(&SortedProof<'a>, &ProofSystemConfig, &VerifierContext) -> VerifyReport,
 {
     let block_seed = derive_block_seed(block_context, sorted);
     let _per_proof_seeds = derive_per_proof_seeds(&block_seed, sorted);
 
     for item in sorted {
-        match verify_fn(item, config, verifier_context) {
-            Ok(report) => {
-                if let Some(error) = report.error {
-                    return BatchVerificationOutcome::Reject {
-                        failing_proof_index: item.original_index,
-                        error,
-                    };
-                }
-            }
-            Err(error) => {
-                return BatchVerificationOutcome::Reject {
-                    failing_proof_index: item.original_index,
-                    error,
-                };
-            }
+        let report = verify_fn(item, config, verifier_context);
+        if let Some(error) = report.error {
+            return BatchVerificationOutcome::Reject {
+                failing_proof_index: item.original_index,
+                error,
+            };
         }
     }
 
@@ -392,9 +379,11 @@ mod tests {
             &verifier_context,
             |item, _, _| {
                 if item.original_index == 1 {
-                    Err(VerifyError::ParamsHashMismatch)
+                    let mut report = dummy_report();
+                    report.error = Some(VerifyError::ParamsHashMismatch);
+                    report
                 } else {
-                    Ok(dummy_report())
+                    dummy_report()
                 }
             },
         );
@@ -431,9 +420,9 @@ mod tests {
                     report.error = Some(VerifyError::MerkleVerifyFailed {
                         section: MerkleSection::FriPath,
                     });
-                    Ok(report)
+                    report
                 } else {
-                    Ok(dummy_report())
+                    dummy_report()
                 }
             },
         );
@@ -466,7 +455,7 @@ mod tests {
             &sorted,
             &config,
             &verifier_context,
-            |_, _, _| Ok(dummy_report()),
+            |_, _, _| dummy_report(),
         );
 
         assert_eq!(outcome, BatchVerificationOutcome::Accept);

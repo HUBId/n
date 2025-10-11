@@ -1,9 +1,9 @@
-//! Deterministic verifier implementation.
+//! Deterministic verifier specification.
 //!
-//! The verifier mirrors the prover pipeline by replaying the transcript,
-//! recomputing the Fiat–Shamir challenges and validating the FRI proof.  All
-//! structural checks (length prefixes, digests and bounds) are performed before
-//! any expensive cryptographic operation.
+//! The verifier now exposes a header-focused contract that records the status
+//! of deterministic checks in [`VerifyReport`]. Implementations are expected to
+//! capture failures in the report's `error` field rather than surfacing them as
+//! runtime exceptions, preserving callers' ability to inspect partial progress.
 
 use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
@@ -53,28 +53,35 @@ fn verify_impl(
     proof_bytes: &ProofBytes,
     config: &ProofSystemConfig,
     context: &VerifierContext,
-) -> Result<VerifyReport, VerifyError> {
-    if (config.proof_version.0 as u16) != PROOF_VERSION {
-        return Err(VerifyError::VersionMismatch {
-            expected: PROOF_VERSION,
-            actual: config.proof_version.0 as u16,
-        });
-    }
-    if config.param_digest != context.param_digest {
-        return Err(VerifyError::ParamsHashMismatch);
-    }
-
+) -> VerifyReport {
     let total_len = proof_bytes.as_slice().len();
     let total_bytes = total_len as u64;
     let mut stages = VerificationStages::default();
+
+    if (config.proof_version.0 as u16) != PROOF_VERSION {
+        return build_report(
+            stages,
+            total_bytes,
+            Some(VerifyError::VersionMismatch {
+                expected: PROOF_VERSION,
+                actual: config.proof_version.0 as u16,
+            }),
+            None,
+        );
+    }
+    if config.param_digest != context.param_digest {
+        return build_report(
+            stages,
+            total_bytes,
+            Some(VerifyError::ParamsHashMismatch),
+            None,
+        );
+    }
+
     let proof = match Proof::from_bytes(proof_bytes.as_slice()) {
         Ok(proof) => proof,
         Err(error) => {
-            if should_return_report(&error) {
-                return Ok(build_report(stages, total_bytes, Some(error), None));
-            } else {
-                return Err(error);
-            }
+            return build_report(stages, total_bytes, Some(error), None);
         }
     };
     match precheck_decoded_proof(
@@ -94,29 +101,12 @@ fn verify_impl(
             match execute_fri_stage(&prechecked) {
                 Ok(()) => {
                     stages.fri_ok = true;
-                    Ok(build_report(stages, total_bytes, None, Some(handles)))
+                    build_report(stages, total_bytes, None, Some(handles))
                 }
-                Err(error) => {
-                    if should_return_report(&error) {
-                        Ok(build_report(
-                            stages,
-                            total_bytes,
-                            Some(error),
-                            Some(handles),
-                        ))
-                    } else {
-                        Err(error)
-                    }
-                }
+                Err(error) => build_report(stages, total_bytes, Some(error), Some(handles)),
             }
         }
-        Err(error) => {
-            if should_return_report(&error) {
-                Ok(build_report(stages, total_bytes, Some(error), None))
-            } else {
-                Err(error)
-            }
-        }
+        Err(error) => build_report(stages, total_bytes, Some(error), None),
     }
 }
 
@@ -127,37 +117,8 @@ pub fn verify(
     proof_bytes: &ProofBytes,
     config: &ProofSystemConfig,
     context: &VerifierContext,
-) -> Result<VerifyReport, VerifyError> {
+) -> VerifyReport {
     verify_impl(declared_kind, public_inputs, proof_bytes, config, context)
-}
-
-fn should_return_report(error: &VerifyError) -> bool {
-    matches!(
-        error,
-        VerifyError::ParamsHashMismatch
-            | VerifyError::ProofTooLarge { .. }
-            | VerifyError::CompositionInconsistent { .. }
-            | VerifyError::MerkleVerifyFailed { .. }
-            | VerifyError::TraceLeafMismatch
-            | VerifyError::CompositionLeafMismatch
-            | VerifyError::TraceOodMismatch
-            | VerifyError::CompositionOodMismatch
-            | VerifyError::OutOfDomainInvalid
-            | VerifyError::DegreeBoundExceeded
-            | VerifyError::EmptyOpenings
-            | VerifyError::IndicesNotSorted
-            | VerifyError::IndicesDuplicate { .. }
-            | VerifyError::IndicesMismatch
-            | VerifyError::AggregationDigestMismatch
-            | VerifyError::BodyLengthMismatch { .. }
-            | VerifyError::HeaderLengthMismatch { .. }
-            | VerifyError::Serialization(_)
-            | VerifyError::IntegrityDigestMismatch
-            | VerifyError::FriVerifyFailed { .. }
-            | VerifyError::DeterministicHash(_)
-            | VerifyError::PublicInputMismatch
-            | VerifyError::PublicDigestMismatch
-    )
 }
 
 #[derive(Debug, Clone)]

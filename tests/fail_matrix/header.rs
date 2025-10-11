@@ -35,14 +35,15 @@ fn header_rejects_version_bump() {
     let mutated_bytes = flip_header_version(&fixture.proof());
 
     let declared_kind = map_public_to_config_kind(public_inputs.kind());
-    let err = verify(
+    let report = verify(
         declared_kind,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect_err("version mismatch must error");
+    );
+
+    let err = report.error.expect("version mismatch must error");
 
     assert!(matches!(err, VerifyError::VersionMismatch { .. }));
 
@@ -67,8 +68,7 @@ fn header_rejects_param_digest_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(error, VerifyError::ParamsHashMismatch));
@@ -108,8 +108,7 @@ fn header_rejects_public_digest_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(error, VerifyError::PublicDigestMismatch));
@@ -149,8 +148,7 @@ fn header_rejects_excessive_proof_size() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(error, VerifyError::ProofTooLarge { .. }));
@@ -189,8 +187,7 @@ fn header_rejects_openings_offset_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(
@@ -232,8 +229,7 @@ fn header_rejects_fri_offset_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(
@@ -279,8 +275,7 @@ fn header_rejects_telemetry_offset_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(
@@ -326,8 +321,7 @@ fn header_rejects_telemetry_flag_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected failure");
     assert!(matches!(

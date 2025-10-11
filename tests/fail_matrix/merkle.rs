@@ -126,14 +126,15 @@ fn merkle_rejects_header_root_mismatch() {
     let config = fixture.config();
     let context = fixture.verifier_context();
 
-    let err = verify(
+    let report = verify(
         ConfigProofKind::Tx,
         &public_inputs,
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect_err("root mismatch must error");
+    );
+
+    let err = report.error.expect("root mismatch must error");
 
     assert!(matches!(
         err,
@@ -178,8 +179,7 @@ fn merkle_rejects_corrupted_trace_path() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(
@@ -220,8 +220,7 @@ fn merkle_rejects_inconsistent_trace_paths() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::EmptyOpenings));
