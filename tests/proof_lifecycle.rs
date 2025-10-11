@@ -130,7 +130,7 @@ fn verify_report_deserializes_with_legacy_payloads() {
         "params_ok": true,
         "public_ok": true,
         "total_bytes": 99u64,
-        "proof": {"ignored": "value"},
+        "proof": null,
     });
     let legacy: VerifyReport =
         serde_json::from_value(legacy_payload).expect("legacy payload should deserialize");

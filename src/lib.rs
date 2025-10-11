@@ -8,10 +8,10 @@
 //! implementations; they simply document the required parameters and the
 //! deterministic sequencing dictated by the specification. Inspectors interact
 //! with strongly typed accessors when reading decoded proofs, using handles
-//! such as [`proof::CompositionBinding`], [`proof::FriHandle`] and
-//! [`proof::OpeningsDescriptor`]. Configuration bindings are surfaced through
-//! [`proof::types::Proof::params_hash`], while optional telemetry is handled by
-//! [`proof::TelemetryOption`].
+//! such as [`proof::CompositionBinding`], [`proof::FriHandle`],
+//! [`proof::OpeningsDescriptor`] and [`proof::ProofHandles`]. Configuration
+//! bindings are surfaced through [`proof::types::Proof::params_hash`], while
+//! optional telemetry is handled by [`proof::TelemetryOption`].
 
 pub mod air;
 pub mod config;
@@ -41,8 +41,8 @@ use ser::{SerError, SerKind as SerializationKind};
 
 pub use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
 pub use proof::types::{
-    CompositionBinding, FriHandle, Openings, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
-    VerifyError, VerifyReport, PROOF_VERSION,
+    CompositionBinding, FriHandle, Openings, OpeningsDescriptor, Proof, ProofHandles, Telemetry,
+    TelemetryOption, VerifyError, VerifyReport, PROOF_VERSION,
 };
 use utils::serialization::{ProofBytes, WitnessBlob};
 
@@ -125,7 +125,8 @@ pub fn generate_proof(
 /// parameter hash stored by the prover. The underlying
 /// [`proof::types::VerifyReport`] returned by the verifier summarizes the
 /// deterministic stage flags (`params_ok`, `public_ok`, `merkle_ok`, `fri_ok`,
-/// `composition_ok`), the measured `total_bytes`, and an optional [`VerifyError`].
+/// `composition_ok`), the measured `total_bytes`, an optional
+/// [`proof::ProofHandles`] view of the proof and an optional [`VerifyError`].
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,
