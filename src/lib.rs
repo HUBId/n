@@ -119,7 +119,10 @@ pub fn generate_proof(
 /// parameters must match the ones used by the prover; otherwise
 /// [`proof::types::VerifyError::ParamsHashMismatch`] is expected. The proof
 /// [`proof::types::Proof::params_hash`] accessor must therefore agree with the
-/// parameter hash stored by the prover.
+/// parameter hash stored by the prover. The underlying
+/// [`proof::types::VerifyReport`] returned by the verifier summarizes the
+/// deterministic stage flags (`params_ok`, `public_ok`, `merkle_ok`, `fri_ok`,
+/// `composition_ok`), the measured `total_bytes`, and an optional [`VerifyError`].
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,

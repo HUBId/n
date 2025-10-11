@@ -981,11 +981,9 @@ impl TelemetryOption {
     }
 }
 
-/// Structured verification report pairing a decoded proof with the outcome.
+/// Structured verification report describing the outcome of deterministic checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerifyReport {
-    /// Fully decoded proof container.
-    pub proof: Proof,
     /// Flag indicating whether parameter hashing checks succeeded.
     #[serde(default)]
     pub params_ok: bool,
@@ -1005,6 +1003,7 @@ pub struct VerifyReport {
     #[serde(default)]
     pub total_bytes: u64,
     /// Optional verification error captured during decoding or checks.
+    #[serde(default)]
     pub error: Option<VerifyError>,
 }
 

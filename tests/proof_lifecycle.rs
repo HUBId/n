@@ -247,35 +247,37 @@ fn verification_report_records_total_bytes_and_telemetry() {
         "reported total bytes must match input length"
     );
 
+    let decoded_proof = decode_proof(&proof_bytes);
     assert!(
-        report.proof.telemetry().is_present(),
+        decoded_proof.telemetry().is_present(),
         "fixture proof should include telemetry"
     );
-    let payload = report.proof.serialize_payload().expect("serialize payload");
-    let header = report
-        .proof
+    let payload = decoded_proof
+        .serialize_payload()
+        .expect("serialize payload");
+    let header = decoded_proof
         .serialize_header(&payload)
         .expect("serialize header");
     let expected_body_length = (payload.len() + 32) as u32;
     assert_eq!(
-        report.proof.telemetry().frame().body_length(),
+        decoded_proof.telemetry().frame().body_length(),
         expected_body_length,
         "telemetry body length must match payload"
     );
     let expected_header_length = header.len() as u32;
     assert_eq!(
-        report.proof.telemetry().frame().header_length(),
+        decoded_proof.telemetry().frame().header_length(),
         expected_header_length,
         "telemetry header length must match header bytes"
     );
-    let telemetry = report.proof.telemetry().frame();
+    let telemetry = decoded_proof.telemetry().frame();
     assert_eq!(
         u64::from(telemetry.header_length()) + u64::from(telemetry.body_length()),
         report.total_bytes + 32,
         "telemetry lengths must sum to total bytes plus the integrity digest"
     );
 
-    let mut canonical = report.proof.clone_using_parts();
+    let mut canonical = decoded_proof.clone_using_parts();
     let canonical_telemetry = canonical.telemetry_mut().frame_mut();
     canonical_telemetry.set_header_length(0);
     canonical_telemetry.set_body_length(0);
@@ -288,7 +290,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize canonical header");
     let expected_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
     assert_eq!(
-        report.proof.telemetry().frame().integrity_digest().bytes,
+        decoded_proof.telemetry().frame().integrity_digest().bytes,
         expected_digest,
         "telemetry integrity digest must remain stable"
     );
