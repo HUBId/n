@@ -489,8 +489,8 @@ fn verification_report_flags_public_stage_failure() {
         Some(VerifyError::PublicInputMismatch)
     ));
     assert!(
-        !report.params_ok,
-        "parameter stage should remain false when public inputs mismatch"
+        report.params_ok,
+        "parameter stage should succeed even when public inputs mismatch"
     );
     assert!(!report.public_ok, "public stage must fail");
     assert!(
@@ -732,15 +732,24 @@ fn proof_decode_rejects_public_digest_tampering() {
     assert!(matches!(decode_error, VerifyError::PublicDigestMismatch));
 
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let verify_err = rpp_stark::proof::verifier::verify(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &mutated,
         &setup.config,
         &setup.verifier_context,
     )
-    .expect_err("verification must fail before building report");
-    assert!(matches!(verify_err, VerifyError::PublicDigestMismatch));
+    .expect("verification report");
+    assert!(matches!(report.error, Some(VerifyError::PublicDigestMismatch)));
+    assert!(
+        !report.params_ok && !report.public_ok,
+        "header digest mismatch should abort before params/public stages"
+    );
+    assert_eq!(
+        report.total_bytes as usize,
+        mutated.as_slice().len(),
+        "report should still record total input bytes"
+    );
 }
 
 #[test]
