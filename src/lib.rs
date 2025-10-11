@@ -7,9 +7,11 @@
 //! and aggregation. All functions are intentionally left without
 //! implementations; they simply document the required parameters and the
 //! deterministic sequencing dictated by the specification. Inspectors interact
-//! with strongly typed accessors when reading decoded proofs. Configuration
-//! bindings are surfaced through [`proof::types::Proof::params_hash`], while
-//! optional telemetry is handled by [`proof::types::TelemetryOption`].
+//! with strongly typed accessors when reading decoded proofs, using handles
+//! such as [`proof::CompositionBinding`], [`proof::FriHandle`] and
+//! [`proof::OpeningsDescriptor`]. Configuration bindings are surfaced through
+//! [`proof::types::Proof::params_hash`], while optional telemetry is handled by
+//! [`proof::TelemetryOption`].
 
 pub mod air;
 pub mod config;
@@ -39,7 +41,8 @@ use ser::{SerError, SerKind as SerializationKind};
 
 pub use proof::aggregation::{BatchProofRecord, BatchVerificationOutcome, BlockContext};
 pub use proof::types::{
-    Proof, Telemetry, TelemetryOption, VerifyError, VerifyReport, PROOF_VERSION,
+    CompositionBinding, FriHandle, Openings, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
+    VerifyError, VerifyReport, PROOF_VERSION,
 };
 use utils::serialization::{ProofBytes, WitnessBlob};
 

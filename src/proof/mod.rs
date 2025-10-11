@@ -38,5 +38,8 @@ pub mod public_inputs;
 pub mod transcript;
 
 pub use public_inputs::ProofKind;
-pub use types::{Openings, Proof, Telemetry, VerifyError, VerifyReport};
+pub use types::{
+    CompositionBinding, FriHandle, Openings, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
+    VerifyError, VerifyReport,
+};
 pub use verifier::verify_proof_bytes as verify;
