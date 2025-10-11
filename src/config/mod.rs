@@ -812,7 +812,7 @@ mod tests {
     use super::*;
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::proof::types::VerifyError;
-    use crate::proof::verifier::precheck_proof_bytes;
+    use crate::proof::verifier::verify;
     use crate::utils::serialization::{DigestBytes, ProofBytes};
 
     fn sample_public_inputs() -> PublicInputs<'static> {
@@ -870,13 +870,12 @@ mod tests {
         let public_inputs = sample_public_inputs();
         let proof_bytes = ProofBytes::new(Vec::new());
 
-        let result = precheck_proof_bytes(
+        let result = verify(
             ProofKind::Tx,
             &public_inputs,
             &proof_bytes,
             &std_config,
             &hisec_context,
-            None,
         );
 
         assert!(matches!(result, Err(VerifyError::ParamsHashMismatch)));
