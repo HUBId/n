@@ -8460,7 +8460,11 @@ impl MiniFixture {
     }
 }
 
-fn verify_with_bytes(setup: &MiniFixture, bytes: Vec<u8>) -> VerifyReport {
+fn verify_with_context(
+    setup: &MiniFixture,
+    context: &VerifierContext,
+    bytes: Vec<u8>,
+) -> VerifyReport {
     let proof_bytes = ProofBytes::new(bytes);
     let public_inputs = setup.public_inputs();
     let declared_kind = map_public_to_config_kind(PublicProofKind::Execution);
@@ -8469,7 +8473,7 @@ fn verify_with_bytes(setup: &MiniFixture, bytes: Vec<u8>) -> VerifyReport {
         &public_inputs,
         &proof_bytes,
         &setup.config,
-        &setup.verifier_context,
+        context,
     )
 }
 
@@ -8505,7 +8509,7 @@ fn roundtrip_ok() {
 #[test]
 fn verify_ok_headers() {
     let setup = MiniFixture::new();
-    let report = verify_with_bytes(&setup, mini_proof_vec());
+    let report = verify_with_context(&setup, &setup.verifier_context, mini_proof_vec());
 
     assert!(
         report.error.is_none(),
@@ -8531,7 +8535,7 @@ fn version_mismatch_err() {
     let mut bytes = mini_proof_vec();
     bytes[0] = bytes[0].wrapping_add(1);
 
-    let report = verify_with_bytes(&setup, bytes);
+    let report = verify_with_context(&setup, &setup.verifier_context, bytes);
     match report.error {
         Some(VerifyError::VersionMismatch { expected, actual }) => {
             assert_eq!(
@@ -8551,7 +8555,7 @@ fn params_hash_mismatch_err() {
     let params_offset = 2; // version occupies two bytes
     bytes[params_offset] ^= 0x01;
 
-    let report = verify_with_bytes(&setup, bytes);
+    let report = verify_with_context(&setup, &setup.verifier_context, bytes);
     assert!(
         matches!(report.error, Some(VerifyError::ParamsHashMismatch)),
         "tampering the parameter digest must be detected",
@@ -8565,7 +8569,7 @@ fn public_digest_mismatch_err() {
     let public_offset = 2 + 32; // version + params hash
     bytes[public_offset] ^= 0x01;
 
-    let report = verify_with_bytes(&setup, bytes);
+    let report = verify_with_context(&setup, &setup.verifier_context, bytes);
     assert!(
         matches!(report.error, Some(VerifyError::PublicDigestMismatch)),
         "tampering the public digest must be detected",
@@ -8575,20 +8579,21 @@ fn public_digest_mismatch_err() {
 #[test]
 fn proof_too_large_err() {
     let setup = MiniFixture::new();
-    let mut bytes = mini_proof_vec();
-    let limit = setup.verifier_context.limits.max_proof_size_bytes as usize;
-    assert!(
-        bytes.len() <= limit,
-        "fixture proof must fit within verifier limits"
-    );
-    bytes.resize(limit + 1, 0xff);
+    let mut context = setup.verifier_context.clone();
+    let limit = MINI_PROOF_BYTES.len() - 1;
+    context.limits.max_proof_size_bytes = limit as u32;
 
-    let report = verify_with_bytes(&setup, bytes);
+    let report = verify_with_context(&setup, &context, mini_proof_vec());
     match report.error {
         Some(VerifyError::ProofTooLarge { max_kb, got_kb }) => {
             assert!(
-                got_kb > max_kb,
-                "reported size must exceed configured limit"
+                got_kb >= max_kb,
+                "reported size must meet or exceed configured limit"
+            );
+            assert!(
+                report.total_bytes as usize
+                    > context.limits.max_proof_size_bytes as usize,
+                "report must reflect byte length exceeding configured limit",
             );
         }
         other => panic!("expected proof too large error, got {:?}", other),
