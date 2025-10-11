@@ -100,6 +100,7 @@ pub use folding::{
     FoldingLayout, LayerCommitment, BINARY_FOLD_ARITY,
 };
 pub use layer::FriLayer;
+pub(crate) use proof::derive_query_positions;
 pub use proof::{
     derive_query_plan_id, DeepOodsProof, FriProof, FriQueryLayerProof, FriQueryProof, FriVerifier,
 };

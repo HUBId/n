@@ -14,7 +14,10 @@ use crate::config::{
 use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
-use crate::fri::{field_to_bytes, Blake2sXof, FriVerifier};
+use crate::fri::{
+    derive_query_positions, field_from_hash, field_to_bytes, hash, FriProof, FriVerifier,
+};
+use crate::hash::blake3::FiatShamirChallengeRules;
 use crate::merkle::traits::MerkleHasher;
 use crate::merkle::verify_proof as verify_merkle_proof;
 use crate::merkle::{
@@ -385,16 +388,12 @@ fn precheck_body(
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
     }
-    let query_seed = challenges
+    let _query_seed = challenges
         .draw_query_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let query_count = stark_params.fri().queries as usize;
-    let expected_indices = derive_trace_query_indices(
-        query_seed,
-        query_count,
-        proof.fri_proof().initial_domain_size,
-    )?;
+    let expected_indices = derive_trace_query_indices(proof.fri_proof(), fri_seed, query_count)?;
 
     validate_query_indices(
         proof.openings_payload().trace().indices(),
@@ -587,28 +586,69 @@ fn ensure_merkle_scheme(
 }
 
 fn derive_trace_query_indices(
-    query_seed: [u8; 32],
+    fri_proof: &FriProof,
+    fri_seed: [u8; 32],
     query_count: usize,
-    domain_size: usize,
 ) -> Result<Vec<u32>, VerifyError> {
-    if domain_size == 0 || domain_size > u32::MAX as usize {
+    if fri_proof.initial_domain_size == 0 || fri_proof.initial_domain_size > u32::MAX as usize {
         return Err(VerifyError::IndicesMismatch);
     }
 
-    let mut sampler = QueryIndexSampler::new(query_seed);
-    let target = core::cmp::min(query_count, domain_size);
-    let mut seen = vec![false; domain_size];
-    let mut indices = Vec::with_capacity(target);
+    if fri_proof.fold_challenges.len() != fri_proof.layer_roots.len() {
+        return Err(VerifyError::FriVerifyFailed {
+            issue: FriVerifyIssue::LayerMismatch,
+        });
+    }
 
-    while indices.len() < target {
-        let position = sampler.challenge_usize(domain_size)?;
-        if !seen[position] {
-            seen[position] = true;
-            indices.push(position as u32);
+    let mut state = fri_seed;
+    for (layer_index, root) in fri_proof.layer_roots.iter().enumerate() {
+        let mut layer_payload = Vec::with_capacity(state.len() + 8 + root.len());
+        layer_payload.extend_from_slice(&state);
+        layer_payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
+        layer_payload.extend_from_slice(root);
+        state = hash(&layer_payload).into();
+
+        let label = format!("{}ETA-{layer_index}", FiatShamirChallengeRules::SALT_PREFIX);
+        let mut eta_payload = Vec::with_capacity(state.len() + label.len());
+        eta_payload.extend_from_slice(&state);
+        eta_payload.extend_from_slice(label.as_bytes());
+        let challenge: [u8; 32] = hash(&eta_payload).into();
+        state = hash(&challenge).into();
+
+        let derived_eta = field_from_hash(&challenge);
+        let expected_eta =
+            fri_proof
+                .fold_challenges
+                .get(layer_index)
+                .ok_or(VerifyError::FriVerifyFailed {
+                    issue: FriVerifyIssue::LayerMismatch,
+                })?;
+        if &derived_eta != expected_eta {
+            return Err(VerifyError::FriVerifyFailed {
+                issue: FriVerifyIssue::FoldingConstraint,
+            });
         }
     }
 
-    indices.sort_unstable();
+    let mut final_payload = Vec::with_capacity(state.len() + b"RPP-FS/FINAL".len() + 32);
+    final_payload.extend_from_slice(&state);
+    final_payload.extend_from_slice(b"RPP-FS/FINAL");
+    final_payload.extend_from_slice(&fri_proof.final_polynomial_digest);
+    state = hash(&final_payload).into();
+
+    let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
+    query_payload.extend_from_slice(&state);
+    query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
+    let query_seed: [u8; 32] = hash(&query_payload).into();
+
+    let positions = derive_query_positions(query_seed, query_count, fri_proof.initial_domain_size)
+        .map_err(map_fri_error)?;
+
+    let mut indices = Vec::with_capacity(positions.len());
+    for position in positions {
+        let index = u32::try_from(position).map_err(|_| VerifyError::IndicesMismatch)?;
+        indices.push(index);
+    }
     Ok(indices)
 }
 
@@ -639,24 +679,6 @@ fn validate_query_indices(provided: &[u32], expected: &[u32]) -> Result<(), Veri
     }
 
     Ok(())
-}
-
-struct QueryIndexSampler {
-    xof: Blake2sXof,
-}
-
-impl QueryIndexSampler {
-    fn new(seed: [u8; 32]) -> Self {
-        Self {
-            xof: Blake2sXof::new(&seed),
-        }
-    }
-
-    fn challenge_usize(&mut self, range: usize) -> Result<usize, VerifyError> {
-        debug_assert!(range > 0);
-        let word = self.xof.next_u64().map_err(VerifyError::from)?;
-        Ok((word % (range as u64)) as usize)
-    }
 }
 
 #[derive(Clone, Copy)]

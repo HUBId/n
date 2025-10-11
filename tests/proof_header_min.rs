@@ -8591,8 +8591,7 @@ fn proof_too_large_err() {
                 "reported size must meet or exceed configured limit"
             );
             assert!(
-                report.total_bytes as usize
-                    > context.limits.max_proof_size_bytes as usize,
+                report.total_bytes as usize > context.limits.max_proof_size_bytes as usize,
                 "report must reflect byte length exceeding configured limit",
             );
         }
