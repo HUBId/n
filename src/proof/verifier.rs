@@ -64,10 +64,19 @@ fn verify_impl(
         return Err(VerifyError::ParamsHashMismatch);
     }
 
-    let proof = Proof::from_bytes(proof_bytes.as_slice())?;
     let total_len = proof_bytes.as_slice().len();
     let total_bytes = total_len as u64;
     let mut stages = VerificationStages::default();
+    let proof = match Proof::from_bytes(proof_bytes.as_slice()) {
+        Ok(proof) => proof,
+        Err(error) => {
+            if should_return_report(&error) {
+                return Ok(build_report(stages, total_bytes, Some(error), None));
+            } else {
+                return Err(error);
+            }
+        }
+    };
     match precheck_decoded_proof(
         proof,
         DecodedProofEnv {
@@ -142,10 +151,12 @@ fn should_return_report(error: &VerifyError) -> bool {
             | VerifyError::AggregationDigestMismatch
             | VerifyError::BodyLengthMismatch { .. }
             | VerifyError::HeaderLengthMismatch { .. }
+            | VerifyError::Serialization(_)
             | VerifyError::IntegrityDigestMismatch
             | VerifyError::FriVerifyFailed { .. }
             | VerifyError::DeterministicHash(_)
             | VerifyError::PublicInputMismatch
+            | VerifyError::PublicDigestMismatch
     )
 }
 
@@ -278,6 +289,7 @@ fn validate_header(
     if proof.params_hash() != &context.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
+    stages.params_ok = true;
 
     let expected_public_inputs =
         serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
@@ -287,7 +299,7 @@ fn validate_header(
 
     let expected_digest = compute_public_digest(proof.public_inputs());
     if proof.public_digest().bytes != expected_digest {
-        return Err(VerifyError::PublicInputMismatch);
+        return Err(VerifyError::PublicDigestMismatch);
     }
     stages.public_ok = true;
 
@@ -297,8 +309,6 @@ fn validate_header(
             *proof.kind(),
         )));
     }
-
-    stages.params_ok = true;
 
     Ok(())
 }
