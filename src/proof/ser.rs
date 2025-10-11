@@ -634,11 +634,11 @@ fn read_optional_payload_handle(
     }
 }
 
-fn slice_for_handle<'a>(
-    payload: &'a [u8],
+fn slice_for_handle(
+    payload: &[u8],
     handle: PayloadHandle,
     kind: SerKind,
-) -> Result<&'a [u8], VerifyError> {
+) -> Result<&[u8], VerifyError> {
     let range = handle.range();
     if range.end > payload.len() {
         return Err(VerifyError::Serialization(kind));
@@ -646,11 +646,11 @@ fn slice_for_handle<'a>(
     Ok(&payload[range])
 }
 
-fn slice_for_optional_handle<'a>(
-    payload: &'a [u8],
+fn slice_for_optional_handle(
+    payload: &[u8],
     handle: OptionalPayloadHandle,
     kind: SerKind,
-) -> Result<Option<&'a [u8]>, VerifyError> {
+) -> Result<Option<&[u8]>, VerifyError> {
     if !handle.is_present() {
         return Ok(None);
     }
