@@ -242,6 +242,135 @@ pub struct Proof {
     telemetry: TelemetryOption,
 }
 
+/// Read-only container exposing header fields and payload placeholders.
+///
+/// The struct mirrors the immutable view of a [`Proof`] after decoding. It
+/// exposes the header bindings together with the handles wrapping each payload
+/// section so verifiers may pass around a lightweight view of the envelope
+/// without retaining ownership of the full proof body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofHandles {
+    version: u16,
+    params_hash: ParamDigest,
+    public_digest: DigestBytes,
+    trace_commit: DigestBytes,
+    composition: CompositionBinding,
+    openings: OpeningsDescriptor,
+    fri: FriHandle,
+    telemetry: TelemetryOption,
+}
+
+impl ProofHandles {
+    /// Creates a new immutable handle view for the provided components.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        version: u16,
+        params_hash: ParamDigest,
+        public_digest: DigestBytes,
+        trace_commit: DigestBytes,
+        composition: CompositionBinding,
+        openings: OpeningsDescriptor,
+        fri: FriHandle,
+        telemetry: TelemetryOption,
+    ) -> Self {
+        Self {
+            version,
+            params_hash,
+            public_digest,
+            trace_commit,
+            composition,
+            openings,
+            fri,
+            telemetry,
+        }
+    }
+
+    /// Returns the proof version stored in the header.
+    pub fn version(&self) -> u16 {
+        self.version
+    }
+
+    /// Returns the parameter digest binding configuration for the proof.
+    pub fn params_hash(&self) -> &ParamDigest {
+        &self.params_hash
+    }
+
+    /// Returns the canonical proof kind binding wrapper.
+    pub fn composition(&self) -> &CompositionBinding {
+        &self.composition
+    }
+
+    /// Returns the canonical proof kind stored in the envelope header.
+    pub fn kind(&self) -> &ProofKind {
+        self.composition.kind()
+    }
+
+    /// Returns the AIR specification identifier bound to the proof kind.
+    pub fn air_spec_id(&self) -> &AirSpecId {
+        self.composition.air_spec_id()
+    }
+
+    /// Returns the digest binding the canonical public-input payload.
+    pub fn public_digest(&self) -> &DigestBytes {
+        &self.public_digest
+    }
+
+    /// Returns the canonical public-input payload encoded in the header.
+    pub fn public_inputs(&self) -> &[u8] {
+        self.composition.public_inputs()
+    }
+
+    /// Returns the digest mirroring the declared trace commitment.
+    pub fn trace_commit(&self) -> &DigestBytes {
+        &self.trace_commit
+    }
+
+    /// Returns the optional composition commitment digest, if present.
+    pub fn composition_commit(&self) -> Option<&DigestBytes> {
+        self.composition.composition_commit()
+    }
+
+    /// Returns the Merkle commitment bundle for the proof.
+    pub fn merkle(&self) -> &MerkleProofBundle {
+        self.openings.merkle()
+    }
+
+    /// Returns the out-of-domain opening payloads accompanying the proof.
+    pub fn openings(&self) -> &OpeningsDescriptor {
+        &self.openings
+    }
+
+    /// Returns the wrapped out-of-domain opening payloads.
+    pub fn openings_payload(&self) -> &Openings {
+        self.openings.openings()
+    }
+
+    /// Returns the FRI handle wrapper describing the payload section.
+    pub fn fri(&self) -> &FriHandle {
+        &self.fri
+    }
+
+    /// Returns the decoded FRI proof stored in the payload section.
+    pub fn fri_proof(&self) -> &FriProof {
+        self.fri.fri_proof()
+    }
+
+    /// Returns the telemetry option describing the telemetry payload.
+    pub fn telemetry(&self) -> &TelemetryOption {
+        &self.telemetry
+    }
+
+    /// Returns `true` when telemetry data is present in the payload.
+    pub fn has_telemetry(&self) -> bool {
+        self.telemetry.is_present()
+    }
+
+    /// Returns the telemetry frame describing declared lengths and digests.
+    pub fn telemetry_frame(&self) -> &Telemetry {
+        self.telemetry.frame()
+    }
+}
+
 impl Clone for Proof {
     fn clone(&self) -> Self {
         self.clone_using_parts()
@@ -490,6 +619,31 @@ impl Proof {
             openings_descriptor,
             fri_handle,
             telemetry_option,
+        )
+    }
+
+    /// Converts the proof into an immutable handle view consuming `self`.
+    pub fn into_handles(self) -> ProofHandles {
+        let Proof {
+            version,
+            params_hash,
+            public_digest,
+            trace_commit,
+            composition,
+            fri,
+            openings,
+            telemetry,
+        } = self;
+
+        ProofHandles::new(
+            version,
+            params_hash,
+            public_digest,
+            trace_commit,
+            composition,
+            openings,
+            fri,
+            telemetry,
         )
     }
 
@@ -1007,6 +1161,9 @@ pub struct VerifyReport {
     /// Total serialized byte length observed during verification.
     #[serde(default)]
     pub total_bytes: u64,
+    /// Optional immutable proof view built from header fields and placeholders.
+    #[serde(default)]
+    pub proof: Option<ProofHandles>,
     /// Optional verification error captured during decoding or checks.
     #[serde(default)]
     pub error: Option<VerifyError>,

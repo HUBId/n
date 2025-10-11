@@ -406,19 +406,21 @@ mod tests {
             },
         );
 
+        let proof = Proof::from_parts(
+            PROOF_VERSION,
+            ParamDigest(DigestBytes { bytes: [7u8; 32] }),
+            DigestBytes {
+                bytes: crate::proof::ser::compute_public_digest(&[]),
+            },
+            DigestBytes { bytes: [0u8; 32] },
+            binding,
+            openings,
+            fri_handle,
+            telemetry,
+        );
+
         PrecheckedProof {
-            proof: Proof::from_parts(
-                PROOF_VERSION,
-                ParamDigest(DigestBytes { bytes: [7u8; 32] }),
-                DigestBytes {
-                    bytes: crate::proof::ser::compute_public_digest(&[]),
-                },
-                DigestBytes { bytes: [0u8; 32] },
-                binding,
-                openings,
-                fri_handle,
-                telemetry,
-            ),
+            handles: proof.into_handles(),
             fri_seed: [10u8; 32],
             security_level: crate::fri::FriSecurityLevel::Standard,
             params,

@@ -28,10 +28,10 @@ use crate::proof::ser::{
 };
 use crate::proof::transcript::{Transcript, TranscriptBlockContext, TranscriptHeader};
 use crate::proof::types::{
-    FriVerifyIssue, MerkleSection, OutOfDomainOpening, Proof, VerifyError, VerifyReport,
-    PROOF_ALPHA_VECTOR_LEN, PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT, PROOF_MIN_OOD_POINTS,
-    PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE, PROOF_TELEMETRY_MAX_QUERY_BUDGET,
-    PROOF_VERSION,
+    FriVerifyIssue, MerkleSection, OutOfDomainOpening, Proof, ProofHandles, VerifyError,
+    VerifyReport, PROOF_ALPHA_VECTOR_LEN, PROOF_MAX_FRI_LAYERS, PROOF_MAX_QUERY_COUNT,
+    PROOF_MIN_OOD_POINTS, PROOF_TELEMETRY_MAX_CAP_DEGREE, PROOF_TELEMETRY_MAX_CAP_SIZE,
+    PROOF_TELEMETRY_MAX_QUERY_BUDGET, PROOF_VERSION,
 };
 use crate::utils::serialization::{DigestBytes, ProofBytes};
 use std::collections::BTreeMap;
@@ -80,20 +80,28 @@ pub fn verify_proof_bytes(
         },
         &mut stages,
     ) {
-        Ok(prechecked) => match execute_fri_stage(&prechecked) {
-            Ok(()) => {
-                stages.fri_ok = true;
-                Ok(build_report(stages, total_bytes, None))
+        Ok(prechecked) => {
+            let handles = prechecked.handles.clone();
+            match execute_fri_stage(&prechecked) {
+                Ok(()) => {
+                    stages.fri_ok = true;
+                    Ok(build_report(stages, total_bytes, None, Some(handles)))
+                }
+                Err(error) => Ok(build_report(
+                    stages,
+                    total_bytes,
+                    Some(error),
+                    Some(handles),
+                )),
             }
-            Err(error) => Ok(build_report(stages, total_bytes, Some(error))),
-        },
-        Err(error) => Ok(build_report(stages, total_bytes, Some(error))),
+        }
+        Err(error) => Ok(build_report(stages, total_bytes, Some(error), None)),
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct PrecheckedProof {
-    pub(crate) proof: Proof,
+    pub(crate) handles: ProofHandles,
     pub(crate) fri_seed: [u8; 32],
     pub(crate) security_level: FriSecurityLevel,
     pub(crate) params: StarkParams,
@@ -130,8 +138,9 @@ fn precheck_decoded_proof(
         env.block_context,
         stages,
     )?;
+    let handles = proof.into_handles();
     Ok(PrecheckedProof {
-        proof,
+        handles,
         fri_seed: prechecked.fri_seed,
         security_level: prechecked.security_level,
         params: prechecked.params,
@@ -174,7 +183,7 @@ pub(crate) fn precheck_proof_bytes(
 }
 
 pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerifyError> {
-    let fri_proof = proof.proof.fri_proof();
+    let fri_proof = proof.handles.fri().fri_proof();
     FriVerifier::verify_with_params(
         fri_proof,
         proof.security_level,
@@ -1122,6 +1131,7 @@ fn build_report(
     stages: VerificationStages,
     total_bytes: u64,
     error: Option<VerifyError>,
+    proof: Option<ProofHandles>,
 ) -> VerifyReport {
     VerifyReport {
         params_ok: stages.params_ok,
@@ -1130,6 +1140,7 @@ fn build_report(
         fri_ok: stages.fri_ok,
         composition_ok: stages.composition_ok,
         total_bytes,
+        proof,
         error,
     }
 }
