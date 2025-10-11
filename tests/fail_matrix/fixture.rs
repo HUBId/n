@@ -14,6 +14,236 @@ use rpp_stark::proof::types::{
     CompositionBinding, FriHandle, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
 };
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
+use std::convert::TryInto;
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HandleLayout {
+    offset_idx: usize,
+    offset: u32,
+    len: u32,
+}
+
+impl HandleLayout {
+    fn new(offset_idx: usize, offset: u32, len: u32) -> Self {
+        Self {
+            offset_idx,
+            offset,
+            len,
+        }
+    }
+
+    pub(crate) fn offset(&self) -> u32 {
+        self.offset
+    }
+
+    pub(crate) fn length(&self) -> u32 {
+        self.len
+    }
+
+    pub(crate) fn offset_usize(&self) -> usize {
+        self.offset as usize
+    }
+
+    pub(crate) fn len_usize(&self) -> usize {
+        self.len as usize
+    }
+
+    pub(crate) fn offset_idx(&self) -> usize {
+        self.offset_idx
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TelemetryLayout {
+    flag_idx: usize,
+    handle: Option<HandleLayout>,
+}
+
+impl TelemetryLayout {
+    fn new(flag_idx: usize, handle: Option<HandleLayout>) -> Self {
+        Self { flag_idx, handle }
+    }
+
+    pub(crate) fn flag_idx(&self) -> usize {
+        self.flag_idx
+    }
+
+    pub(crate) fn handle(&self) -> Option<HandleLayout> {
+        self.handle
+    }
+
+    pub(crate) fn is_present(&self) -> bool {
+        self.handle.is_some()
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HeaderLayout {
+    openings: HandleLayout,
+    fri: HandleLayout,
+    telemetry: TelemetryLayout,
+    payload_start: usize,
+}
+
+impl HeaderLayout {
+    pub(crate) fn openings(&self) -> HandleLayout {
+        self.openings
+    }
+
+    pub(crate) fn fri(&self) -> HandleLayout {
+        self.fri
+    }
+
+    pub(crate) fn telemetry(&self) -> TelemetryLayout {
+        self.telemetry
+    }
+
+    pub(crate) fn payload_start(&self) -> usize {
+        self.payload_start
+    }
+}
+
+fn read_u32_le(bytes: &[u8], start: usize) -> u32 {
+    u32::from_le_bytes(
+        bytes[start..start + 4]
+            .try_into()
+            .expect("slice must have four bytes"),
+    )
+}
+
+pub(crate) fn header_layout(bytes: &[u8]) -> HeaderLayout {
+    let mut cursor = 0usize;
+    cursor += 2; // version
+    cursor += 32; // params hash
+    cursor += 32; // public digest
+    cursor += 32; // trace commitment
+
+    let binding_len = read_u32_le(bytes, cursor) as usize;
+    cursor += 4 + binding_len;
+
+    let openings_offset_idx = cursor;
+    let openings_offset = read_u32_le(bytes, cursor);
+    cursor += 4;
+    let openings_len = read_u32_le(bytes, cursor);
+    cursor += 4;
+    let openings = HandleLayout::new(openings_offset_idx, openings_offset, openings_len);
+
+    let fri_offset_idx = cursor;
+    let fri_offset = read_u32_le(bytes, cursor);
+    cursor += 4;
+    let fri_len = read_u32_le(bytes, cursor);
+    cursor += 4;
+    let fri = HandleLayout::new(fri_offset_idx, fri_offset, fri_len);
+
+    let telemetry_flag_idx = cursor;
+    let telemetry_flag = bytes[cursor];
+    cursor += 1;
+
+    let telemetry_handle = if telemetry_flag == 1 {
+        let telemetry_offset_idx = cursor;
+        let telemetry_offset = read_u32_le(bytes, cursor);
+        cursor += 4;
+        let telemetry_len = read_u32_le(bytes, cursor);
+        cursor += 4;
+        Some(HandleLayout::new(
+            telemetry_offset_idx,
+            telemetry_offset,
+            telemetry_len,
+        ))
+    } else {
+        None
+    };
+
+    let telemetry = TelemetryLayout::new(telemetry_flag_idx, telemetry_handle);
+
+    HeaderLayout {
+        openings,
+        fri,
+        telemetry,
+        payload_start: cursor,
+    }
+}
+
+fn mutate_header_bytes<F>(bytes: &ProofBytes, mutator: F) -> ProofBytes
+where
+    F: FnOnce(&mut Vec<u8>, HeaderLayout),
+{
+    let mut mutated = bytes.as_slice().to_vec();
+    let layout = header_layout(&mutated);
+    mutator(&mut mutated, layout);
+    ProofBytes::new(mutated)
+}
+
+fn mutate_header_bytes_option<F>(bytes: &ProofBytes, mutator: F) -> Option<ProofBytes>
+where
+    F: FnOnce(&mut Vec<u8>, HeaderLayout) -> bool,
+{
+    let mut mutated = bytes.as_slice().to_vec();
+    let layout = header_layout(&mutated);
+    if mutator(&mut mutated, layout) {
+        Some(ProofBytes::new(mutated))
+    } else {
+        None
+    }
+}
+
+pub fn mismatch_openings_offset(bytes: &ProofBytes) -> ProofBytes {
+    mutate_header_bytes(bytes, |buffer, layout| {
+        let handle = layout.openings();
+        let mut new_offset = handle.offset().saturating_add(4);
+        if new_offset == handle.offset() {
+            new_offset = handle.offset().wrapping_add(1);
+            if new_offset == handle.offset() {
+                new_offset = 1;
+            }
+        }
+        buffer[handle.offset_idx()..handle.offset_idx() + 4]
+            .copy_from_slice(&new_offset.to_le_bytes());
+    })
+}
+
+pub fn mismatch_fri_offset(bytes: &ProofBytes) -> ProofBytes {
+    mutate_header_bytes(bytes, |buffer, layout| {
+        let handle = layout.fri();
+        let mut new_offset = handle.offset().saturating_add(1);
+        if new_offset == handle.offset() {
+            new_offset = handle.offset().wrapping_add(2);
+            if new_offset == handle.offset() {
+                new_offset = 1;
+            }
+        }
+        buffer[handle.offset_idx()..handle.offset_idx() + 4]
+            .copy_from_slice(&new_offset.to_le_bytes());
+    })
+}
+
+pub fn mismatch_telemetry_offset(bytes: &ProofBytes) -> Option<ProofBytes> {
+    mutate_header_bytes_option(bytes, |buffer, layout| {
+        let Some(handle) = layout.telemetry().handle() else {
+            return false;
+        };
+        let mut new_offset = handle.offset().saturating_add(1);
+        if new_offset == handle.offset() {
+            new_offset = handle.offset().wrapping_add(2);
+            if new_offset == handle.offset() {
+                new_offset = 1;
+            }
+        }
+        buffer[handle.offset_idx()..handle.offset_idx() + 4]
+            .copy_from_slice(&new_offset.to_le_bytes());
+        true
+    })
+}
+
+pub fn mismatch_telemetry_flag(bytes: &ProofBytes) -> Option<ProofBytes> {
+    mutate_header_bytes_option(bytes, |buffer, layout| {
+        if !layout.telemetry().is_present() {
+            return false;
+        }
+        buffer[layout.telemetry().flag_idx()] = 0;
+        true
+    })
+}
 
 const LFSR_ALPHA: u64 = 5;
 const LFSR_BETA: u64 = 7;
