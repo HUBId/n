@@ -48,10 +48,20 @@ impl BuiltProof {
 #[derive(Debug, Clone)]
 struct HeaderFields {
     version: u16,
-    kind: ProofKind,
     params_hash: ParamDigest,
+}
+
+#[derive(Debug, Clone)]
+struct BindingFields {
+    kind: ProofKind,
     air_spec_id: AirSpecId,
     public_inputs: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+struct TelemetryFields {
+    has_telemetry: bool,
+    telemetry: Telemetry,
 }
 
 /// Builder used to assemble and validate proof envelopes.
@@ -59,10 +69,11 @@ struct HeaderFields {
 pub struct ProofBuilder {
     params: ProofParams,
     header: Option<HeaderFields>,
+    binding: Option<BindingFields>,
     merkle: Option<MerkleProofBundle>,
     openings: Option<Openings>,
     fri_proof: Option<FriProof>,
-    telemetry: Option<Telemetry>,
+    telemetry: Option<TelemetryFields>,
 }
 
 impl ProofBuilder {
@@ -71,6 +82,7 @@ impl ProofBuilder {
         Self {
             params,
             header: None,
+            binding: None,
             merkle: None,
             openings: None,
             fri_proof: None,
@@ -79,18 +91,23 @@ impl ProofBuilder {
     }
 
     /// Injects the header fields for the envelope.
-    pub fn with_header(
+    pub fn with_header(mut self, version: u16, params_hash: ParamDigest) -> Self {
+        self.header = Some(HeaderFields {
+            version,
+            params_hash,
+        });
+        self
+    }
+
+    /// Injects the composition binding fields required by the envelope.
+    pub fn with_binding(
         mut self,
-        version: u16,
         kind: ProofKind,
-        params_hash: ParamDigest,
         air_spec_id: AirSpecId,
         public_inputs: Vec<u8>,
     ) -> Self {
-        self.header = Some(HeaderFields {
-            version,
+        self.binding = Some(BindingFields {
             kind,
-            params_hash,
             air_spec_id,
             public_inputs,
         });
@@ -116,8 +133,11 @@ impl ProofBuilder {
     }
 
     /// Sets the telemetry frame associated with the proof.
-    pub fn with_telemetry(mut self, telemetry: Telemetry) -> Self {
-        self.telemetry = Some(telemetry);
+    pub fn with_telemetry(mut self, telemetry: Telemetry, has_telemetry: bool) -> Self {
+        self.telemetry = Some(TelemetryFields {
+            has_telemetry,
+            telemetry,
+        });
         self
     }
 
@@ -129,10 +149,7 @@ impl ProofBuilder {
             .ok_or(VerifyError::Serialization(SerKind::Proof))?;
         let HeaderFields {
             version,
-            kind,
             params_hash,
-            air_spec_id,
-            public_inputs,
         } = header;
 
         if version != self.params.version {
@@ -141,6 +158,15 @@ impl ProofBuilder {
                 actual: version,
             });
         }
+
+        let binding = self
+            .binding
+            .ok_or(VerifyError::Serialization(SerKind::Proof))?;
+        let BindingFields {
+            kind,
+            air_spec_id,
+            public_inputs,
+        } = binding;
 
         let merkle = self
             .merkle
@@ -154,10 +180,15 @@ impl ProofBuilder {
         let telemetry = self
             .telemetry
             .ok_or(VerifyError::Serialization(SerKind::Telemetry))?;
+        let TelemetryFields {
+            has_telemetry,
+            telemetry,
+        } = telemetry;
 
         let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
         let fri_handle = FriHandle::new(fri_proof);
-        let telemetry_option = TelemetryOption::new(true, telemetry);
+        let telemetry_option = TelemetryOption::new(has_telemetry, telemetry);
+        let telemetry_present = telemetry_option.is_present();
 
         if openings_descriptor.out_of_domain().is_empty() {
             return Err(VerifyError::EmptyOpenings);
@@ -211,16 +242,18 @@ impl ProofBuilder {
             telemetry_option,
         );
 
-        proof.set_has_telemetry(true);
+        proof.set_has_telemetry(telemetry_present);
 
         let payload = serialize_proof_payload(&proof).map_err(VerifyError::from)?;
         let header_bytes = serialize_proof_header(&proof, &payload).map_err(VerifyError::from)?;
 
-        let telemetry = proof.telemetry_frame_mut();
-        telemetry.set_header_length(header_bytes.len() as u32);
-        telemetry.set_body_length((payload.len() + 32) as u32);
-        let integrity = compute_integrity_digest(&header_bytes, &payload);
-        telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
+        if proof.telemetry().has_telemetry() {
+            let telemetry = proof.telemetry_frame_mut();
+            telemetry.set_header_length(header_bytes.len() as u32);
+            telemetry.set_body_length((payload.len() + 32) as u32);
+            let integrity = compute_integrity_digest(&header_bytes, &payload);
+            telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
+        }
 
         let bytes_total = header_bytes.len() + payload.len() + 32;
         let limit_bytes = (self.params.max_size_kb as usize) * 1024;
@@ -477,15 +510,17 @@ mod tests {
         let BuiltProof { proof, .. } = ProofBuilder::new(builder_params())
             .with_header(
                 crate::proof::types::PROOF_VERSION,
-                ProofKind::Tx,
                 ParamDigest(DigestBytes { bytes: [6u8; 32] }),
+            )
+            .with_binding(
+                ProofKind::Tx,
                 crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
                 sample_public_inputs(),
             )
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry)
+            .with_telemetry(telemetry, true)
             .build()
             .expect("build sample proof");
 
@@ -583,8 +618,10 @@ mod tests {
         let result = ProofBuilder::new(builder_params())
             .with_header(
                 crate::proof::types::PROOF_VERSION,
-                ProofKind::Tx,
                 ParamDigest(DigestBytes { bytes: [1u8; 32] }),
+            )
+            .with_binding(
+                ProofKind::Tx,
                 crate::config::AirSpecId(DigestBytes { bytes: [2u8; 32] }),
                 sample_public_inputs(),
             )
@@ -595,7 +632,7 @@ mod tests {
                 openings
             })
             .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry)
+            .with_telemetry(telemetry, true)
             .build();
 
         assert!(matches!(result, Err(VerifyError::EmptyOpenings)));
@@ -612,15 +649,17 @@ mod tests {
         let result = ProofBuilder::new(builder_params())
             .with_header(
                 crate::proof::types::PROOF_VERSION,
-                ProofKind::Tx,
                 ParamDigest(DigestBytes { bytes: [3u8; 32] }),
+            )
+            .with_binding(
+                ProofKind::Tx,
                 crate::config::AirSpecId(DigestBytes { bytes: [4u8; 32] }),
                 sample_public_inputs(),
             )
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry)
+            .with_telemetry(telemetry, true)
             .build();
 
         assert!(matches!(result, Err(VerifyError::IndicesDuplicate { .. })));
@@ -644,15 +683,17 @@ mod tests {
         let result = ProofBuilder::new(params)
             .with_header(
                 crate::proof::types::PROOF_VERSION,
-                ProofKind::Tx,
                 ParamDigest(DigestBytes { bytes: [8u8; 32] }),
+            )
+            .with_binding(
+                ProofKind::Tx,
                 crate::config::AirSpecId(DigestBytes { bytes: [9u8; 32] }),
                 sample_public_inputs(),
             )
             .with_merkle_bundle(merkle)
             .with_openings(sample_openings())
             .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry)
+            .with_telemetry(telemetry, true)
             .build();
 
         assert!(matches!(result, Err(VerifyError::ProofTooLarge { .. })));
