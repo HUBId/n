@@ -439,6 +439,7 @@ fn precheck_body(
             &ood_points,
             &alpha_vector,
         )?;
+
         stages.composition_ok = true;
     } else {
         if proof.openings_payload().composition().is_some() {
@@ -446,6 +447,7 @@ fn precheck_body(
                 reason: "missing_composition_commit".to_string(),
             });
         }
+
         stages.composition_ok = true;
     }
 
