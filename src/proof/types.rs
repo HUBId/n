@@ -982,7 +982,12 @@ impl TelemetryOption {
 }
 
 /// Structured verification report describing the outcome of deterministic checks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The struct implements [`Default`] so all stage flags fall back to `false`,
+/// `total_bytes` defaults to `0`, and `error` becomes `None` when
+/// deserialized from older payloads that omit the newer fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VerifyReport {
     /// Flag indicating whether parameter hashing checks succeeded.
     #[serde(default)]
