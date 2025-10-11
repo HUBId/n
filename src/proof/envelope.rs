@@ -16,8 +16,8 @@ use crate::proof::ser::{
     serialize_proof, serialize_proof_header, serialize_proof_payload,
 };
 use crate::proof::types::{
-    CompositionBinding, FriHandle, MerkleProofBundle, Openings, OpeningsDescriptor,
-    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, VerifyError,
+    CompositionBinding, FriHandle, Openings, OpeningsDescriptor, OutOfDomainOpening, Proof,
+    TelemetryOption, VerifyError,
 };
 use crate::ser::{SerError, SerKind};
 use crate::{
@@ -58,22 +58,15 @@ struct BindingFields {
     public_inputs: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
-struct TelemetryFields {
-    has_telemetry: bool,
-    telemetry: Telemetry,
-}
-
 /// Builder used to assemble and validate proof envelopes.
 #[derive(Debug, Clone)]
 pub struct ProofBuilder {
     params: ProofParams,
     header: Option<HeaderFields>,
     binding: Option<BindingFields>,
-    merkle: Option<MerkleProofBundle>,
-    openings: Option<Openings>,
-    fri_proof: Option<FriProof>,
-    telemetry: Option<TelemetryFields>,
+    openings: Option<OpeningsDescriptor>,
+    fri: Option<FriHandle>,
+    telemetry: Option<TelemetryOption>,
 }
 
 impl ProofBuilder {
@@ -83,9 +76,8 @@ impl ProofBuilder {
             params,
             header: None,
             binding: None,
-            merkle: None,
             openings: None,
-            fri_proof: None,
+            fri: None,
             telemetry: None,
         }
     }
@@ -114,30 +106,21 @@ impl ProofBuilder {
         self
     }
 
-    /// Sets the Merkle bundle for the envelope body.
-    pub fn with_merkle_bundle(mut self, merkle: MerkleProofBundle) -> Self {
-        self.merkle = Some(merkle);
-        self
-    }
-
-    /// Sets the out-of-domain openings section.
-    pub fn with_openings(mut self, openings: Openings) -> Self {
+    /// Sets the openings descriptor for the envelope body.
+    pub fn with_openings_descriptor(mut self, openings: OpeningsDescriptor) -> Self {
         self.openings = Some(openings);
         self
     }
 
     /// Attaches the FRI proof payload for the envelope.
-    pub fn with_fri_proof(mut self, fri_proof: FriProof) -> Self {
-        self.fri_proof = Some(fri_proof);
+    pub fn with_fri_handle(mut self, fri_handle: FriHandle) -> Self {
+        self.fri = Some(fri_handle);
         self
     }
 
     /// Sets the telemetry frame associated with the proof.
-    pub fn with_telemetry(mut self, telemetry: Telemetry, has_telemetry: bool) -> Self {
-        self.telemetry = Some(TelemetryFields {
-            has_telemetry,
-            telemetry,
-        });
+    pub fn with_telemetry_option(mut self, telemetry: TelemetryOption) -> Self {
+        self.telemetry = Some(telemetry);
         self
     }
 
@@ -168,26 +151,13 @@ impl ProofBuilder {
             public_inputs,
         } = binding;
 
-        let merkle = self
-            .merkle
-            .ok_or(VerifyError::Serialization(SerKind::TraceCommitment))?;
-        let openings = self
+        let openings_descriptor = self
             .openings
             .ok_or(VerifyError::Serialization(SerKind::Openings))?;
-        let fri_proof = self
-            .fri_proof
-            .ok_or(VerifyError::Serialization(SerKind::Fri))?;
-        let telemetry = self
+        let fri_handle = self.fri.ok_or(VerifyError::Serialization(SerKind::Fri))?;
+        let telemetry_option = self
             .telemetry
             .ok_or(VerifyError::Serialization(SerKind::Telemetry))?;
-        let TelemetryFields {
-            has_telemetry,
-            telemetry,
-        } = telemetry;
-
-        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
-        let fri_handle = FriHandle::new(fri_proof);
-        let telemetry_option = TelemetryOption::new(has_telemetry, telemetry);
         let telemetry_present = telemetry_option.is_present();
 
         if openings_descriptor.out_of_domain().is_empty() {
@@ -349,7 +319,7 @@ mod tests {
     use crate::proof::public_inputs::{ExecutionHeaderV1, PublicInputVersion, PublicInputs};
     use crate::proof::types::{
         CompositionOpenings, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
-        TraceOpenings,
+        MerkleProofBundle, Telemetry, TraceOpenings,
     };
     use crate::utils::serialization::{DigestBytes, WitnessBlob};
 
@@ -507,6 +477,11 @@ mod tests {
             fri_proof.final_polynomial.len() as u32,
         );
 
+        let openings = sample_openings();
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry_option = TelemetryOption::new(true, telemetry);
+
         let BuiltProof { proof, .. } = ProofBuilder::new(builder_params())
             .with_header(
                 crate::proof::types::PROOF_VERSION,
@@ -517,10 +492,9 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [7u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_merkle_bundle(merkle)
-            .with_openings(sample_openings())
-            .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry, true)
+            .with_openings_descriptor(openings_descriptor)
+            .with_fri_handle(fri_handle)
+            .with_telemetry_option(telemetry_option)
             .build()
             .expect("build sample proof");
 
@@ -614,6 +588,11 @@ mod tests {
         let merkle = MerkleProofBundle::from_fri_proof(core_root, [22u8; 32], &fri_proof)
             .expect("consistent merkle roots");
         let telemetry = sample_telemetry(1, 1);
+        let mut openings = sample_openings();
+        openings.out_of_domain.clear();
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry_option = TelemetryOption::new(true, telemetry);
 
         let result = ProofBuilder::new(builder_params())
             .with_header(
@@ -625,14 +604,9 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [2u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_merkle_bundle(merkle)
-            .with_openings({
-                let mut openings = sample_openings();
-                openings.out_of_domain.clear();
-                openings
-            })
-            .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry, true)
+            .with_openings_descriptor(openings_descriptor)
+            .with_fri_handle(fri_handle)
+            .with_telemetry_option(telemetry_option)
             .build();
 
         assert!(matches!(result, Err(VerifyError::EmptyOpenings)));
@@ -645,6 +619,10 @@ mod tests {
         let merkle = MerkleProofBundle::from_fri_proof(core_root, [32u8; 32], &fri_proof)
             .expect("consistent merkle roots");
         let telemetry = sample_telemetry(1, 1);
+        let openings = sample_openings();
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry_option = TelemetryOption::new(true, telemetry);
 
         let result = ProofBuilder::new(builder_params())
             .with_header(
@@ -656,10 +634,9 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [4u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_merkle_bundle(merkle)
-            .with_openings(sample_openings())
-            .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry, true)
+            .with_openings_descriptor(openings_descriptor)
+            .with_fri_handle(fri_handle)
+            .with_telemetry_option(telemetry_option)
             .build();
 
         assert!(matches!(result, Err(VerifyError::IndicesDuplicate { .. })));
@@ -680,6 +657,11 @@ mod tests {
             version: crate::proof::types::PROOF_VERSION,
             max_size_kb: 1,
         };
+        let openings = sample_openings();
+        let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
+        let fri_handle = FriHandle::new(fri_proof);
+        let telemetry_option = TelemetryOption::new(true, telemetry);
+
         let result = ProofBuilder::new(params)
             .with_header(
                 crate::proof::types::PROOF_VERSION,
@@ -690,10 +672,9 @@ mod tests {
                 crate::config::AirSpecId(DigestBytes { bytes: [9u8; 32] }),
                 sample_public_inputs(),
             )
-            .with_merkle_bundle(merkle)
-            .with_openings(sample_openings())
-            .with_fri_proof(fri_proof)
-            .with_telemetry(telemetry, true)
+            .with_openings_descriptor(openings_descriptor)
+            .with_fri_handle(fri_handle)
+            .with_telemetry_option(telemetry_option)
             .build();
 
         assert!(matches!(result, Err(VerifyError::ProofTooLarge { .. })));
