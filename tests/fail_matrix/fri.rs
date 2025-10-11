@@ -20,8 +20,7 @@ fn fri_rejects_fold_challenge_tampering() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("verification report must be produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     let issue = match error {

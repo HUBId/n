@@ -23,8 +23,7 @@ fn trace_ood_rejects_core_value_mismatch() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::TraceOodMismatch));
@@ -53,8 +52,7 @@ fn composition_ood_rejects_value_mismatch() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::CompositionOodMismatch));

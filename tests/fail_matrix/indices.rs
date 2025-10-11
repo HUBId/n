@@ -23,8 +23,7 @@ fn trace_rejects_unsorted_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesNotSorted));
@@ -50,8 +49,7 @@ fn trace_rejects_duplicate_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesDuplicate { .. }));
@@ -77,8 +75,7 @@ fn trace_rejects_mismatched_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesMismatch));
@@ -107,8 +104,7 @@ fn composition_rejects_unsorted_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesNotSorted));
@@ -142,8 +138,7 @@ fn composition_rejects_duplicate_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesDuplicate { .. }));
@@ -177,8 +172,7 @@ fn composition_rejects_mismatched_indices() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IndicesMismatch));

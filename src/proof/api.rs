@@ -24,10 +24,10 @@ impl ProofLifecycleSpec {
     pub const STEPS: &'static [&'static str] = &[
         "ingest_public_inputs",
         "prepare_contexts",
-        "execute_prover_pipeline",
+        "describe_envelope_structure",
         "assemble_envelope",
-        "single_verify",
-        "optional_batch_verify",
+        "emit_header_report",
+        "optional_batch_summary",
     ];
 }
 
@@ -155,13 +155,14 @@ pub fn verify_proof(
     }
 
     let declared_kind = map_public_to_config_kind(kind);
-    super::verifier::verify(
+    let report = super::verifier::verify(
         declared_kind,
         public_inputs,
         proof_bytes,
         config,
         verifier_context,
-    )
+    );
+    Ok(report)
 }
 
 /// Forward declaration of the batch_verify function (no implementation).

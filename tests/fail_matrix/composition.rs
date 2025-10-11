@@ -23,8 +23,7 @@ fn composition_rejects_leaf_bytes_mismatch() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     let reason = match error {

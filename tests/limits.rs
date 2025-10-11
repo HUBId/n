@@ -44,8 +44,7 @@ fn proof_size_limit_is_enforced() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("verify report");
+    );
 
     assert!(matches!(
         report.error,
@@ -68,8 +67,7 @@ fn fri_layer_overflow_is_rejected() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("verify report");
+    );
 
     assert_eq!(
         report.error,
@@ -94,8 +92,7 @@ fn fri_query_budget_limit_is_enforced() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("verify report");
+    );
 
     assert_eq!(
         report.error,
@@ -135,8 +132,7 @@ fn trace_degree_bound_is_enforced() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("verify report");
+    );
 
     assert_eq!(report.error, Some(VerifyError::DegreeBoundExceeded));
 }

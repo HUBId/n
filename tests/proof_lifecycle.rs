@@ -262,8 +262,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
         &proof_bytes,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("verification report");
+    );
 
     assert!(
         report.error.is_none(),
@@ -358,8 +357,7 @@ fn verification_rejects_tampered_telemetry_fields() {
         &tampered_header_bytes,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("header mismatch report");
+    );
     match header_report.error {
         Some(VerifyError::HeaderLengthMismatch { declared, actual }) => {
             assert_eq!(
@@ -386,8 +384,7 @@ fn verification_rejects_tampered_telemetry_fields() {
         &tampered_digest_bytes,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("digest mismatch report");
+    );
     assert!(matches!(
         digest_report.error,
         Some(VerifyError::IntegrityDigestMismatch)
@@ -422,8 +419,7 @@ fn verification_report_flags_param_digest_flip() {
         &mutated_bytes,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("verification report");
+    );
 
     assert!(matches!(
         report.error,
@@ -447,8 +443,7 @@ fn verification_report_marks_all_stages_on_success_path() {
         &proof_bytes,
         &config,
         &context,
-    )
-    .expect("verification report");
+    );
 
     assert!(report.error.is_none(), "expected proof to succeed");
     assert!(report.params_ok, "params stage should succeed");
@@ -481,8 +476,7 @@ fn verification_report_flags_public_stage_failure() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("verification report");
+    );
 
     assert!(matches!(
         report.error,
@@ -522,8 +516,7 @@ fn verification_report_flags_merkle_stage_failure() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("verification report");
+    );
 
     assert!(matches!(
         report.error,
@@ -566,8 +559,7 @@ fn verification_report_flags_composition_stage_failure() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("verification report");
+    );
 
     let reason = match report.error {
         Some(VerifyError::CompositionInconsistent { ref reason }) => reason,
@@ -608,8 +600,7 @@ fn verification_report_flags_fri_stage_failure() {
         &mutated.bytes,
         &config,
         &context,
-    )
-    .expect("verification report");
+    );
 
     assert!(matches!(
         report.error,
@@ -738,9 +729,11 @@ fn proof_decode_rejects_public_digest_tampering() {
         &mutated,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("verification report");
-    assert!(matches!(report.error, Some(VerifyError::PublicDigestMismatch)));
+    );
+    assert!(matches!(
+        report.error,
+        Some(VerifyError::PublicDigestMismatch)
+    ));
     assert!(
         !report.params_ok && !report.public_ok,
         "header digest mismatch should abort before params/public stages"
@@ -1052,8 +1045,7 @@ fn verification_report_flags_fri_challenge_flip() {
         &mutated_bytes,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect("verification report");
+    );
 
     match report.error {
         Some(VerifyError::MerkleVerifyFailed {
@@ -1164,8 +1156,11 @@ fn verification_rejects_tampered_header_trace_root() {
     );
 
     match verdict {
-        Err(StarkError::InvalidInput(reason)) => assert_eq!(reason, "root_mismatch"),
-        other => panic!("unexpected verdict: {other:?}"),
+        Ok(VerificationVerdict::Reject(VerifyError::RootMismatch {
+            section: MerkleSection::TraceCommit,
+        })) => {}
+        Ok(other) => panic!("unexpected verdict: {other:?}"),
+        Err(error) => panic!("unexpected StarkError: {error:?}"),
     }
 }
 
@@ -1187,14 +1182,17 @@ fn verification_report_flags_header_trace_root_mismatch() {
 
     let tampered = mutate_header_trace_root(&proof_bytes);
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let err = rpp_stark::proof::verifier::verify(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect_err("root mismatch must abort decoding");
+    );
+    let err = report
+        .error
+        .as_ref()
+        .expect("root mismatch must abort decoding");
     assert!(matches!(
         err,
         VerifyError::RootMismatch {
@@ -1238,8 +1236,11 @@ fn verification_rejects_tampered_header_composition_root() {
     );
 
     match verdict {
-        Err(StarkError::InvalidInput(reason)) => assert_eq!(reason, "root_mismatch"),
-        other => panic!("unexpected verdict: {other:?}"),
+        Ok(VerificationVerdict::Reject(VerifyError::RootMismatch {
+            section: MerkleSection::CompositionCommit,
+        })) => {}
+        Ok(other) => panic!("unexpected verdict: {other:?}"),
+        Err(error) => panic!("unexpected StarkError: {error:?}"),
     }
 }
 
@@ -1261,14 +1262,17 @@ fn verification_report_flags_header_composition_root_mismatch() {
 
     let tampered = mutate_header_composition_root(&proof_bytes);
     let declared_kind = map_public_to_config_kind(ProofKind::Execution);
-    let err = rpp_stark::proof::verifier::verify(
+    let report = rpp_stark::proof::verifier::verify(
         declared_kind,
         &public_inputs,
         &tampered,
         &setup.config,
         &setup.verifier_context,
-    )
-    .expect_err("composition root mismatch must abort decoding");
+    );
+    let err = report
+        .error
+        .as_ref()
+        .expect("composition root mismatch must abort decoding");
     assert!(matches!(
         err,
         VerifyError::RootMismatch {
@@ -1633,11 +1637,16 @@ fn verify_proof_reports_decode_failures() {
         &setup.verifier_context,
     );
 
-    match result.expect_err("verification should fail") {
-        StarkError::InvalidInput(label) => {
-            assert_eq!(label, "version_mismatch");
+    let verdict = result.expect("verification should yield a verdict");
+    match verdict {
+        VerificationVerdict::Reject(VerifyError::VersionMismatch { expected, actual }) => {
+            assert_eq!(expected, PROOF_VERSION);
+            assert_ne!(expected, actual, "the envelope must report a mismatch");
         }
-        other => panic!("unexpected error: {other:?}"),
+        VerificationVerdict::Reject(other) => {
+            panic!("unexpected rejection error: {other:?}");
+        }
+        VerificationVerdict::Accept => panic!("corrupted proof must be rejected"),
     }
 
     assert_eq!(PROOF_VERSION, setup.config.proof_version.0 as u16);
@@ -1669,8 +1678,7 @@ fn verification_report_flags_proof_size_overflow() {
         &proof_bytes,
         &setup.config,
         &tight_context,
-    )
-    .expect("verification report");
+    );
 
     match report.error {
         Some(VerifyError::ProofTooLarge { max_kb, got_kb }) => {

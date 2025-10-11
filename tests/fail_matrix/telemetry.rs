@@ -51,8 +51,7 @@ fn telemetry_rejects_header_length_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::HeaderLengthMismatch { .. }));
@@ -83,8 +82,7 @@ fn telemetry_rejects_body_length_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::BodyLengthMismatch { .. }));
@@ -115,8 +113,7 @@ fn telemetry_rejects_integrity_digest_mismatch() {
         &mutated_bytes,
         &config,
         &context,
-    )
-    .expect("report produced");
+    );
 
     let error = report.error.expect("expected verification failure");
     assert!(matches!(error, VerifyError::IntegrityDigestMismatch));
