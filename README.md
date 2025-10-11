@@ -601,7 +601,9 @@ nightly-Abhängigkeiten.
 
 **Dateien**
 
-- `src/proof/types` (Strukturvertrags: Proof, Openings, MerkleProofBundle, Telemetry, VerifyError, VerifyReport, `PROOF_VERSION = 1`)
+- `src/proof/types` (Strukturvertrag: Proof, CompositionBinding, FriHandle,
+  OpeningsDescriptor, Openings, MerkleProofBundle, TelemetryOption, Telemetry,
+  VerifyError, VerifyReport, `PROOF_VERSION = 1`)
 - `src/proof/ser` (Ser/De für Proof, Openings, Bundle, Telemetry; `serialized_len`)
 - `src/proof/mod` (Reexports)
 
