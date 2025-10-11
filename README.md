@@ -407,7 +407,9 @@ Parallelisierung zur Laufzeit deaktivieren und Ergebnisse direkt vergleichen.
     FRI-Komposition referenziert, müssen bytegenau den `composition`-Leaves an
     denselben Indizes entsprechen (`CompositionInconsistent` bei Abweichung).
   - Report: Flags setzen (`params_ok`, `public_ok`, `merkle_ok`, `fri_ok`,
-    `composition_ok`), `total_bytes` als echte Serialisierungslänge.
+    `composition_ok`), `total_bytes` als echte Serialisierungslänge, `error`
+    für den ersten Fehler. Der Report spiegelt keinen vollständigen `Proof`
+    mehr wider – Decoder greifen bei Bedarf direkt auf die Proof-Bytes zu.
 - Fehler-Taxonomie (final):
   - `VersionMismatch { expected, got }`
   - `ParamsHashMismatch`
@@ -763,6 +765,8 @@ nightly-Abhängigkeiten.
   - `merkle_ok` nach erfolgreicher Merkle-Prüfung,
   - `fri_ok` nach FRI-Erfolg,
   - `composition_ok` nur falls Composition vorhanden und konsistent.
+- `error` enthält (optional) die erste aufgetretene [`VerifyError`]; der Report
+  enthält keinen eingebetteten Proof mehr.
 - Telemetry wird ignoriert für die Gültigkeit; optional in Report gespiegelt (z. B. Queries, Layers).
 
 **Tests**

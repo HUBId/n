@@ -72,7 +72,7 @@ impl VerifyProofContract {
 
     /// Output produced by the function.
     pub const OUTPUT: &'static str =
-        "verdict: Accept | Reject(VerifyError) wrapped in VerificationVerdict";
+        "report: VerifyReport{params_ok, public_ok, merkle_ok, fri_ok, composition_ok, total_bytes, error}";
 
     /// Determinism requirements for the function.
     pub const DETERMINISM: &'static [&'static str] = &[
@@ -137,6 +137,11 @@ pub fn generate_proof(
 }
 
 /// Forward declaration of the verify_proof function (no implementation).
+///
+/// The returned [`VerifyReport`] mirrors the deterministic stage flags exposed by
+/// the verifier. Each boolean flag defaults to `false` when the corresponding
+/// stage aborts, `total_bytes` captures the measured envelope length, and
+/// `error` documents the first failure (if any).
 pub fn verify_proof(
     kind: ProofKind,
     public_inputs: &PublicInputs<'_>,

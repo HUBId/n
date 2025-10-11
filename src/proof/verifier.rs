@@ -83,16 +83,11 @@ pub fn verify_proof_bytes(
         Ok(prechecked) => match execute_fri_stage(&prechecked) {
             Ok(()) => {
                 stages.fri_ok = true;
-                Ok(build_report(prechecked.proof, stages, total_bytes, None))
+                Ok(build_report(stages, total_bytes, None))
             }
-            Err(error) => Ok(build_report(
-                prechecked.proof,
-                stages,
-                total_bytes,
-                Some(error),
-            )),
+            Err(error) => Ok(build_report(stages, total_bytes, Some(error))),
         },
-        Err((proof, error)) => Ok(build_report(proof, stages, total_bytes, Some(error))),
+        Err(error) => Ok(build_report(stages, total_bytes, Some(error))),
     }
 }
 
@@ -113,23 +108,20 @@ struct DecodedProofEnv<'ctx, 'pi> {
     block_context: Option<&'ctx TranscriptBlockContext>,
 }
 
-#[allow(clippy::result_large_err)]
 fn precheck_decoded_proof(
     proof: Proof,
     env: DecodedProofEnv<'_, '_>,
     stages: &mut VerificationStages,
-) -> Result<PrecheckedProof, (Proof, VerifyError)> {
-    if let Err(error) = validate_header(
+) -> Result<PrecheckedProof, VerifyError> {
+    validate_header(
         &proof,
         env.declared_kind,
         env.public_inputs,
         env.config,
         env.context,
         stages,
-    ) {
-        return Err((proof, error));
-    }
-    match precheck_body(
+    )?;
+    let prechecked = precheck_body(
         &proof,
         env.public_inputs,
         env.config,
@@ -137,18 +129,16 @@ fn precheck_decoded_proof(
         env.total_bytes,
         env.block_context,
         stages,
-    ) {
-        Ok(prechecked) => Ok(PrecheckedProof {
-            proof,
-            fri_seed: prechecked.fri_seed,
-            security_level: prechecked.security_level,
-            params: prechecked.params,
-        }),
-        Err(error) => Err((proof, error)),
-    }
+    )?;
+    Ok(PrecheckedProof {
+        proof,
+        fri_seed: prechecked.fri_seed,
+        security_level: prechecked.security_level,
+        params: prechecked.params,
+    })
 }
 
-#[allow(dead_code, clippy::result_large_err)]
+#[allow(dead_code)]
 pub(crate) fn precheck_proof_bytes(
     declared_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
@@ -181,7 +171,6 @@ pub(crate) fn precheck_proof_bytes(
         },
         &mut stages,
     )
-    .map_err(|(_, err)| err)
 }
 
 pub(crate) fn execute_fri_stage(proof: &PrecheckedProof) -> Result<(), VerifyError> {
@@ -1130,13 +1119,11 @@ fn map_security_level(profile: &crate::config::ProfileConfig) -> FriSecurityLeve
 }
 
 fn build_report(
-    proof: Proof,
     stages: VerificationStages,
     total_bytes: u64,
     error: Option<VerifyError>,
 ) -> VerifyReport {
     VerifyReport {
-        proof,
         params_ok: stages.params_ok,
         public_ok: stages.public_ok,
         merkle_ok: stages.merkle_ok,

@@ -13,7 +13,9 @@ use rpp_stark::proof::public_inputs::{
 use rpp_stark::proof::ser::{
     compute_integrity_digest, compute_public_digest, map_public_to_config_kind, serialize_proof,
 };
-use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, Proof, VerifyError, PROOF_VERSION};
+use rpp_stark::proof::types::{
+    FriVerifyIssue, MerkleSection, Proof, VerifyError, VerifyReport, PROOF_VERSION,
+};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
@@ -113,6 +115,33 @@ fn make_public_inputs<'a>(header: &'a ExecutionHeaderV1, body: &'a [u8]) -> Publ
         header: header.clone(),
         body,
     }
+}
+
+#[test]
+fn verify_report_deserializes_with_legacy_payloads() {
+    let empty: VerifyReport = serde_json::from_str("{}").expect("empty payload should deserialize");
+    assert_eq!(
+        empty,
+        VerifyReport::default(),
+        "empty payload must default fields"
+    );
+
+    let legacy_payload = serde_json::json!({
+        "params_ok": true,
+        "public_ok": true,
+        "total_bytes": 99u64,
+        "proof": {"ignored": "value"},
+    });
+    let legacy: VerifyReport =
+        serde_json::from_value(legacy_payload).expect("legacy payload should deserialize");
+    assert!(legacy.params_ok, "legacy payload must preserve params flag");
+    assert!(legacy.public_ok, "legacy payload must preserve public flag");
+    assert_eq!(legacy.total_bytes, 99);
+    assert_eq!(legacy.error, None);
+    assert!(
+        !legacy.merkle_ok && !legacy.fri_ok && !legacy.composition_ok,
+        "missing stage flags must default to false",
+    );
 }
 
 #[test]
@@ -247,35 +276,37 @@ fn verification_report_records_total_bytes_and_telemetry() {
         "reported total bytes must match input length"
     );
 
+    let decoded_proof = decode_proof(&proof_bytes);
     assert!(
-        report.proof.telemetry().is_present(),
+        decoded_proof.telemetry().is_present(),
         "fixture proof should include telemetry"
     );
-    let payload = report.proof.serialize_payload().expect("serialize payload");
-    let header = report
-        .proof
+    let payload = decoded_proof
+        .serialize_payload()
+        .expect("serialize payload");
+    let header = decoded_proof
         .serialize_header(&payload)
         .expect("serialize header");
     let expected_body_length = (payload.len() + 32) as u32;
     assert_eq!(
-        report.proof.telemetry().frame().body_length(),
+        decoded_proof.telemetry().frame().body_length(),
         expected_body_length,
         "telemetry body length must match payload"
     );
     let expected_header_length = header.len() as u32;
     assert_eq!(
-        report.proof.telemetry().frame().header_length(),
+        decoded_proof.telemetry().frame().header_length(),
         expected_header_length,
         "telemetry header length must match header bytes"
     );
-    let telemetry = report.proof.telemetry().frame();
+    let telemetry = decoded_proof.telemetry().frame();
     assert_eq!(
         u64::from(telemetry.header_length()) + u64::from(telemetry.body_length()),
         report.total_bytes + 32,
         "telemetry lengths must sum to total bytes plus the integrity digest"
     );
 
-    let mut canonical = report.proof.clone_using_parts();
+    let mut canonical = decoded_proof.clone_using_parts();
     let canonical_telemetry = canonical.telemetry_mut().frame_mut();
     canonical_telemetry.set_header_length(0);
     canonical_telemetry.set_body_length(0);
@@ -288,7 +319,7 @@ fn verification_report_records_total_bytes_and_telemetry() {
         .expect("serialize canonical header");
     let expected_digest = compute_integrity_digest(&canonical_header, &canonical_payload);
     assert_eq!(
-        report.proof.telemetry().frame().integrity_digest().bytes,
+        decoded_proof.telemetry().frame().integrity_digest().bytes,
         expected_digest,
         "telemetry integrity digest must remain stable"
     );
