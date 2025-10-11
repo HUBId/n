@@ -70,11 +70,11 @@ fn freeze_fixture_artifacts() {
         "proof_bytes_hex": hex_encode(proof_bytes.as_slice()),
         "param_digest_hex": hex_encode(config.param_digest.as_bytes()),
         "roots": {
-            "core": hex_encode(&proof.merkle().core_root),
-            "aux": hex_encode(&proof.merkle().aux_root),
+            "core": hex_encode(proof.merkle().core_root()),
+            "aux": hex_encode(proof.merkle().aux_root()),
             "fri_from_merkle": proof
                 .merkle()
-                .fri_layer_roots
+                .fri_layer_roots()
                 .iter()
                 .map(hex_encode)
                 .collect::<Vec<_>>(),

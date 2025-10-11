@@ -157,9 +157,9 @@ fn build_witness(seed: FieldElement, rows: usize) -> Vec<u8> {
 }
 
 fn reencode_proof(proof: &mut Proof) -> ProofBytes {
-    if proof.telemetry().is_present() {
+    if proof.has_telemetry() {
         let mut canonical = ProofParts::from_proof(proof).into_proof();
-        let telemetry = canonical.telemetry_mut().frame_mut();
+        let telemetry = canonical.telemetry_frame_mut();
         telemetry.set_header_length(0);
         telemetry.set_body_length(0);
         telemetry.set_integrity_digest(DigestBytes { bytes: [0u8; 32] });
@@ -170,7 +170,7 @@ fn reencode_proof(proof: &mut Proof) -> ProofBytes {
             .serialize_header(&payload)
             .expect("serialize canonical header");
         let integrity = compute_integrity_digest(&header, &payload);
-        let telemetry = proof.telemetry_mut().frame_mut();
+        let telemetry = proof.telemetry_frame_mut();
         telemetry.set_header_length(header.len() as u32);
         telemetry.set_body_length((payload.len() + 32) as u32);
         telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
@@ -183,13 +183,13 @@ fn mutate_telemetry_with<F>(proof: &Proof, mutator: F) -> Option<ProofBytes>
 where
     F: FnOnce(&mut Telemetry),
 {
-    if !proof.telemetry().is_present() {
+    if !proof.has_telemetry() {
         return None;
     }
 
     let mut mutated = ProofParts::from_proof(proof).into_proof();
     let _ = reencode_proof(&mut mutated);
-    mutator(mutated.telemetry_mut().frame_mut());
+    mutator(mutated.telemetry_frame_mut());
 
     Some(ProofBytes::new(
         serialize_proof(&mutated).expect("serialize mutated proof"),
@@ -354,18 +354,10 @@ struct ProofParts {
 
 impl ProofParts {
     fn from_proof(proof: &Proof) -> Self {
-        let binding = CompositionBinding::new(
-            *proof.composition().kind(),
-            proof.composition().air_spec_id().clone(),
-            proof.composition().public_inputs().to_vec(),
-            proof.composition().composition_commit().cloned(),
-        );
+        let binding = proof.composition().clone();
         let openings = proof.openings().clone();
-        let fri = FriHandle::new(proof.fri().fri_proof().clone());
-        let telemetry = TelemetryOption::new(
-            proof.telemetry().is_present(),
-            proof.telemetry().frame().clone(),
-        );
+        let fri = proof.fri().clone();
+        let telemetry = proof.telemetry().clone();
 
         Self {
             version: proof.version(),
