@@ -155,7 +155,7 @@ pub fn verify_proof(
     }
 
     let declared_kind = map_public_to_config_kind(kind);
-    super::verifier::verify_proof_bytes(
+    super::verifier::verify(
         declared_kind,
         public_inputs,
         proof_bytes,

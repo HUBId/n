@@ -47,7 +47,7 @@ struct VerificationStages {
 }
 
 /// Verifies a serialized proof against the provided configuration and context.
-pub fn verify_proof_bytes(
+fn verify_impl(
     declared_kind: ConfigProofKind,
     public_inputs: &PublicInputs<'_>,
     proof_bytes: &ProofBytes,
@@ -87,16 +87,77 @@ pub fn verify_proof_bytes(
                     stages.fri_ok = true;
                     Ok(build_report(stages, total_bytes, None, Some(handles)))
                 }
-                Err(error) => Ok(build_report(
-                    stages,
-                    total_bytes,
-                    Some(error),
-                    Some(handles),
-                )),
+                Err(error) => {
+                    if should_return_report(&error) {
+                        Ok(build_report(
+                            stages,
+                            total_bytes,
+                            Some(error),
+                            Some(handles),
+                        ))
+                    } else {
+                        Err(error)
+                    }
+                }
             }
         }
-        Err(error) => Ok(build_report(stages, total_bytes, Some(error), None)),
+        Err(error) => {
+            if should_return_report(&error) {
+                Ok(build_report(stages, total_bytes, Some(error), None))
+            } else {
+                Err(error)
+            }
+        }
     }
+}
+
+/// Verifies a serialized proof against the provided configuration and context.
+pub fn verify(
+    declared_kind: ConfigProofKind,
+    public_inputs: &PublicInputs<'_>,
+    proof_bytes: &ProofBytes,
+    config: &ProofSystemConfig,
+    context: &VerifierContext,
+) -> Result<VerifyReport, VerifyError> {
+    verify_impl(declared_kind, public_inputs, proof_bytes, config, context)
+}
+
+/// Backwards-compatible alias for legacy callers.
+pub fn verify_proof_bytes(
+    declared_kind: ConfigProofKind,
+    public_inputs: &PublicInputs<'_>,
+    proof_bytes: &ProofBytes,
+    config: &ProofSystemConfig,
+    context: &VerifierContext,
+) -> Result<VerifyReport, VerifyError> {
+    verify(declared_kind, public_inputs, proof_bytes, config, context)
+}
+
+fn should_return_report(error: &VerifyError) -> bool {
+    matches!(
+        error,
+        VerifyError::ParamsHashMismatch
+            | VerifyError::ProofTooLarge { .. }
+            | VerifyError::CompositionInconsistent { .. }
+            | VerifyError::MerkleVerifyFailed { .. }
+            | VerifyError::TraceLeafMismatch
+            | VerifyError::CompositionLeafMismatch
+            | VerifyError::TraceOodMismatch
+            | VerifyError::CompositionOodMismatch
+            | VerifyError::OutOfDomainInvalid
+            | VerifyError::DegreeBoundExceeded
+            | VerifyError::EmptyOpenings
+            | VerifyError::IndicesNotSorted
+            | VerifyError::IndicesDuplicate { .. }
+            | VerifyError::IndicesMismatch
+            | VerifyError::AggregationDigestMismatch
+            | VerifyError::BodyLengthMismatch { .. }
+            | VerifyError::HeaderLengthMismatch { .. }
+            | VerifyError::IntegrityDigestMismatch
+            | VerifyError::FriVerifyFailed { .. }
+            | VerifyError::DeterministicHash(_)
+            | VerifyError::PublicInputMismatch
+    )
 }
 
 #[derive(Debug, Clone)]

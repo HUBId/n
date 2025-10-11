@@ -8,15 +8,14 @@ use crate::config::{ProofSystemConfig, VerifierContext};
 use crate::hash::Hasher;
 use crate::proof::public_inputs::ProofKind;
 use crate::proof::ser::{map_public_to_config_kind, serialize_public_inputs};
-use crate::proof::transcript::TranscriptBlockContext;
 use crate::ser::SerError;
 use crate::utils::serialization::ProofBytes;
 
 use super::public_inputs::PublicInputs;
 #[cfg(test)]
 use super::types::MerkleSection;
-use super::types::VerifyError;
-use super::verifier::{execute_fri_stage, precheck_proof_bytes, PrecheckedProof};
+use super::types::{VerifyError, VerifyReport};
+use super::verifier;
 
 /// Domain prefix used when deriving aggregation seeds.
 pub const AGGREGATION_DOMAIN_PREFIX: &str = "RPP-AGG";
@@ -110,67 +109,52 @@ pub fn batch_verify(
         &sorted,
         config,
         verifier_context,
-        |item, config, context, block_ctx| {
+        |item, config, context| {
             let config_kind = map_public_to_config_kind(item.record.kind);
-            precheck_proof_bytes(
+            verifier::verify(
                 config_kind,
                 item.record.public_inputs,
                 item.record.proof_bytes,
                 config,
                 context,
-                block_ctx,
             )
         },
-        |_, proof| execute_fri_stage(proof),
     )
 }
 
-fn run_batch_with_callbacks<'a, Precheck, FriExec>(
+fn run_batch_with_callbacks<'a, VerifyFn>(
     block_context: &BlockContext,
     sorted: &[SortedProof<'a>],
     config: &ProofSystemConfig,
     verifier_context: &VerifierContext,
-    mut precheck: Precheck,
-    mut execute_fri: FriExec,
+    mut verify_fn: VerifyFn,
 ) -> BatchVerificationOutcome
 where
-    Precheck: FnMut(
+    VerifyFn: FnMut(
         &SortedProof<'a>,
         &ProofSystemConfig,
         &VerifierContext,
-        Option<&TranscriptBlockContext>,
-    ) -> Result<PrecheckedProof, VerifyError>,
-    FriExec: FnMut(&SortedProof<'a>, &PrecheckedProof) -> Result<(), VerifyError>,
+    ) -> Result<VerifyReport, VerifyError>,
 {
-    let transcript_block_context = to_transcript_block_context(block_context);
     let block_seed = derive_block_seed(block_context, sorted);
     let _per_proof_seeds = derive_per_proof_seeds(&block_seed, sorted);
 
-    let mut prepared: Vec<(usize, PrecheckedProof)> = Vec::with_capacity(sorted.len());
-    for (sorted_index, item) in sorted.iter().enumerate() {
-        match precheck(
-            item,
-            config,
-            verifier_context,
-            Some(&transcript_block_context),
-        ) {
-            Ok(proof) => prepared.push((sorted_index, proof)),
+    for item in sorted {
+        match verify_fn(item, config, verifier_context) {
+            Ok(report) => {
+                if let Some(error) = report.error {
+                    return BatchVerificationOutcome::Reject {
+                        failing_proof_index: item.original_index,
+                        error,
+                    };
+                }
+            }
             Err(error) => {
                 return BatchVerificationOutcome::Reject {
                     failing_proof_index: item.original_index,
                     error,
-                }
+                };
             }
-        }
-    }
-
-    for (sorted_index, proof) in &prepared {
-        let item = &sorted[*sorted_index];
-        if let Err(error) = execute_fri(item, proof) {
-            return BatchVerificationOutcome::Reject {
-                failing_proof_index: item.original_index,
-                error,
-            };
         }
     }
 
@@ -257,14 +241,6 @@ fn compute_aggregate_digest(sorted: &[SortedProof<'_>]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-fn to_transcript_block_context(block_context: &BlockContext) -> TranscriptBlockContext {
-    TranscriptBlockContext {
-        block_height: block_context.block_height,
-        previous_state_root: block_context.previous_state_root,
-        network_id: block_context.network_id,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,15 +248,10 @@ mod tests {
         CommonIdentifiers, ParamDigest, ProfileConfig, ProofSystemConfig, ProofVersion,
         PROFILE_STANDARD_CONFIG,
     };
-    use crate::proof::params::canonical_stark_params;
     use crate::proof::public_inputs::{
         AggregationHeaderV1, ExecutionHeaderV1, PublicInputVersion, PublicInputs, RecursionHeaderV1,
     };
-    use crate::proof::types::{
-        CompositionBinding, FriHandle, FriParametersMirror, MerkleProofBundle, Openings,
-        OpeningsDescriptor, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_VERSION,
-    };
-    use crate::proof::verifier::PrecheckedProof;
+    use crate::proof::types::PROOF_VERSION;
     use crate::utils::serialization::{DigestBytes, FieldElementBytes, ProofBytes};
 
     fn dummy_config() -> (ProofSystemConfig, VerifierContext) {
@@ -364,66 +335,16 @@ mod tests {
         ]
     }
 
-    fn dummy_prechecked_proof() -> PrecheckedProof {
-        let params = canonical_stark_params(&PROFILE_STANDARD_CONFIG);
-        let binding = CompositionBinding::new(
-            crate::config::ProofKind::Tx,
-            crate::config::AIR_SPEC_IDS_V1.tx.clone(),
-            Vec::new(),
-            None,
-        );
-        let openings = OpeningsDescriptor::new(
-            MerkleProofBundle::new([0u8; 32], [0u8; 32], Vec::new()),
-            Openings {
-                trace: TraceOpenings {
-                    indices: Vec::new(),
-                    leaves: Vec::new(),
-                    paths: Vec::new(),
-                },
-                composition: None,
-                out_of_domain: Vec::new(),
-            },
-        );
-        let fri_handle = FriHandle::new(
-            crate::fri::FriProof::new(
-                crate::fri::FriSecurityLevel::Standard,
-                1,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-                [0u8; 32],
-                Vec::new(),
-            )
-            .expect("empty fri proof"),
-        );
-        let telemetry = TelemetryOption::new(
-            true,
-            Telemetry {
-                header_length: 0,
-                body_length: 0,
-                fri_parameters: FriParametersMirror::default(),
-                integrity_digest: DigestBytes { bytes: [9u8; 32] },
-            },
-        );
-
-        let proof = Proof::from_parts(
-            PROOF_VERSION,
-            ParamDigest(DigestBytes { bytes: [7u8; 32] }),
-            DigestBytes {
-                bytes: crate::proof::ser::compute_public_digest(&[]),
-            },
-            DigestBytes { bytes: [0u8; 32] },
-            binding,
-            openings,
-            fri_handle,
-            telemetry,
-        );
-
-        PrecheckedProof {
-            handles: proof.into_handles(),
-            fri_seed: [10u8; 32],
-            security_level: crate::fri::FriSecurityLevel::Standard,
-            params,
+    fn dummy_report() -> VerifyReport {
+        VerifyReport {
+            params_ok: true,
+            public_ok: true,
+            merkle_ok: false,
+            fri_ok: false,
+            composition_ok: false,
+            total_bytes: 0,
+            proof: None,
+            error: None,
         }
     }
 
@@ -469,14 +390,13 @@ mod tests {
             &sorted,
             &config,
             &verifier_context,
-            |item, _, _, _| {
+            |item, _, _| {
                 if item.original_index == 1 {
                     Err(VerifyError::ParamsHashMismatch)
                 } else {
-                    Ok(dummy_prechecked_proof())
+                    Ok(dummy_report())
                 }
             },
-            |_, _| Ok(()),
         );
 
         assert_eq!(
@@ -505,14 +425,15 @@ mod tests {
             &sorted,
             &config,
             &verifier_context,
-            |_, _, _, _| Ok(dummy_prechecked_proof()),
-            |item, _| {
+            |item, _, _| {
                 if item.original_index == 2 {
-                    Err(VerifyError::MerkleVerifyFailed {
+                    let mut report = dummy_report();
+                    report.error = Some(VerifyError::MerkleVerifyFailed {
                         section: MerkleSection::FriPath,
-                    })
+                    });
+                    Ok(report)
                 } else {
-                    Ok(())
+                    Ok(dummy_report())
                 }
             },
         );
@@ -545,8 +466,7 @@ mod tests {
             &sorted,
             &config,
             &verifier_context,
-            |_, _, _, _| Ok(dummy_prechecked_proof()),
-            |_, _| Ok(()),
+            |_, _, _| Ok(dummy_report()),
         );
 
         assert_eq!(outcome, BatchVerificationOutcome::Accept);
