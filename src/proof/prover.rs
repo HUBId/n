@@ -27,23 +27,22 @@ use crate::merkle::{
     CommitAux, DeterministicMerkleHasher, Leaf, MerkleArityExt, MerkleCommit, MerkleError,
     MerkleProof, MerkleTree, ProofNode,
 };
-use crate::params::StarkParams;
+use crate::params::{ProofParams, StarkParams};
+use crate::proof::envelope::ProofBuilder;
 use crate::proof::params::canonical_stark_params;
 use crate::proof::public_inputs::PublicInputs;
 use crate::proof::ser::{
-    compute_integrity_digest, compute_public_digest, map_public_to_config_kind,
-    serialize_public_inputs,
+    compute_public_digest, map_public_to_config_kind, serialize_public_inputs,
 };
 use crate::proof::transcript::{
     Transcript as ProofTranscript, TranscriptBlockContext, TranscriptHeader,
 };
 use crate::proof::types::{
-    CompositionBinding, CompositionOpenings, FriHandle, FriParametersMirror,
-    MerkleAuthenticationPath, MerklePathNode, MerkleProofBundle, Openings, OpeningsDescriptor,
-    OutOfDomainOpening, Proof, Telemetry, TelemetryOption, TraceOpenings, PROOF_ALPHA_VECTOR_LEN,
-    PROOF_MIN_OOD_POINTS, PROOF_VERSION,
+    CompositionOpenings, FriHandle, FriParametersMirror, MerkleAuthenticationPath, MerklePathNode,
+    MerkleProofBundle, Openings, OpeningsDescriptor, OutOfDomainOpening, Proof, Telemetry,
+    TelemetryOption, TraceOpenings, PROOF_ALPHA_VECTOR_LEN, PROOF_MIN_OOD_POINTS, PROOF_VERSION,
 };
-use crate::ser::{SerError, SerKind, DIGEST_SIZE};
+use crate::ser::{SerError, SerKind};
 use crate::transcript::{Transcript as AirTranscript, TranscriptContext, TranscriptLabel};
 use crate::utils::serialization::{DigestBytes, WitnessBlob};
 use core::cmp::{max, min};
@@ -267,13 +266,6 @@ pub fn build_envelope(
         integrity_digest: DigestBytes::default(),
     };
 
-    let binding = CompositionBinding::new(
-        proof_kind,
-        air_spec_id,
-        public_inputs_bytes,
-        Some(DigestBytes { bytes: aux_root }),
-    );
-
     let openings = Openings {
         trace: trace_openings,
         composition: Some(composition_openings),
@@ -283,115 +275,63 @@ pub fn build_envelope(
     let openings_descriptor = OpeningsDescriptor::new(merkle, openings);
     let fri_handle = FriHandle::new(fri_proof);
     let telemetry_option = TelemetryOption::new(true, telemetry);
+    let proof_params = ProofParams {
+        version: PROOF_VERSION,
+        max_size_kb: bytes_to_kib(context.limits.max_proof_size_bytes),
+    };
 
-    let mut proof = Proof::from_parts(
-        PROOF_VERSION,
-        context.param_digest.clone(),
-        DigestBytes {
-            bytes: public_digest,
-        },
-        DigestBytes { bytes: core_root },
-        binding,
-        openings_descriptor,
-        fri_handle,
-        telemetry_option,
-    );
+    let built = ProofBuilder::new(proof_params)
+        .with_header(PROOF_VERSION, context.param_digest.clone())
+        .with_binding(proof_kind, air_spec_id, public_inputs_bytes)
+        .with_openings_descriptor(openings_descriptor)
+        .with_fri_handle(fri_handle)
+        .with_telemetry_option(telemetry_option)
+        .build()
+        .map_err(|err| map_builder_error(err, context.limits.max_proof_size_bytes))?;
 
-    let mut body_payload = proof.serialize_payload().map_err(ProverError::from)?;
-    let mut header_bytes = proof
-        .serialize_header(&body_payload)
-        .map_err(ProverError::from)?;
-
-    if proof.telemetry().has_telemetry() {
-        const TELEMETRY_FIXUP_MAX_ATTEMPTS: usize = 4;
-
-        let mut attempt = 0usize;
-        loop {
-            let body_length = body_payload
-                .len()
-                .checked_add(DIGEST_SIZE)
-                .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
-            let body_length = u32::try_from(body_length)
-                .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
-            let header_length = u32::try_from(header_bytes.len())
-                .map_err(|_| ProverError::Serialization(SerKind::Telemetry))?;
-
-            let telemetry = proof.telemetry_mut().frame_mut();
-            let needs_update = telemetry.body_length() != body_length
-                || telemetry.header_length() != header_length;
-            telemetry.set_body_length(body_length);
-            telemetry.set_header_length(header_length);
-
-            if !needs_update {
-                break;
-            }
-
-            body_payload = proof.serialize_payload().map_err(ProverError::from)?;
-            header_bytes = proof
-                .serialize_header(&body_payload)
-                .map_err(ProverError::from)?;
-
-            attempt += 1;
-            if attempt >= TELEMETRY_FIXUP_MAX_ATTEMPTS {
-                return Err(ProverError::Serialization(SerKind::Telemetry));
-            }
-        }
-
-        let (declared_header_length, declared_body_length) = {
-            let telemetry = proof.telemetry().frame();
-            (telemetry.header_length(), telemetry.body_length())
-        };
-
-        {
-            let telemetry = proof.telemetry_mut().frame_mut();
-            telemetry.set_integrity_digest(DigestBytes::default());
-            telemetry.set_header_length(0);
-            telemetry.set_body_length(0);
-        }
-
-        let canonical_body = proof.serialize_payload().map_err(ProverError::from)?;
-        let canonical_header = proof
-            .serialize_header(&canonical_body)
-            .map_err(ProverError::from)?;
-        let integrity = compute_integrity_digest(&canonical_header, &canonical_body);
-
-        {
-            let telemetry = proof.telemetry_mut().frame_mut();
-            telemetry.set_header_length(declared_header_length);
-            telemetry.set_body_length(declared_body_length);
-            telemetry.set_integrity_digest(DigestBytes { bytes: integrity });
-        }
-
-        body_payload = proof.serialize_payload().map_err(ProverError::from)?;
-        header_bytes = proof
-            .serialize_header(&body_payload)
-            .map_err(ProverError::from)?;
-
-        let telemetry = proof.telemetry().frame();
-        let body_length = body_payload
-            .len()
-            .checked_add(DIGEST_SIZE)
-            .ok_or(ProverError::Serialization(SerKind::Telemetry))?;
-        if telemetry.body_length() != body_length as u32
-            || telemetry.header_length() != header_bytes.len() as u32
-        {
-            return Err(ProverError::Serialization(SerKind::Telemetry));
-        }
+    debug_assert_eq!(built.public_digest, public_digest);
+    if built.public_digest != public_digest {
+        return Err(ProverError::Serialization(SerKind::PublicInputs));
     }
 
-    let total_size = header_bytes
-        .len()
-        .checked_add(body_payload.len())
-        .and_then(|value| value.checked_add(DIGEST_SIZE))
-        .ok_or(ProverError::Serialization(SerKind::Proof))?;
-    if total_size > context.limits.max_proof_size_bytes as usize {
-        return Err(ProverError::ProofTooLarge {
-            actual: total_size,
-            limit: context.limits.max_proof_size_bytes,
-        });
-    }
+    Ok(built.into_proof())
+}
 
-    Ok(proof)
+fn bytes_to_kib(bytes: u32) -> u32 {
+    if bytes == 0 {
+        0
+    } else {
+        ((bytes - 1) / 1024) + 1
+    }
+}
+
+fn map_builder_error(err: VerifyError, limit_bytes: u32) -> ProverError {
+    match err {
+        VerifyError::ProofTooLarge { got_kb, .. } => {
+            let actual = (got_kb as usize).saturating_mul(1024);
+            ProverError::ProofTooLarge {
+                actual,
+                limit: limit_bytes,
+            }
+        }
+        VerifyError::Serialization(kind) => ProverError::Serialization(kind),
+        VerifyError::EmptyOpenings => ProverError::Serialization(SerKind::Openings),
+        VerifyError::IndicesNotSorted
+        | VerifyError::IndicesMismatch
+        | VerifyError::IndicesDuplicate { .. } => ProverError::Serialization(SerKind::Openings),
+        VerifyError::CompositionInconsistent { .. } => {
+            ProverError::Serialization(SerKind::CompositionCommitment)
+        }
+        VerifyError::MerkleVerifyFailed { .. } | VerifyError::RootMismatch { .. } => {
+            ProverError::Serialization(SerKind::TraceCommitment)
+        }
+        VerifyError::VersionMismatch { actual, .. } => ProverError::UnsupportedProofVersion(actual),
+        VerifyError::ParamsHashMismatch => ProverError::ParamDigestMismatch,
+        VerifyError::PublicInputMismatch | VerifyError::PublicDigestMismatch => {
+            ProverError::Serialization(SerKind::PublicInputs)
+        }
+        _ => ProverError::Serialization(SerKind::Proof),
+    }
 }
 
 #[derive(Debug, Clone, Default)]
