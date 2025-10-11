@@ -1,9 +1,11 @@
 //! Deterministic verifier specification.
 //!
-//! The verifier now exposes a header-focused contract that records the status
-//! of deterministic checks in [`VerifyReport`]. Implementations are expected to
-//! capture failures in the report's `error` field rather than surfacing them as
-//! runtime exceptions, preserving callers' ability to inspect partial progress.
+//! Phase Header: the domain tag, proof kind code and parameter digest are
+//! absorbed before any payload bytes, pinning the PR-2 transcript seed.
+//! Phase AIR: public inputs, optional VRF metadata, commitment roots, AIR spec
+//! identifier and block context are absorbed in that exact order per PR-2.
+//! Phase FRI: challenges are drawn as α-vector, out-of-domain points and seed,
+//! FRI seed, per-layer η values and finally the query seed, matching PR-2.
 
 use crate::config::{
     ProofKind as ConfigProofKind, ProofKindLayout, ProofSystemConfig, VerifierContext,
@@ -12,8 +14,7 @@ use crate::config::{
 use crate::field::prime_field::{CanonicalSerialize, FieldElementOps};
 use crate::field::FieldElement;
 use crate::fri::types::{FriError, FriSecurityLevel};
-use crate::fri::{field_to_bytes, hash, Blake2sXof, FriVerifier};
-use crate::hash::blake3::FiatShamirChallengeRules;
+use crate::fri::{field_to_bytes, Blake2sXof, FriVerifier};
 use crate::merkle::traits::MerkleHasher;
 use crate::merkle::verify_proof as verify_merkle_proof;
 use crate::merkle::{
@@ -384,14 +385,13 @@ fn precheck_body(
             .draw_fri_eta(layer_index)
             .map_err(|_| VerifyError::TranscriptOrder)?;
     }
-    let _ = challenges
+    let query_seed = challenges
         .draw_query_seed()
         .map_err(|_| VerifyError::TranscriptOrder)?;
 
     let query_count = stark_params.fri().queries as usize;
-    let fri_query_seed = derive_fri_query_seed(fri_seed, proof.fri_proof());
     let expected_indices = derive_trace_query_indices(
-        fri_query_seed,
+        query_seed,
         query_count,
         proof.fri_proof().initial_domain_size,
     )?;
@@ -584,40 +584,6 @@ fn ensure_merkle_scheme(
     }
 
     Ok(())
-}
-
-fn derive_fri_query_seed(fri_seed: [u8; 32], fri_proof: &crate::fri::FriProof) -> [u8; 32] {
-    let mut state = fri_seed;
-
-    for (layer_index, root) in fri_proof.layer_roots.iter().enumerate() {
-        let mut payload = Vec::with_capacity(state.len() + 8 + root.len());
-        payload.extend_from_slice(&state);
-        payload.extend_from_slice(&(layer_index as u64).to_le_bytes());
-        payload.extend_from_slice(root);
-        state = hash(&payload).into();
-
-        let label = format!(
-            "{}ETA-{}",
-            FiatShamirChallengeRules::SALT_PREFIX,
-            layer_index
-        );
-        let mut eta_payload = Vec::with_capacity(state.len() + label.len());
-        eta_payload.extend_from_slice(&state);
-        eta_payload.extend_from_slice(label.as_bytes());
-        let challenge: [u8; 32] = hash(&eta_payload).into();
-        state = hash(&challenge).into();
-    }
-
-    let mut final_payload = Vec::with_capacity(state.len() + b"RPP-FS/FINAL".len() + 32);
-    final_payload.extend_from_slice(&state);
-    final_payload.extend_from_slice(b"RPP-FS/FINAL");
-    final_payload.extend_from_slice(&fri_proof.final_polynomial_digest);
-    state = hash(&final_payload).into();
-
-    let mut query_payload = Vec::with_capacity(state.len() + b"RPP-FS/QUERY-SEED".len());
-    query_payload.extend_from_slice(&state);
-    query_payload.extend_from_slice(b"RPP-FS/QUERY-SEED");
-    hash(&query_payload).into()
 }
 
 fn derive_trace_query_indices(
