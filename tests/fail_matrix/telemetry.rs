@@ -29,6 +29,12 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     ) as usize;
     cursor += 4 + binding_len;
 
+    let openings_offset = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("openings offset slice"),
+    ) as usize;
+    cursor += 4;
     let openings_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
@@ -36,7 +42,13 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     ) as usize;
     cursor += 4;
 
-    let fri_len = u32::from_le_bytes(
+    let fri_offset = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("fri offset slice"),
+    ) as usize;
+    cursor += 4;
+    let _fri_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
             .expect("fri length slice"),
@@ -49,6 +61,12 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
         return None;
     }
 
+    let telemetry_offset = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("telemetry offset slice"),
+    ) as usize;
+    cursor += 4;
     let telemetry_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
@@ -56,8 +74,12 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     ) as usize;
     cursor += 4;
 
-    let header_len = cursor;
-    let start = header_len + openings_len + fri_len;
+    let payload_start = cursor;
+
+    debug_assert_eq!(openings_offset, 0);
+    debug_assert_eq!(fri_offset, openings_len);
+
+    let start = payload_start + telemetry_offset;
     let end = start + telemetry_len;
     Some(slice[start..end].to_vec())
 }
