@@ -446,8 +446,8 @@ fn verification_report_marks_header_flags_on_success() {
     assert!(report.public_ok, "public stage should succeed");
     assert_eq!(
         (report.merkle_ok, report.composition_ok, report.fri_ok),
-        (false, false, false),
-        "non-header stages should remain false",
+        (true, true, true),
+        "all verifier stages should succeed on a valid proof",
     );
     assert_eq!(
         report.total_bytes as usize,
