@@ -13,7 +13,9 @@ use rpp_stark::proof::public_inputs::{
 use rpp_stark::proof::ser::{
     compute_integrity_digest, compute_public_digest, map_public_to_config_kind, serialize_proof,
 };
-use rpp_stark::proof::types::{FriVerifyIssue, MerkleSection, Proof, VerifyError, PROOF_VERSION};
+use rpp_stark::proof::types::{
+    FriVerifyIssue, MerkleSection, Proof, VerifyError, VerifyReport, PROOF_VERSION,
+};
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
 use rpp_stark::{
     batch_verify, generate_proof, verify_proof, BatchProofRecord, BatchVerificationOutcome,
@@ -113,6 +115,33 @@ fn make_public_inputs<'a>(header: &'a ExecutionHeaderV1, body: &'a [u8]) -> Publ
         header: header.clone(),
         body,
     }
+}
+
+#[test]
+fn verify_report_deserializes_with_legacy_payloads() {
+    let empty: VerifyReport = serde_json::from_str("{}").expect("empty payload should deserialize");
+    assert_eq!(
+        empty,
+        VerifyReport::default(),
+        "empty payload must default fields"
+    );
+
+    let legacy_payload = serde_json::json!({
+        "params_ok": true,
+        "public_ok": true,
+        "total_bytes": 99u64,
+        "proof": {"ignored": "value"},
+    });
+    let legacy: VerifyReport =
+        serde_json::from_value(legacy_payload).expect("legacy payload should deserialize");
+    assert!(legacy.params_ok, "legacy payload must preserve params flag");
+    assert!(legacy.public_ok, "legacy payload must preserve public flag");
+    assert_eq!(legacy.total_bytes, 99);
+    assert_eq!(legacy.error, None);
+    assert!(
+        !legacy.merkle_ok && !legacy.fri_ok && !legacy.composition_ok,
+        "missing stage flags must default to false",
+    );
 }
 
 #[test]
