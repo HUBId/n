@@ -18,31 +18,21 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     let slice = bytes.as_slice();
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec id
-
-    let public_len = u32::from_le_bytes(
-        slice[cursor..cursor + 4]
-            .try_into()
-            .expect("public length slice"),
-    ) as usize;
-    cursor += 4; // public length
-    cursor += public_len; // public bytes
-
     cursor += 32; // public digest
     cursor += 32; // trace commitment digest
 
-    let composition_flag = slice[cursor];
-    cursor += 1;
-    if composition_flag == 1 {
-        cursor += 32; // composition digest
-    }
-
-    let merkle_len = u32::from_le_bytes(
+    let binding_len = u32::from_le_bytes(
         slice[cursor..cursor + 4]
             .try_into()
-            .expect("merkle length slice"),
+            .expect("binding length slice"),
+    ) as usize;
+    cursor += 4 + binding_len;
+
+    let openings_len = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("openings length slice"),
     ) as usize;
     cursor += 4;
 
@@ -50,13 +40,6 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
         slice[cursor..cursor + 4]
             .try_into()
             .expect("fri length slice"),
-    ) as usize;
-    cursor += 4;
-
-    let openings_len = u32::from_le_bytes(
-        slice[cursor..cursor + 4]
-            .try_into()
-            .expect("openings length slice"),
     ) as usize;
     cursor += 4;
 
@@ -74,7 +57,7 @@ fn telemetry_frame_bytes(bytes: &ProofBytes) -> Option<Vec<u8>> {
     cursor += 4;
 
     let header_len = cursor;
-    let start = header_len + merkle_len + fri_len + openings_len;
+    let start = header_len + openings_len + fri_len;
     let end = start + telemetry_len;
     Some(slice[start..end].to_vec())
 }

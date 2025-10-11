@@ -546,8 +546,7 @@ mod tests {
         let canonical_header = canonical
             .serialize_header(&canonical_payload)
             .expect("serialize canonical header");
-        let expected_integrity =
-            compute_integrity_digest(&canonical_header, &canonical_payload);
+        let expected_integrity = compute_integrity_digest(&canonical_header, &canonical_payload);
         assert_eq!(
             telemetry.integrity_digest().bytes,
             expected_integrity,

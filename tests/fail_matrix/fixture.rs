@@ -14,7 +14,6 @@ use rpp_stark::proof::types::{
     CompositionBinding, FriHandle, OpeningsDescriptor, Proof, Telemetry, TelemetryOption,
 };
 use rpp_stark::utils::serialization::{DigestBytes, ProofBytes, WitnessBlob};
-use std::convert::TryInto;
 
 const LFSR_ALPHA: u64 = 5;
 const LFSR_BETA: u64 = 7;
@@ -259,19 +258,7 @@ pub fn flip_public_digest_byte(bytes: &ProofBytes) -> ProofBytes {
     // Header layout mirrors `serialize_proof_header_from_lengths`.
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec identifier
-
-    let public_len_start = cursor;
-    let public_len_end = public_len_start + 4;
-    let public_len = u32::from_le_bytes(
-        mutated[public_len_start..public_len_end]
-            .try_into()
-            .expect("public length slice"),
-    ) as usize;
-    cursor += 4; // public length prefix
-    cursor += public_len; // public input bytes
 
     // Flip the leading byte of the canonical public digest.
     mutated[cursor] ^= 0x01;
@@ -286,20 +273,7 @@ pub fn mismatch_trace_root(bytes: &ProofBytes) -> ProofBytes {
     // Header layout mirrors `serialize_proof_header_from_lengths`.
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec identifier
-
-    let public_len_start = cursor;
-    let public_len_end = public_len_start + 4;
-    let public_len = u32::from_le_bytes(
-        mutated[public_len_start..public_len_end]
-            .try_into()
-            .expect("public length slice"),
-    ) as usize;
-    cursor += 4; // public length prefix
-    cursor += public_len; // public input bytes
-
     cursor += 32; // public digest
 
     // Flip the leading byte of the declared trace commitment digest.

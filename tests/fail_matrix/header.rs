@@ -22,30 +22,19 @@ fn header_bytes(bytes: &ProofBytes) -> Vec<u8> {
     let slice = bytes.as_slice();
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec id
-
-    let public_len = u32::from_le_bytes(
-        slice[cursor..cursor + 4]
-            .try_into()
-            .expect("public length slice"),
-    ) as usize;
-    cursor += 4;
-    cursor += public_len; // public inputs bytes
-
     cursor += 32; // public digest
     cursor += 32; // trace commitment digest
 
-    let composition_flag = slice[cursor];
-    cursor += 1;
-    if composition_flag == 1 {
-        cursor += 32; // composition digest
-    }
+    let binding_len = u32::from_le_bytes(
+        slice[cursor..cursor + 4]
+            .try_into()
+            .expect("binding length slice"),
+    ) as usize;
+    cursor += 4 + binding_len; // binding length + bytes
 
-    cursor += 4; // merkle length
-    cursor += 4; // fri length
-    cursor += 4; // openings length
+    cursor += 4; // openings descriptor length
+    cursor += 4; // fri payload length
 
     let telemetry_flag = slice[cursor];
     cursor += 1;

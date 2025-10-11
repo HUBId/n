@@ -613,22 +613,40 @@ fn mutate_header_trace_root(bytes: &ProofBytes) -> ProofBytes {
 
 fn mutate_header_composition_root(bytes: &ProofBytes) -> ProofBytes {
     let mut mutated = bytes.as_slice().to_vec();
-    let trace_offset = header_trace_root_offset(&mutated);
-    let mut cursor = trace_offset + 32;
-    let flag = mutated[cursor];
+    let mut cursor = header_trace_root_offset(&mutated);
+    cursor += 32; // trace commitment digest
+
+    let binding_len = u32::from_le_bytes(
+        mutated[cursor..cursor + 4]
+            .try_into()
+            .expect("binding length"),
+    ) as usize;
+    cursor += 4;
+
+    let mut binding_cursor = cursor;
+    binding_cursor += 1; // kind
+    binding_cursor += 32; // air spec id
+    let public_len = u32::from_le_bytes(
+        mutated[binding_cursor..binding_cursor + 4]
+            .try_into()
+            .expect("public length"),
+    ) as usize;
+    binding_cursor += 4 + public_len;
+
+    let flag = mutated[binding_cursor];
     assert_eq!(flag, 1, "expected composition commit to be present");
-    cursor += 1;
-    mutated[cursor] ^= 0x1;
+    binding_cursor += 1;
+    assert!(
+        binding_cursor < cursor + binding_len,
+        "composition commit digest missing"
+    );
+    mutated[binding_cursor] ^= 0x1;
     ProofBytes::new(mutated)
 }
 
 fn corrupt_fri_layer_root(proof: &Proof) -> ProofBytes {
     let mut mutated = proof.clone_using_parts();
-    if let Some(root) = mutated
-        .merkle_mut()
-        .fri_layer_roots_mut()
-        .first_mut()
-    {
+    if let Some(root) = mutated.merkle_mut().fri_layer_roots_mut().first_mut() {
         if let Some(byte) = root.first_mut() {
             *byte ^= 0x1;
         } else {
@@ -654,16 +672,10 @@ fn mutate_public_digest(bytes: &ProofBytes) -> ProofBytes {
     ProofBytes::new(mutated)
 }
 
-fn header_trace_root_offset(bytes: &[u8]) -> usize {
+fn header_trace_root_offset(_bytes: &[u8]) -> usize {
     let mut cursor = 0usize;
     cursor += 2; // version
-    cursor += 1; // kind
     cursor += 32; // params hash
-    cursor += 32; // air spec id
-    let public_len =
-        u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().expect("len")) as usize;
-    cursor += 4;
-    cursor += public_len; // public inputs
     cursor += 32; // public digest
     cursor
 }
