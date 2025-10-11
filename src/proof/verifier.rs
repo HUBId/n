@@ -289,6 +289,7 @@ fn validate_header(
     if proof.params_hash() != &context.param_digest {
         return Err(VerifyError::ParamsHashMismatch);
     }
+    stages.params_ok = true;
 
     let expected_public_inputs =
         serialize_public_inputs(public_inputs).map_err(VerifyError::from)?;
@@ -298,7 +299,7 @@ fn validate_header(
 
     let expected_digest = compute_public_digest(proof.public_inputs());
     if proof.public_digest().bytes != expected_digest {
-        return Err(VerifyError::PublicInputMismatch);
+        return Err(VerifyError::PublicDigestMismatch);
     }
     stages.public_ok = true;
 
@@ -308,8 +309,6 @@ fn validate_header(
             *proof.kind(),
         )));
     }
-
-    stages.params_ok = true;
 
     Ok(())
 }
