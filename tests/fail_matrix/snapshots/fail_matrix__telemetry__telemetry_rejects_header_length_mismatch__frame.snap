@@ -1,6 +1,6 @@
 ---
 source: tests/fail_matrix/telemetry.rs
-assertion_line: 113
+assertion_line: 62
 expression: hex_bytes(&telemetry_bytes)
 ---
-fe000000e80b0200020c002000000040006f86bf478753b847d988bd2aef7cc1672854a1c88973a71558d5a5821b27f941
+f2000000e80b0200020c002000000040007dd8b23c2ecf94206e3c03bfa39d0f6219130ddb8aaefa5606c152088d31cbdd
