@@ -4,7 +4,7 @@ use super::traits::MerkleHasher;
 use super::tree::CommitAux;
 use super::types::{Digest, Leaf, MerkleArityExt, MerkleError, ProofNode};
 
-const PROOF_VERSION: u16 = 1;
+use crate::proof::types::PROOF_VERSION;
 
 /// Canonical Merkle opening containing a batch of indices.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
