@@ -530,6 +530,7 @@ nightly-Abhängigkeiten.
 - MSRV festlegen (README + CI).
 - `clippy -D warnings`, `#![forbid(unsafe_code)]` in lib-root.
 - CI: build+test+clippy auf stable; Artefakte: Test-Logs, Snapshots.
+- CI: [Interop Golden-Vector Verify](.github/workflows/interop-golden-vector.yml) hält die Mini-Golden-Vektoren `verify()`-stabil.
 
 **Definition of Done (DoD):** Pipeline grün, keine Warnings, Policies dokumentiert.
 
