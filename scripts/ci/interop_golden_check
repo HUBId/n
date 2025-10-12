@@ -139,7 +139,8 @@ fn hex_bytes(data: &[u8]) -> String {
     data.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn identify_profile(params: &StarkParams) -> Result<(&'static str, [u8; 32]), String> {
+fn identify_profile(params: &StarkParams) -> Result<(&'static str, [u8; 32], [u8; 32]), String> {
+    let observed_hash = params_hash(params);
     let candidates: [(&'static str, &ProfileConfig, &CommonIdentifiers); 4] = [
         ("standard", &PROFILE_STANDARD_CONFIG, &COMMON_IDENTIFIERS),
         (
@@ -153,9 +154,16 @@ fn identify_profile(params: &StarkParams) -> Result<(&'static str, [u8; 32]), St
 
     for (label, profile, ids) in candidates {
         let canonical = canonical_stark_params(profile);
-        if *params == canonical {
+        let canonical_hash = params_hash(&canonical);
+        if observed_hash == canonical_hash {
+            if params != &canonical {
+                return Err(format!(
+                    "params.bin deviates from canonical {} parameters despite matching hash",
+                    label
+                ));
+            }
             let digest = compute_param_digest(profile, ids);
-            return Ok((label, *digest.as_bytes()));
+            return Ok((label, *digest.as_bytes(), observed_hash));
         }
     }
 
@@ -165,6 +173,7 @@ fn identify_profile(params: &StarkParams) -> Result<(&'static str, [u8; 32]), St
 #[derive(Serialize)]
 struct Summary {
     params_hash: String,
+    canonical_params_hash: String,
     param_digest: String,
     profile_label: String,
     proof_params_hash: String,
@@ -190,7 +199,10 @@ fn main() -> Result<(), String> {
     let params_bytes = decode_hex(&params_path)?;
     let params = deserialize_params(&params_bytes).map_err(|e| format!("failed to decode params: {e:?}"))?;
     let params_hash_bytes = params_hash(&params);
-    let (profile_label, param_digest_bytes) = identify_profile(&params)?;
+    let (profile_label, param_digest_bytes, canonical_params_hash) = identify_profile(&params)?;
+    if params_hash_bytes != canonical_params_hash {
+        return Err("params_hash derived from params.bin mismatches canonical profile hash".to_string());
+    }
 
     let public_inputs_path = base.join("public_inputs.bin");
     let public_inputs = decode_hex(&public_inputs_path)?;
@@ -235,6 +247,7 @@ fn main() -> Result<(), String> {
 
     let summary = Summary {
         params_hash: hex_bytes(&params_hash_bytes),
+        canonical_params_hash: hex_bytes(&canonical_params_hash),
         param_digest: hex_bytes(&param_digest_bytes),
         profile_label: profile_label.to_string(),
         proof_params_hash: hex_bytes(handles.params_hash().as_bytes()),
@@ -269,6 +282,10 @@ if [ "$param_digest" != "$proof_params_hash" ]; then
 fi
 
 params_hash=$(printf '%s' "$SUMMARY_JSON" | jq -r '.params_hash')
+canonical_params_hash=$(printf '%s' "$SUMMARY_JSON" | jq -r '.canonical_params_hash')
+if [ "$params_hash" != "$canonical_params_hash" ]; then
+    append_error "params_hash derived from params.bin does not match canonical profile hash. Regenerate artifacts via 'cargo test --tests'."
+fi
 if [ ${#params_hash} -ne 64 ]; then
     append_error "Derived params_hash has unexpected length."
 fi
