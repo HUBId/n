@@ -36,13 +36,26 @@ Externe Nodes müssen die Byte-Kodierung der Public Inputs exakt nach `docs/PUBL
 Proofs dürfen die in `proof.max_size_kb` hinterlegte Grenze nicht überschreiten. Die Messung basiert auf der tatsächlichen Serialisierungslänge (Header + Payload + Integritätsdigest). Siehe `docs/PROOF_SIZE_GATE.md` für das Node-Mapping zu `max_proof_size_bytes` und Fehlerverhalten (`ProofTooLarge`).【F:src/proof/envelope.rs†L228-L235】【F:src/proof/verifier.rs†L460-L463】
 
 ## Golden Vectors
-Folgende Referenzartefakte werden in einem separaten Schritt unter `vectors/stwo/mini/…` eingefroren:
-- Parameter-Bytes (`params.bin`)
-- Public-Inputs-Bytes (`public_inputs.bin`)
-- Proof-Bytes (`proof.bin`)
-- Merkle-Roots (`trace_root.bin`, `comp_root.bin`)
-- Transcript-Challenges (`fri_fold_challenges.bin`, `query_seed.bin`)
-- Query-Liste (`query_indices.bin`)
+### Golden Vectors (mini)
+Die deterministische Mini-Fixture ist unter `vectors/stwo/mini/` abgelegt und besteht aus:
+
+- `params.bin` – kanonische `StarkParams`-Serialisierung des Standardprofils als durchgehender Hex-String (zweistellig pro Byte, abschließendes `\n`).
+- `public_inputs.bin` – Public-Inputs gemäß Encoding-Spezifikation, identisch hexkodiert; der Digest liegt in `public_digest.hex`.
+- `proof.bin` – vollständiger Proof-Envelope inklusive Header, ebenfalls hexkodiert.
+- `proof_report.json` – Verifier-Report mit allen Erfolgsflags und der Byte-Länge.
+- `roots.json` – Trace-Root, optionaler Composition-Root sowie alle FRI-Layer-Roots.
+- `challenges.json` – FRI-Fold-Challenges, Query-Konfiguration, Transcript-Tag und Seed.
+- `indices.json` – lokal rekonstruierte Query-Indizes (sortiert & dedupliziert).
+- `README.md` – Einstiegspunkt mit Links auf die Encoding- und Size-Gate-Dokumente.
+
+Ein externer Node sollte beim Import folgende Gleichheiten prüfen:
+
+1. `params.bin` → `params_hash` muss mit dem Proof-Header übereinstimmen.【F:tests/golden_vector_export.rs†L63-L78】【F:tests/golden_vector_export.rs†L106-L124】
+2. `public_inputs.bin` → Digest aus `public_digest.hex` muss exakt dem Header entsprechen.【F:tests/golden_vector_export.rs†L80-L124】
+3. Die aus Transcript/FRI abgeleiteten Query-Indizes müssen `indices.json` entsprechen und identisch zu `openings.trace.indices` sein.【F:tests/golden_vector_export.rs†L126-L176】【F:tests/golden_vector_export.rs†L178-L240】
+4. `proof_report.json.total_bytes` muss der Byte-Länge von `proof.bin` entsprechen und alle Flags (`params_ok`, `public_ok`, `merkle_ok`, `fri_ok`, `composition_ok`) auf `true` stehen.【F:tests/golden_vector_export.rs†L90-L105】【F:tests/golden_vector_export.rs†L242-L274】
+
+Hinweis: Für alle `*.bin`-Artefakte ist vor diesen Vergleichen der Hex-String in rohe Bytes zu dekodieren.
 
 ## Änderungspolitik
 Jede Änderung an Digest-Familie, Domain-Tags, Transcript-Sequenz oder am Proof-ABI erzwingt einen `PROOF_VERSION`-Bump sowie eine dokumentierte Snapshot-Aktualisierung im CHANGELOG. Diese Disziplin ist bereits in README und CHANGELOG verankert.【F:src/proof/types.rs†L11-L36】【F:README.md†L934-L938】【F:CHANGELOG.md†L1-L34】

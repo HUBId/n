@@ -35,6 +35,7 @@ Each arrow corresponds to a module under `src/air`:
 ## Interop-Dokumentation
 
 - [STWO-Interoperabilität](docs/STWO_INTEROP.md)
+- [Golden Vectors (STWO Interop)](vectors/stwo/mini/)
 - [Public-Inputs-Encoding](docs/PUBLIC_INPUTS_ENCODING.md)
 - [Proof-Size-Gate](docs/PROOF_SIZE_GATE.md)
 
