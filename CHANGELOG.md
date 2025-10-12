@@ -34,17 +34,24 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [1.0.0-beta] - 2025-10-12
+
+- Added: Proof-Envelope & Verifier (Header→Transcript→Queries→Merkle→FRI→Composition→Report)
+- Added: Fail-Matrix & Golden Vectors
+- Added: Snapshot-Guard (CI) & Interop-Golden-Vector-Check
+- Changed: MSRV 1.79
+- Note: ABI frozen at PROOF_VERSION = 1 (no ABI change in this release)
+
 ### ABI
 
 - Proof envelope, transcript, and Merkle bundle serialization are frozen at `PROOF_VERSION = 1`; deterministic snapshots gate regressions in `tests/snapshots/proof_artifacts__execution_proof_artifacts.snap`.
 
 ### Added
 
-- Optional `backend-rpp-stark` feature exposing chain-integration adapters for
-  felts, digests and deterministic hashing, including proof-size limit mapping
-  helpers and STWO fixture tests.
-- (2025-10-12) Add STWO interop documentation (no ABI change). ABI-Änderungen
-  erfordern PROOF_VERSION++ und Snapshot-Update.
+- Optional `backend-rpp-stark` feature exposing chain-integration adapters for felts, digests and deterministic hashing, including proof-size limit mapping helpers and STWO fixture tests.
+- (2025-10-12) Add STWO interop documentation (no ABI change). ABI-Änderungen erfordern PROOF_VERSION++ und Snapshot-Update.
 - (2025-10-12) Clippy clean, Snapshot & Changelog policies added (no ABI change).
 
 ### Changed
