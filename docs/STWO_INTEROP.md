@@ -57,5 +57,10 @@ Ein externer Node sollte beim Import folgende Gleichheiten prüfen:
 
 Hinweis: Für alle `*.bin`-Artefakte ist vor diesen Vergleichen der Hex-String in rohe Bytes zu dekodieren.
 
+### CI: Golden-Vector Verify
+Ein dedizierter CI-Workflow ([`interop-golden-vector.yml`](../.github/workflows/interop-golden-vector.yml)) führt Build, Tests, Clippy sowie das Prüfskript [`scripts/ci/interop_golden_check`](../scripts/ci/interop_golden_check) aus, um die Mini-Artefakte automatisiert zu verifizieren.
+Dabei werden `param_digest`/Proof-Header, `public_digest`, Query-Indizes, Report-Flags und `total_bytes` bitgenau abgeglichen und Abweichungen mit klaren Hinweisen gemeldet.
+Zum Abschluss startet das Skript `cargo test --tests -q` erneut, damit alle Dateien deterministisch und unverändert bleiben.
+
 ## Änderungspolitik
 Jede Änderung an Digest-Familie, Domain-Tags, Transcript-Sequenz oder am Proof-ABI erzwingt einen `PROOF_VERSION`-Bump sowie eine dokumentierte Snapshot-Aktualisierung im CHANGELOG. Diese Disziplin ist bereits in README und CHANGELOG verankert.【F:src/proof/types.rs†L11-L36】【F:README.md†L934-L938】【F:CHANGELOG.md†L1-L34】
