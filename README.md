@@ -197,6 +197,18 @@ Pull requests must pass all of these checks before merging.
 
 Der Workflow [`snapshot-guard`](.github/workflows/snapshot-guard.yml) verhindert Merges, sobald Proof-/Params-Snapshots geändert wurden, ohne dass gleichzeitig `PROOF_VERSION` erhöht und im [`CHANGELOG.md`](CHANGELOG.md) dokumentiert wurde. Wer Snapshots aktualisiert, muss den Version-Bump in [`src/proof/types.rs`](src/proof/types.rs) sowie eine kurze ABI-Notiz im Changelog hinzufügen, damit der Guard wieder grünes Licht gibt. Weitere Hintergründe zu den eingefrorenen Golden-Vectors liefert [docs/STWO_INTEROP.md](docs/STWO_INTEROP.md).
 
+Eine vollständige Übersicht über alle eingefrorenen Artefakte, ihre Ablageorte
+und die Änderungsregeln bündelt [docs/SNAPSHOTS.md](docs/SNAPSHOTS.md).
+
+### Linting & Style
+
+- `cargo clippy --locked -- -D warnings` muss lokal und in CI sauber laufen.
+- Neue `#[allow(...)]`-Attribute sind nur zulässig, wenn eine nahegelegene
+  Begründung (Kommentar) dokumentiert, weshalb die Abweichung für das ABI oder
+  deterministische Layout zwingend ist.
+- Stil-Anpassungen sollen minimalinvasiv sein; keine API- oder Signaturänderung
+  als Teil von Lint-Fixes.
+
 ## Projekt-Blueprint
 
 Die folgende Spezifikation beschreibt die Zielarchitektur der Bibliothek
