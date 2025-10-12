@@ -191,6 +191,10 @@ Pull requests must pass all of these checks before merging.
 > `cargo test snapshot_profiles -- --exact` (oder `cargo insta review`) aus und
 > nimm die neuen Artefakte mit in den Commit auf.
 
+### CI & Snapshots
+
+Der Workflow [`snapshot-guard`](.github/workflows/snapshot-guard.yml) verhindert Merges, sobald Proof-/Params-Snapshots geändert wurden, ohne dass gleichzeitig `PROOF_VERSION` erhöht und im [`CHANGELOG.md`](CHANGELOG.md) dokumentiert wurde. Wer Snapshots aktualisiert, muss den Version-Bump in [`src/proof/types.rs`](src/proof/types.rs) sowie eine kurze ABI-Notiz im Changelog hinzufügen, damit der Guard wieder grünes Licht gibt. Weitere Hintergründe zu den eingefrorenen Golden-Vectors liefert [docs/STWO_INTEROP.md](docs/STWO_INTEROP.md).
+
 ## Projekt-Blueprint
 
 Die folgende Spezifikation beschreibt die Zielarchitektur der Bibliothek
