@@ -275,6 +275,24 @@ SUMMARY_JSON=$(cargo run --quiet --manifest-path "$TMPDIR/Cargo.toml" -- "$VECTO
 profile_label=$(printf '%s' "$SUMMARY_JSON" | jq -r '.profile_label')
 info "Detected profile: $profile_label"
 
+trace_commit=$(printf '%s' "$SUMMARY_JSON" | jq -r '.trace_commit')
+if [ -z "$trace_commit" ] || [ "$trace_commit" = "null" ] || [ ${#trace_commit} -ne 64 ]; then
+    append_error "Proof header trace_commit must be a 32-byte hex digest."
+fi
+case "$trace_commit" in
+    *[!0-9a-f]*) append_error "Proof header trace_commit must be lowercase hex." ;;
+esac
+
+summary_comp_commit=$(printf '%s' "$SUMMARY_JSON" | jq -r '.composition_commit // empty')
+if [ -n "$summary_comp_commit" ]; then
+    if [ ${#summary_comp_commit} -ne 64 ]; then
+        append_error "Proof header composition_commit must be a 32-byte hex digest when present."
+    fi
+    case "$summary_comp_commit" in
+        *[!0-9a-f]*) append_error "Proof header composition_commit must be lowercase hex." ;;
+    esac
+fi
+
 param_digest=$(printf '%s' "$SUMMARY_JSON" | jq -r '.param_digest')
 proof_params_hash=$(printf '%s' "$SUMMARY_JSON" | jq -r '.proof_params_hash')
 if [ "$param_digest" != "$proof_params_hash" ]; then
@@ -317,6 +335,13 @@ if [ "$report_public_digest" != "$proof_public_digest" ]; then
     append_error "proof_report.json public_digest mismatches proof header."
 fi
 
+fri_roots_len=$(printf '%s' "$SUMMARY_JSON" | jq '.fri_roots | length')
+if [ "$fri_roots_len" = "null" ]; then
+    append_error "Proof transcript must expose FRI roots."
+elif [ "$fri_roots_len" -lt 1 ]; then
+    append_error "Proof transcript must include at least one FRI layer root."
+fi
+
 indices_path="$VECTORS_DIR/indices.json"
 if ! jq -e '(. == (sort)) and (length == (unique | length))' "$indices_path" >/dev/null; then
     append_error "indices.json must be strictly increasing without duplicates."
@@ -344,11 +369,24 @@ if [ "$roots_array" != "$summary_roots" ]; then
     append_error "roots.json fri_roots mismatch with proof payload."
 fi
 
+if ! jq -e '.fri_roots | length >= 1' "$roots_path" >/dev/null; then
+    append_error "roots.json must contain at least one FRI layer root."
+fi
+if ! jq -e 'all(.fri_roots[]; (type == "string") and (length == 64) and test("^[0-9a-f]+$"))' "$roots_path" >/dev/null; then
+    append_error "roots.json fri_roots entries must be 32-byte lowercase hex digests."
+fi
+
 challenges_path="$VECTORS_DIR/challenges.json"
 challenge_folds=$(jq -c '.fri_fold_challenges' "$challenges_path")
 summary_folds=$(printf '%s' "$SUMMARY_JSON" | jq -c '.fri_fold_challenges')
 if [ "$challenge_folds" != "$summary_folds" ]; then
     append_error "challenges.json fri_fold_challenges mismatch with transcript reconstruction."
+fi
+if ! jq -e --argjson fri_roots_len "$fri_roots_len" '.fri_fold_challenges | length == $fri_roots_len' "$challenges_path" >/dev/null; then
+    append_error "challenges.json fri_fold_challenges length must match fri_roots length."
+fi
+if ! jq -e '(.fri_fold_challenges | length) >= 1' "$challenges_path" >/dev/null; then
+    append_error "challenges.json must contain at least one FRI fold challenge."
 fi
 challenge_query=$(jq -r '.query_count' "$challenges_path")
 summary_query=$(printf '%s' "$SUMMARY_JSON" | jq -r '.query_count')
@@ -365,11 +403,20 @@ summary_protocol=$(printf '%s' "$SUMMARY_JSON" | jq -r '.protocol_tag')
 if [ "$challenge_protocol" != "$summary_protocol" ]; then
     append_error "challenges.json protocol_tag mismatch with params."
 fi
+case "$challenge_protocol" in
+    ''|*[!0-9]*) append_error "challenges.json protocol_tag must be a decimal string." ;;
+esac
 challenge_seed=$(jq -r '.seed' "$challenges_path")
 summary_seed=$(printf '%s' "$SUMMARY_JSON" | jq -r '.seed')
 if [ "$challenge_seed" != "$summary_seed" ]; then
     append_error "challenges.json seed mismatch with params."
 fi
+if [ ${#challenge_seed} -ne 64 ]; then
+    append_error "challenges.json seed must be 32 bytes encoded as lowercase hex."
+fi
+case "$challenge_seed" in
+    *[!0-9a-f]*) append_error "challenges.json seed must only contain lowercase hex characters." ;;
+esac
 
 info "Re-running cargo test --tests -q to confirm determinism"
 cargo test --tests -q >/dev/null
