@@ -27,6 +27,8 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 - Optional `backend-rpp-stark` feature exposing chain-integration adapters for
   felts, digests and deterministic hashing, including proof-size limit mapping
   helpers and STWO fixture tests.
+- (2025-10-12) Add STWO interop documentation (no ABI change). ABI-Änderungen
+  erfordern PROOF_VERSION++ und Snapshot-Update.
 
 ### Changed
 

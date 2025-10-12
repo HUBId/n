@@ -32,6 +32,12 @@ Each arrow corresponds to a module under `src/air`:
 | Transcript | [`src/transcript/mod.rs`](src/transcript/mod.rs) | 4 | Label ordering for Fiat–Shamir challenges. |
 | FRI | [`src/fri`](src/fri) | 7 | Query schedule derived from transcript seeds. |
 
+## Interop-Dokumentation
+
+- [STWO-Interoperabilität](docs/STWO_INTEROP.md)
+- [Public-Inputs-Encoding](docs/PUBLIC_INPUTS_ENCODING.md)
+- [Proof-Size-Gate](docs/PROOF_SIZE_GATE.md)
+
 ### Trace and public-input schema
 
 ```
