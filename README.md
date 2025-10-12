@@ -1,5 +1,7 @@
 # rpp-stark
 
+[![Latest release](https://img.shields.io/badge/latest-v1.0.0--beta-blue)](docs/RELEASE_NOTES.md)
+
 ## AIR pipeline overview
 
 The AIR layer stitches together the execution trace, polynomial commitments, and

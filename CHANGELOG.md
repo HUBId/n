@@ -34,25 +34,12 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 
 ## [Unreleased]
 
-### ABI
+No unreleased changes.
 
-- Proof envelope, transcript, and Merkle bundle serialization are frozen at `PROOF_VERSION = 1`; deterministic snapshots gate regressions in `tests/snapshots/proof_artifacts__execution_proof_artifacts.snap`.
+## [1.0.0-beta] - 2025-10-12
 
-### Added
-
-- Optional `backend-rpp-stark` feature exposing chain-integration adapters for
-  felts, digests and deterministic hashing, including proof-size limit mapping
-  helpers and STWO fixture tests.
-- (2025-10-12) Add STWO interop documentation (no ABI change). ABI-Änderungen
-  erfordern PROOF_VERSION++ und Snapshot-Update.
-- (2025-10-12) Clippy clean, Snapshot & Changelog policies added (no ABI change).
-
-### Changed
-
-- (2025-10-12) Bump MSRV to 1.79 (no API changes).
-- Raised the minimum supported Rust version (MSRV) and CI toolchain to 1.79 to align with deterministic builds (see `RELEASE_NOTES.md`).
-
-### Known gaps / follow-up
-
-- Parameter snapshot guard ("Param-Snapshot-Gate") is still manual; introduce a CI job that rejects changes to parameter digests without a documented justification.
-- Re-evaluate the MSRV 1.79 bump for downstream consumers before tagging the next release; include compatibility notes once a release candidate is prepared.
+- Added: Proof-Envelope & Verifier (Header→Transcript→Queries→Merkle→FRI→Composition→Report)
+- Added: Fail-Matrix & Golden Vectors
+- Added: Snapshot-Guard (CI) & Interop-Golden-Vector-Check
+- Changed: MSRV 1.79
+- Note: ABI frozen at PROOF_VERSION = 1 (no ABI change in this release)

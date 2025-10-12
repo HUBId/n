@@ -1,6 +1,6 @@
 [package]
 name = "rpp-stark"
-version = "0.1.0"
+version = "1.0.0-beta"
 edition = "2021"
 authors = ["RPP Core Team"]
 description = "Deterministic STARK proof engine for the RPP blockchain."
