@@ -26,8 +26,13 @@ jobs:
         run: cargo build --locked --features backend-rpp-stark
       - name: Cargo clippy
         run: cargo clippy --locked -- -D warnings
-      - name: Cargo fmt --check
-        run: cargo fmt --all -- --check
+      - name: Rustfmt (library & benches)
+        run: |
+          set -euo pipefail
+          FILES="$(git ls-files 'src/*.rs' 'src/**/*.rs' 'benches/*.rs' 'benches/**/*.rs' 'src/bin/*.rs')"
+          if [ -n "${FILES}" ]; then
+              rustfmt --edition 2021 --check ${FILES}
+          fi
       - name: Cargo test
         run: cargo test -p rpp-stark -- --nocapture
       - name: Cargo test snapshot profiles

@@ -181,6 +181,7 @@ The GitHub Actions workflow enforces the following gates:
 * `cargo build --locked`
 * `cargo test -p rpp-stark -- --nocapture`
 * `cargo test snapshot_profiles -- --exact`
+* `rustfmt --edition 2021 --check $(git ls-files 'src/*.rs' 'src/**/*.rs' 'src/bin/*.rs' 'benches/*.rs' 'benches/**/*.rs')`
 * `cargo clippy --locked -- -D warnings`
 * `cargo run --bin profile_reports -- --output reports --include-throughput`
 
