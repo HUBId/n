@@ -335,8 +335,6 @@ fn precheck_body(
         });
     }
 
-    stages.merkle_ok = true;
-
     let transcript_kind = *proof.kind();
     let air_spec_id = resolve_air_spec_id(&context.profile.air_spec_ids, transcript_kind);
     let mut transcript = Transcript::new(TranscriptHeader {
@@ -417,18 +415,20 @@ fn precheck_body(
                 .ok_or(VerifyError::CompositionInconsistent {
                     reason: "missing_composition_openings".to_string(),
                 })?;
-        let alignment_values = extract_composition_leaf_values(composition_openings.leaves())?;
-        verify_composition_alignment(
-            &alignment_values,
-            composition_openings.leaves(),
-            proof.openings_payload().trace().indices(),
-            proof.fri_proof(),
-        )?;
 
         let composition_values = verify_composition_commitment(
             &stark_params,
             &composition_commit.bytes,
             composition_openings,
+        )?;
+
+        stages.merkle_ok = true;
+
+        verify_composition_alignment(
+            &composition_values,
+            composition_openings.leaves(),
+            proof.openings_payload().trace().indices(),
+            proof.fri_proof(),
         )?;
 
         verify_ood_openings(
@@ -447,6 +447,7 @@ fn precheck_body(
             });
         }
 
+        stages.merkle_ok = true;
         stages.composition_ok = true;
     }
 
@@ -885,23 +886,6 @@ fn convert_path(
             Ok(nodes)
         }
     }
-}
-
-fn extract_composition_leaf_values(leaves: &[Vec<u8>]) -> Result<Vec<FieldElement>, VerifyError> {
-    let mut values = Vec::with_capacity(leaves.len());
-    for leaf_bytes in leaves {
-        if leaf_bytes.len() < FieldElement::BYTE_LENGTH {
-            return Err(VerifyError::CompositionLeafMismatch);
-        }
-
-        let mut field_bytes = [0u8; FieldElement::BYTE_LENGTH];
-        field_bytes.copy_from_slice(&leaf_bytes[..FieldElement::BYTE_LENGTH]);
-        let value = FieldElement::from_bytes(&field_bytes)
-            .map_err(|_| VerifyError::NonCanonicalFieldElement)?;
-        values.push(value);
-    }
-
-    Ok(values)
 }
 
 fn verify_composition_alignment(

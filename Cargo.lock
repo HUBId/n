@@ -694,6 +694,7 @@ dependencies = [
  "criterion",
  "hex-literal",
  "insta",
+ "once_cell",
  "postcard",
  "proptest",
  "rayon",
