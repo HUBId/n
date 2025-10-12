@@ -32,7 +32,7 @@ jobs:
         run: cargo test --tests --locked
 
       - name: Cargo clippy
-        run: cargo clippy --locked -D warnings
+        run: cargo clippy --locked -- -D warnings
 
       - name: Interop golden vector check
         shell: bash
