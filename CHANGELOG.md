@@ -32,6 +32,7 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 
 ### Changed
 
+- (2025-10-12) Bump MSRV to 1.79 (no API changes).
 - Raised the minimum supported Rust version (MSRV) and CI toolchain to 1.79 to align with deterministic builds (see `RELEASE_NOTES.md`).
 
 ### Known gaps / follow-up

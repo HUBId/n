@@ -171,7 +171,8 @@ changing runtime behaviour:
 
 This crate targets **Rust 1.79 stable**. Builds are expected to succeed with the
 stable channel at or above this compiler release without relying on nightly
-features.
+features. The library is supported on the stable toolchain only; nightly
+compilers or unstable flags are neither required nor tested.
 
 ### CI policy
 
