@@ -16,6 +16,22 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
 - Regenerate snapshots after intentional ABI changes by running `cargo test -p rpp-stark -- --nocapture` followed by `cargo insta review` and commit the approved diffs.
 - If snapshots change without bumping `PROOF_VERSION`, halt the review and decide whether the change is a bug or requires an ABI bump.
 
+### ABI-Änderungspolitik
+
+- Jede Änderung am Proof-ABI (Feldreihenfolge, Endianness, Tags, Längenfelder,
+  Domain-Tags, Hashfamilie, Public-Inputs-Encoding) erfordert `PROOF_VERSION++`
+  inklusive Snapshot-Update und kurzer Beschreibung des Effekts.
+
+### Snapshots-Änderungen
+
+- Snapshots dürfen nur angepasst werden, wenn `PROOF_VERSION++` im selben Pull
+  Request erfolgt und der Grund im Changelog dokumentiert ist.
+
+### Golden-Vector
+
+- Der Interop-Vektor unter `vectors/stwo/mini` fungiert als Golden-Quelle.
+  Änderungen sind nur nach obiger ABI-Policy zulässig.
+
 ## [Unreleased]
 
 ### ABI
@@ -29,6 +45,7 @@ All notable changes to `rpp-stark` are documented in this file. The structure fo
   helpers and STWO fixture tests.
 - (2025-10-12) Add STWO interop documentation (no ABI change). ABI-Änderungen
   erfordern PROOF_VERSION++ und Snapshot-Update.
+- (2025-10-12) Clippy clean, Snapshot & Changelog policies added (no ABI change).
 
 ### Changed
 
